@@ -3,7 +3,6 @@ set -euo pipefail
 
 SKILLS_HOME="${HOME}/.leadbay-skills"
 CLAUDE_SKILLS="${HOME}/.claude/skills"
-CLAUDE_MD="${HOME}/.claude/CLAUDE.md"
 
 usage() {
   echo "Usage: setup [--update] [--add-to-project]"
@@ -56,7 +55,8 @@ fi
 # Ensure claude skills dir exists
 mkdir -p "$CLAUDE_SKILLS"
 
-# Symlink each skill directory
+# Symlink each skill directory into ~/.claude/skills/
+# Claude Code auto-discovers SKILL.md files in this directory at session start.
 for skill_dir in "$SKILLS_HOME"/*/; do
   skill_name=$(basename "$skill_dir")
   case "$skill_name" in
@@ -71,30 +71,14 @@ for skill_dir in "$SKILLS_HOME"/*/; do
       continue
     fi
     ln -s "$skill_dir" "$target"
-    echo "  Linked /$skill_name"
+    echo "  Linked /$skill_name → $skill_dir"
   fi
 done
 
-# Register skills in global CLAUDE.md so Claude discovers them
-mkdir -p "$(dirname "$CLAUDE_MD")"
-touch "$CLAUDE_MD"
-if ! grep -q "Leadbay Skills" "$CLAUDE_MD" 2>/dev/null; then
-  cat >> "$CLAUDE_MD" << 'CLAUDEBLOCK'
-
-# Leadbay Skills
-
-Available leadbay team skills (installed at `~/.leadbay-skills`):
-- `/org-retro` — Org-wide engineering retro (GitHub + DBs, Discord-sized)
-- `/sales-retro` — Sales intelligence from PostHog (signups, activation, churn, Big Fish)
-CLAUDEBLOCK
-  echo "  Added skills to ~/.claude/CLAUDE.md"
-else
-  echo "  Skills already registered in ~/.claude/CLAUDE.md"
-fi
-
 echo ""
 echo "Leadbay skills v$(cat "$SKILLS_HOME/VERSION") installed."
+echo "Skills are in ~/.claude/skills/ — Claude Code picks them up automatically on next session."
+echo ""
 echo "Available: $(find "$SKILLS_HOME" -name SKILL.md -not -path '*/shared/*' -exec dirname {} \; | xargs -I{} basename {} | sort | sed 's/^/\//' | tr '\n' ' ')"
 echo ""
-echo "Update:     ~/.leadbay-skills/setup --update"
-echo "Add to project: ~/.leadbay-skills/setup --add-to-project"
+echo "Update anytime: ~/.leadbay-skills/setup --update"
