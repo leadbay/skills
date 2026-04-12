@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Shared config for all leadbay skills.
+# Storage: ~/.leadbay-skills/config/ (survives worktrees, shared across workspaces)
+set -euo pipefail
+
+CONFIG_DIR="${HOME}/.leadbay-skills/config"
+mkdir -p "$CONFIG_DIR"
+
+usage() {
+  echo "Usage: lb-skills-config get <key>"
+  echo "       lb-skills-config set <key> <value>"
+  echo "       lb-skills-config list"
+  exit 1
+}
+
+[ $# -lt 1 ] && usage
+
+case "$1" in
+  get)
+    [ $# -lt 2 ] && usage
+    file="$CONFIG_DIR/$2"
+    if [ -f "$file" ]; then
+      cat "$file"
+    else
+      exit 1
+    fi
+    ;;
+  set)
+    [ $# -lt 3 ] && usage
+    echo "$3" > "$CONFIG_DIR/$2"
+    ;;
+  list)
+    for f in "$CONFIG_DIR"/*; do
+      [ -f "$f" ] && echo "$(basename "$f")=$(cat "$f")"
+    done
+    ;;
+  *)
+    usage
+    ;;
+esac
