@@ -3,6 +3,7 @@ set -euo pipefail
 
 SKILLS_HOME="${HOME}/.leadbay-skills"
 CLAUDE_SKILLS="${HOME}/.claude/skills"
+CLAUDE_MD="${HOME}/.claude/CLAUDE.md"
 
 usage() {
   echo "Usage: setup [--update] [--add-to-project]"
@@ -73,6 +74,23 @@ for skill_dir in "$SKILLS_HOME"/*/; do
     echo "  Linked /$skill_name"
   fi
 done
+
+# Register skills in global CLAUDE.md so Claude discovers them
+mkdir -p "$(dirname "$CLAUDE_MD")"
+touch "$CLAUDE_MD"
+if ! grep -q "Leadbay Skills" "$CLAUDE_MD" 2>/dev/null; then
+  cat >> "$CLAUDE_MD" << 'CLAUDEBLOCK'
+
+# Leadbay Skills
+
+Available leadbay team skills (installed at `~/.leadbay-skills`):
+- `/org-retro` — Org-wide engineering retro (GitHub + DBs, Discord-sized)
+- `/sales-retro` — Sales intelligence from PostHog (signups, activation, churn, Big Fish)
+CLAUDEBLOCK
+  echo "  Added skills to ~/.claude/CLAUDE.md"
+else
+  echo "  Skills already registered in ~/.claude/CLAUDE.md"
+fi
 
 echo ""
 echo "Leadbay skills v$(cat "$SKILLS_HOME/VERSION") installed."
