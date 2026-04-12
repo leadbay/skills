@@ -1,347 +1,227 @@
 ---
 name: sales-retro
-description: Weekly sales intelligence retro — new signups, activation, churn risk, Big Fish
-version: 0.1.0
+description: Weekly sales intelligence — signups, activation, churn risk, Big Fish detection
+version: 0.2.0
 ---
+
+<!-- Shared: preamble -->
+## Preamble (run first)
+
+```bash
+_UPD=$(~/.leadbay-skills/bin/lb-skills-update-check 2>/dev/null || true)
+[ -n "$_UPD" ] && echo "$_UPD" || true
+_PH_KEY=$(~/.leadbay-skills/bin/lb-skills-config get posthog_api_key 2>/dev/null || echo "")
+echo "PH_KEY_SET: $([ -n "$_PH_KEY" ] && echo yes || echo no)"
+```
+
+If output shows `UPGRADE_AVAILABLE <old> <new>`: tell the user
+"Leadbay skills update available: v{old} -> v{new}. Run `~/.leadbay-skills/setup --update`"
+
+If `PH_KEY_SET` is `no`: Ask the user for their PostHog personal API key.
+Say: "I need a PostHog personal API key. Generate one at
+https://eu.posthog.com/settings/user-api-keys (read access is sufficient)."
+Once provided: `~/.leadbay-skills/bin/lb-skills-config set posthog_api_key "<KEY>"`
 
 ## User-invocable
 When the user types `/sales-retro`, run this skill.
 
 ## Arguments
-- `/sales-retro` — default: last 7 days
+- `/sales-retro` — last 7 days (default)
 - `/sales-retro 14d` — last 14 days
 - `/sales-retro 30d` — last 30 days
-
-## Preamble
-
-```bash
-_UPD=$(~/.leadbay-skills/bin/lb-skills-update-check 2>/dev/null || true)
-[ -n "$_UPD" ] && echo "$_UPD" || true
-
-# Check for PostHog API key
-_PH_KEY=$(~/.leadbay-skills/bin/lb-skills-config get posthog_api_key 2>/dev/null || echo "")
-echo "PH_KEY_SET: $([ -n "$_PH_KEY" ] && echo yes || echo no)"
-```
-
-If `PH_KEY_SET` is `no`: Ask the user for their PostHog personal API key.
-Tell them: "I need a PostHog personal API key to query user analytics.
-Generate one at https://eu.posthog.com/settings/user-api-keys (read access is sufficient)."
-
-Once they provide it, save it:
-```bash
-~/.leadbay-skills/bin/lb-skills-config set posthog_api_key "<THE_KEY>"
-```
-
-Then continue. On subsequent runs the key is loaded automatically.
 
 ## Configuration
 
 ```
 POSTHOG_HOST=https://eu.posthog.com
-GITHUB_ORG=leadbay
 ```
 
-The PostHog API key is read from: `~/.leadbay-skills/bin/lb-skills-config get posthog_api_key`
+PostHog API key: `~/.leadbay-skills/bin/lb-skills-config get posthog_api_key`
 
-All queries use the HogQL endpoint: `POST $POSTHOG_HOST/api/projects/@current/query/`
-with header `Authorization: Bearer $PH_KEY` and body `{"query": {"kind": "HogQLQuery", "query": "..."}}`
+All queries use HogQL: `POST $POSTHOG_HOST/api/projects/@current/query/`
+with `Authorization: Bearer $PH_KEY` and `{"query": {"kind": "HogQLQuery", "query": "..."}}`
 
 ## Instructions
 
-Parse the argument for time window. Default 7 days. Compute midnight-aligned start date.
-Also compute the PRIOR window of the same length (e.g., if this week is Apr 4-11,
-prior week is Mar 28 - Apr 4) for comparison.
+Parse argument for time window. Default 7 days. Compute midnight-aligned start date.
+Also compute PRIOR window of same length for activity comparison.
 
-### Step 1: New signups this period
+### Step 1: New verified signups
 
-HogQL query:
 ```sql
-SELECT
-  distinct_id as email,
-  timestamp,
-  properties.is_freemium as freemium,
-  properties.source as source,
+SELECT distinct_id as email, timestamp, properties.is_freemium,
   person.properties.leadbayOrganization as org,
-  person.properties.verified as verified,
-  person.properties.billing_status as billing
+  person.properties.verified as verified
 FROM events
-WHERE event = 'user_created'
-  AND timestamp >= '{start_date}'
+WHERE event = 'user_created' AND timestamp >= '{start}'
   AND distinct_id NOT LIKE '%@leadbay.ai'
   AND distinct_id NOT LIKE '%@example.com'
 ORDER BY timestamp DESC
 ```
 
-**Filter out:**
-- Internal emails (@leadbay.ai)
-- Test emails (@example.com)
-- Orgs starting with "Wow Effect" (auto-generated placeholder orgs that haven't completed onboarding)
-- Duplicate user_created events for the same email (take the latest)
+**Filter out:** internal emails, test emails, orgs starting with "Wow Effect" (placeholder),
+duplicate user_created for same email (keep latest). **Only report verified users.**
+Count unverified separately (just the number, no list).
 
-**Classify each signup:**
-- **Verified**: `verified = true` (they confirmed their email)
-- **Unverified**: `verified = false` or null (signed up but didn't confirm)
-- **Freemium**: `freemium = true`
-- **Invited** (wow source, not freemium): came through an invite/onboarding flow
+Detect **team rollouts**: multiple users from same email domain = group them as one line.
 
-**Region detection:**
-- FR if email domain ends in `.fr` or org name looks French (common French company suffixes)
-- US otherwise (rough heuristic — good enough for sales)
-
-### Step 2: Activation — who came back?
-
-For each new verified signup from Step 1, check how many days they were active:
+### Step 2: Activation of new verified signups
 
 ```sql
-SELECT
-  distinct_id as email,
-  count() as active_days
-FROM events
-WHERE event = 'first_lead_click_of_day'
-  AND timestamp >= '{start_date}'
-  AND distinct_id IN ({list_of_new_verified_emails})
+SELECT distinct_id as email, count() as active_days
+FROM events WHERE event = 'first_lead_click_of_day'
+  AND timestamp >= '{start}'
+  AND distinct_id IN ({verified_emails})
 GROUP BY distinct_id
 ```
-
-Classify:
-- **Activated** (2+ active days): came back after signup
-- **One-shot** (0-1 active days): signed up, maybe poked around, never returned
-- **Power user** (4+ active days): daily user already
 
 ### Step 3: Quota hits
 
 ```sql
-SELECT
-  distinct_id as email,
-  count() as hits,
-  properties.resource_type as resource,
-  properties.window_type as window
-FROM events
-WHERE event = 'quota_exceeded'
-  AND timestamp >= '{start_date}'
+SELECT distinct_id as email, count() as hits,
+  properties.resource_type, properties.window_type
+FROM events WHERE event = 'quota_exceeded' AND timestamp >= '{start}'
   AND distinct_id NOT LIKE '%@leadbay.ai'
 GROUP BY distinct_id, properties.resource_type, properties.window_type
 ORDER BY hits DESC
 ```
 
-Users hitting quotas are the hottest conversion signals. They want more than freemium allows.
-
-### Step 4: Conversions
+### Step 4: Cancellations
 
 ```sql
-SELECT
-  distinct_id as email,
-  properties.new_plan as new_plan,
-  properties.old_plan as old_plan,
-  timestamp
-FROM events
-WHERE event = 'quota_plan_changed'
-  AND timestamp >= '{start_date}'
+SELECT distinct_id as email, properties.old_billing_status as old,
+  properties.new_billing_status as new, properties.stripe_status
+FROM events WHERE event = 'billing_status_changed' AND timestamp >= '{start}'
   AND distinct_id NOT LIKE '%@leadbay.ai'
+  AND properties.new_billing_status != properties.old_billing_status
 ORDER BY timestamp DESC
 ```
 
-Also check:
-```sql
-SELECT
-  distinct_id as email,
-  properties.stripe_status as status,
-  properties.billing_status as billing,
-  timestamp
-FROM events
-WHERE event = 'stripe_subscription_created'
-  AND timestamp >= '{start_date}'
-  AND distinct_id NOT LIKE '%@leadbay.ai'
-ORDER BY timestamp DESC
-```
+Only show transitions TO canceled/NOT_SET_UP (actual cancellations), or ACTION_NEEDED (payment issues).
+Skip transitions that are just status corrections or new signups.
 
-And cancellations:
-```sql
-SELECT
-  distinct_id as email,
-  properties.new_billing_status as new_status,
-  properties.old_billing_status as old_status,
-  properties.stripe_status as stripe,
-  person.properties.leadbayOrganization as org,
-  timestamp
-FROM events
-WHERE event = 'billing_status_changed'
-  AND timestamp >= '{start_date}'
-  AND distinct_id NOT LIKE '%@leadbay.ai'
-ORDER BY timestamp DESC
-```
-
-### Step 5: Existing user activity — most active
+### Step 5: Most active existing users
 
 ```sql
-SELECT
-  distinct_id as email,
-  count() as active_days,
-  min(timestamp) as first_active,
-  max(timestamp) as last_active,
-  person.properties.leadbayOrganization as org,
+SELECT distinct_id as email, count() as active_days,
   person.properties.billing_status as billing
-FROM events
-WHERE event = 'first_lead_click_of_day'
-  AND timestamp >= '{start_date}'
+FROM events WHERE event = 'first_lead_click_of_day' AND timestamp >= '{start}'
   AND distinct_id NOT LIKE '%@leadbay.ai'
   AND distinct_id NOT LIKE '%@example.com'
-GROUP BY distinct_id, person.properties.leadbayOrganization, person.properties.billing_status
-ORDER BY active_days DESC
-LIMIT 20
+GROUP BY distinct_id, person.properties.billing_status
+ORDER BY active_days DESC LIMIT 10
 ```
 
-### Step 6: Activity drops — needs attention
-
-Compare activity this period vs prior period:
+### Step 6: Activity drops
 
 ```sql
-SELECT
-  prev.email,
-  prev.days as prev_days,
-  curr.days as curr_days,
-  person.properties.leadbayOrganization as org,
+SELECT prev.email, prev.days as prev_days, curr.days as curr_days,
   person.properties.billing_status as billing
 FROM (
-  SELECT distinct_id as email, count() as days
-  FROM events
+  SELECT distinct_id as email, count() as days FROM events
   WHERE event = 'first_lead_click_of_day'
-    AND timestamp >= '{prior_start}' AND timestamp < '{start_date}'
+    AND timestamp >= '{prior_start}' AND timestamp < '{start}'
   GROUP BY distinct_id
 ) as prev
 LEFT JOIN (
-  SELECT distinct_id as email, count() as days
-  FROM events
-  WHERE event = 'first_lead_click_of_day'
-    AND timestamp >= '{start_date}'
+  SELECT distinct_id as email, count() as days FROM events
+  WHERE event = 'first_lead_click_of_day' AND timestamp >= '{start}'
   GROUP BY distinct_id
 ) as curr ON prev.email = curr.email
-LEFT JOIN persons as person ON prev.email = person.properties.email
 WHERE (curr.days IS NULL OR curr.days < prev.days)
   AND prev.email NOT LIKE '%@leadbay.ai'
   AND prev.email NOT LIKE '%@example.com'
-ORDER BY prev.days DESC
-LIMIT 20
+ORDER BY prev.days DESC LIMIT 10
 ```
 
 ### Step 7: Big Fish detection
 
-From ALL new signups (Step 1), identify potential enterprise accounts:
+From ALL data gathered, identify potential enterprise accounts by:
+- Email domain of a known large company (Fortune 500, major brands, unicorns)
+- Multiple users from same domain (team adoption)
+- High activity + quota hits from a recognizable company
 
-**Big Fish signals:**
-- Email domain matches a known large company (Fortune 500, major brands)
-- Org name matches known enterprise names
-- Domain is a well-known company (e.g., clay.com, sodexo.com, axa.fr, chronoflex.com, hexa.com)
-- Multiple users from the same domain signing up (team adoption signal)
+For each Big Fish: company name, the specific email(s), and what signal triggered it.
 
-**Also check existing users for Big Fish that are active or hitting quotas.**
-Cross-reference the most active users list and quota-exceeded list with company domains.
-
-For each Big Fish candidate, report:
-- Company name and domain
-- Number of users from that domain
-- Their activity level
-- Whether they hit quotas (buying signal)
-- Billing status (freemium vs paid)
-
-### Step 8: Ad leads captured (form submissions)
+### Step 8: Ad form leads
 
 ```sql
-SELECT count() as total
-FROM events
-WHERE event = 'ad_lead_captured'
-  AND timestamp >= '{start_date}'
+SELECT count() FROM events
+WHERE event = 'ad_lead_captured' AND timestamp >= '{start}'
 ```
 
-These are marketing form submissions (Meta ads, website forms) that haven't converted to
-accounts yet. Report the count as top-of-funnel context.
+## Output Format
 
-### Output Format
+**CRITICAL: Output MUST be under 1950 characters total (inside the code block).**
+Count characters. If over limit, cut: unverified count line, then trim "verified but
+not returning" to just a count, then reduce most-active to top 5.
 
-Output directly to conversation. Keep it actionable for sales team.
-Use a code block for Discord compatibility.
+Output a single code block:
 
 ```
-📈 Leadbay Sales Retro — {date range}
+📈 Sales Retro — {date range}
+{verified} verified signups · {form_leads} form leads · {paid_conversions} paid conversions
 
-NEW SIGNUPS: {total} ({verified} verified, {unverified} unverified)
-  FR: {count}  US: {count}
-
-  Verified & activated (came back 2+ days):
-    {email:40}  {org:25}  {active_days}d active  {quota_hit_flag}
-    ...
-
-  Verified but inactive (signed up, didn't return):
-    {email:40}  {org:25}
-    ...
-
-  Unverified (didn't confirm email):
-    {count} users (list only if < 10, otherwise just count)
-
-CONVERSIONS
-  {email}  {old_plan} → {new_plan}  ({date})
+ACTIVATED (verified + came back)
+  {email:35}  {Nd} · quota {Nx} 🔥  ← only if quota hit
+  {email:35}  {Nd}
   ...
-  (or "None this period")
+  Sort by: quota hits desc, then active days desc.
+  Team rollouts on one line: "{domain}: {N} users, {details}"
+
+  Not returning: {email}, {email}, ... (one line, comma-separated)
 
 CANCELLATIONS
-  {email}  {org}  {old} → {new}  ({date})
-  ...
+  {domain} · {domain}(xN) · ... (one compact line)
 
-🔥 QUOTA HITS (buying signals)
-  {email:40}  {hits} hits  {resource} ({window})  {org}
-  ...
+🔥 QUOTA HITS
+  {email} {Nx} · {email} {Nx} · ... (compact, one-two lines)
 
-👑 MOST ACTIVE USERS
-  {email:40}  {active_days}d  {org:25}  {billing}
-  ...top 10
+👑 MOST ACTIVE
+  {email:35}  {Nd}  {PAID if paying}
+  ... top 8-10
 
-⚠️ DROPPING ACTIVITY (needs outreach)
-  {email:40}  {prev}d → {curr}d  {org:25}  {billing}
-  ...
-  Focus: {1-2 sentence recommendation on who to call first and why}
+⚠️ DROPPING
+  {email:35}  {prev}→{curr}  {PAID/CANCELED if relevant}
+  ... top 7-9
 
 🐋 BIG FISH
-  {company_name} ({domain})
-    {N} users · {activity summary} · {billing status}
-    {specific action recommendation}
-  ...
+  {Company} — {signal}
+    {email}
+  ... 3-6 entries max
 
-FUNNEL
-  Ad leads captured: {count} form submissions
-  New signups: {count} ({verified} verified)
-  Activated (2+ days): {count}
-  Hitting quota: {count}
-  Converted to paid: {count}
-
-SALES ACTIONS THIS WEEK
-  1. {most urgent action — e.g., "Call rifat@dgftech.us — hit daily quota 7x, wants more"}
-  2. {second action}
-  3. {third action}
+📞 DO THIS WEEK
+  1. {verb} {email} — {why, one line}
+  ... 3-5 actions max
 ```
 
-**SALES ACTIONS rules:**
-- Max 5 actions, sorted by revenue potential
-- Each action names a specific person and why
-- Prioritize: quota hitters > dropping paid users > activated Big Fish > high-activity freemium
-- Be specific: "Call X" not "Reach out to active users"
+**Formatting rules:**
+- Emails only, no org names (save space). Exception: Big Fish section names the company.
+- Quota hits section: compact inline format, not one-per-line.
+- Cancellations: compact inline format.
+- "Not returning" verified users: comma-separated on one line.
+- SALES ACTIONS: each action names a specific email and a specific reason.
+- Sort activated users by quota hits first (most hits = most urgent), then by active days.
 
-## Important Rules
+## Sales Actions Priority
 
-- ALL output goes to conversation. No files written.
-- Filter out ALL @leadbay.ai and @example.com emails — these are internal/test.
-- Filter out orgs starting with "Wow Effect" — these are placeholder names from incomplete onboarding.
-- Keep Discord-friendly: under 2000 chars if possible. If it must be longer, split into
-  two code blocks (Discord allows multiple messages).
-- If a HogQL query fails, note it and continue with what you have.
-- Refer to users by email always — that's how sales identifies them.
-- For Big Fish: err on the side of inclusion. Better to flag a medium company than miss an enterprise.
-- Billing status "OK" = paying customer. "NOT_SET_UP" = freemium or not yet set up.
-  "ACTION_NEEDED" = payment failed.
+Rank actions by revenue potential:
+1. Quota hitters (want more, ready to pay)
+2. Dropping paid users (churn risk, save revenue)
+3. Activated Big Fish (enterprise pipeline)
+4. High-activity freemium (nurture to convert)
+
+Each action: specific person, specific verb (CALL/WIN-BACK/SAVE/NURTURE), specific why.
 
 ## Voice
 
-Sales-focused. Direct. Every line should answer "so what?" for someone deciding
-who to call today. No engineering jargon. Frame everything in terms of:
-- Revenue potential (who's likely to convert?)
-- Churn risk (who's about to leave?)
-- Expansion opportunity (who needs a bigger plan?)
+Sales-focused. Every line answers "who should I call today and why?"
+No engineering jargon. Frame as revenue, churn risk, or expansion.
+
+## Important Rules
+
+- Output MUST fit one Discord message (under 1950 chars in the code block).
+- If a HogQL query fails, skip it gracefully.
+- Emails only — no org names except in Big Fish.
+- Filter all @leadbay.ai and @example.com.
+- Filter "Wow Effect" orgs.

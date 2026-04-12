@@ -4,25 +4,63 @@ set -euo pipefail
 SKILLS_HOME="${HOME}/.leadbay-skills"
 CLAUDE_SKILLS="${HOME}/.claude/skills"
 
-# If running --update, pull latest
+usage() {
+  echo "Usage: setup [--update] [--add-to-project]"
+  echo ""
+  echo "  (no args)         Install/link skills into Claude Code"
+  echo "  --update          Pull latest from GitHub, then install"
+  echo "  --add-to-project  Add skill routing to current project's CLAUDE.md"
+  exit 0
+}
+
+# Handle --add-to-project
+if [ "${1:-}" = "--add-to-project" ]; then
+  if [ ! -f "CLAUDE.md" ]; then
+    echo "No CLAUDE.md found in current directory."
+    exit 1
+  fi
+  if grep -q "Leadbay Skills" CLAUDE.md 2>/dev/null; then
+    echo "Leadbay skills section already exists in CLAUDE.md"
+    exit 0
+  fi
+  cat >> CLAUDE.md << 'INJECT'
+
+## Leadbay Skills
+
+If `~/.leadbay-skills` exists, the following team skills are available:
+
+| Command | What it does |
+|---------|-------------|
+| `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
+| `/sales-retro` | Weekly sales intelligence: signups, activation, churn, Big Fish |
+
+When the user's request matches a skill, invoke it with the Skill tool as your FIRST action.
+INJECT
+  echo "Added Leadbay skills section to CLAUDE.md"
+  exit 0
+fi
+
+# Handle --update
 if [ "${1:-}" = "--update" ]; then
   echo "Updating leadbay-skills..."
   cd "$SKILLS_HOME"
   git pull --rebase origin main
-  echo "Updated to $(cat VERSION)"
+  echo "Updated to v$(cat VERSION)"
+fi
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  usage
 fi
 
 # Ensure claude skills dir exists
 mkdir -p "$CLAUDE_SKILLS"
 
-# Symlink each skill directory (skip bin, .git, etc.)
+# Symlink each skill directory
 for skill_dir in "$SKILLS_HOME"/*/; do
   skill_name=$(basename "$skill_dir")
-  # Skip non-skill directories
   case "$skill_name" in
-    bin|.git|.github) continue ;;
+    bin|.git|.github|shared|config) continue ;;
   esac
-  # Only link if it has a SKILL.md
   if [ -f "$skill_dir/SKILL.md" ]; then
     target="$CLAUDE_SKILLS/$skill_name"
     if [ -L "$target" ]; then
@@ -38,6 +76,7 @@ done
 
 echo ""
 echo "Leadbay skills v$(cat "$SKILLS_HOME/VERSION") installed."
-echo "Available commands: $(find "$SKILLS_HOME" -name SKILL.md -exec dirname {} \; | xargs -I{} basename {} | sort | sed 's/^/\//' | tr '\n' ' ')"
+echo "Available: $(find "$SKILLS_HOME" -name SKILL.md -not -path '*/shared/*' -exec dirname {} \; | xargs -I{} basename {} | sort | sed 's/^/\//' | tr '\n' ' ')"
 echo ""
-echo "Update anytime: ~/.leadbay-skills/setup --update"
+echo "Update:     ~/.leadbay-skills/setup --update"
+echo "Add to project: ~/.leadbay-skills/setup --add-to-project"
