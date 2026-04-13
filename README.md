@@ -48,17 +48,28 @@ This appends skill routing rules to your `CLAUDE.md`.
   CLAUDE.md                # Template for project routing
   bin/
     lb-skills-update-check # Cached GitHub version check
-    lb-skills-config       # Shared key-value config
-  shared/                  # Reusable fragments for skill authors
-  org-retro/SKILL.md
-  sales-retro/SKILL.md
-  config/                  # Local config (gitignored) — API keys
+    lb-skills-config       # Shared key-value config (API keys, DB creds)
+    lb-skills-assemble     # Build SKILL.md from .tmpl + shared fragments
+  shared/                  # Reusable fragments composed into skills
+    preamble.md            #   Update check
+    voice.md               #   Builder voice guidelines
+    discord-output.md      #   Discord formatting rules
+    posthog.md             #   PostHog API setup
+    db-setup.md            #   Database credential setup
+  org-retro/
+    SKILL.md.tmpl          # Template (edit this)
+    SKILL.md               # Generated (do not edit)
+  sales-retro/
+    SKILL.md.tmpl          # Template (edit this)
+    SKILL.md               # Generated (do not edit)
+  config/                  # Local config (gitignored) — API keys, credentials
 ```
 
 ## Adding a New Skill
 
-1. Create `my-skill/SKILL.md`
-2. Include the preamble (update check) at the top
+1. Create `my-skill/SKILL.md.tmpl` with `<!-- include: shared/preamble.md -->` at the top
+2. Use `<!-- include: shared/filename.md -->` for any shared sections
 3. Target output under 1950 chars for Discord
-4. Bump `VERSION`, push to main
-5. Team runs `~/.leadbay-skills/setup --update`
+4. Run `bin/lb-skills-assemble` to generate `SKILL.md`
+5. Bump `VERSION`, commit both `.tmpl` and `SKILL.md`, push to main
+6. Team runs `~/.leadbay-skills/setup --update`
