@@ -28,3 +28,12 @@ tool as your FIRST action. Do NOT answer directly.
 
 - Weekly retro, what did we ship, engineering retrospective → invoke org-retro
 - Sales retro, user activity, signups, churn, who to call → invoke sales-retro
+
+## Assembly
+
+Skills are composed from `SKILL.md.tmpl` templates and `shared/*.md` fragments.
+Run `bin/lb-skills-assemble` to regenerate `SKILL.md` files from templates.
+
+- Edit `.tmpl` files and `shared/*.md` fragments, never `SKILL.md` directly
+- Both `.tmpl` and generated `SKILL.md` are checked in
+- Always run `bin/lb-skills-assemble` before committing
