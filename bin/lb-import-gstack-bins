@@ -1,0 +1,117 @@
+#!/usr/bin/env bash
+# lb-import-gstack-bins — import/update gstack binaries into leadbay skills
+#
+# Usage:
+#   lb-import-gstack-bins                  # import/update from ~/.claude/skills/gstack/bin/
+#   lb-import-gstack-bins --check          # check if any source binaries have changed
+#   lb-import-gstack-bins --source /path   # import from custom path
+#
+# This script copies gstack binaries, renames them with lb- prefix,
+# adjusts internal cross-references, and records a manifest for future updates.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+MANIFEST="$SCRIPT_DIR/../.gstack-import-manifest"
+DEFAULT_SOURCE="$HOME/.claude/skills/gstack/bin"
+SOURCE_DIR="$DEFAULT_SOURCE"
+CHECK_ONLY=false
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --check) CHECK_ONLY=true; shift ;;
+    --source) SOURCE_DIR="$2"; shift 2 ;;
+    *) echo "Unknown option: $1" >&2; exit 1 ;;
+  esac
+done
+
+# Binaries to import: gstack-name → lb-name
+declare -a BINS=(
+  "gstack-slug:lb-slug"
+  "gstack-config:lb-config"
+  "gstack-learnings-search:lb-learnings-search"
+  "gstack-learnings-log:lb-learnings-log"
+  "gstack-timeline-log:lb-timeline-log"
+  "gstack-repo-mode:lb-repo-mode"
+)
+
+if [ ! -d "$SOURCE_DIR" ]; then
+  echo "ERROR: gstack bin directory not found at $SOURCE_DIR" >&2
+  echo "Install gstack first: https://github.com/garrytan/gstack" >&2
+  exit 1
+fi
+
+if [ "$CHECK_ONLY" = true ]; then
+  if [ ! -f "$MANIFEST" ]; then
+    echo "No manifest found. Run lb-import-gstack-bins to create one."
+    exit 1
+  fi
+  changed=0
+  while IFS='|' read -r src_name src_hash import_date; do
+    src_file="$SOURCE_DIR/$src_name"
+    if [ -f "$src_file" ]; then
+      current_hash=$(shasum -a 256 "$src_file" | awk '{print $1}')
+      if [ "$current_hash" != "$src_hash" ]; then
+        echo "CHANGED: $src_name (imported $import_date)"
+        changed=1
+      fi
+    else
+      echo "MISSING: $src_name (was imported $import_date)"
+      changed=1
+    fi
+  done < "$MANIFEST"
+  if [ "$changed" -eq 0 ]; then
+    echo "All binaries up to date."
+  else
+    echo ""
+    echo "Run lb-import-gstack-bins to update."
+  fi
+  exit "$changed"
+fi
+
+# Import mode
+echo "Importing gstack binaries from $SOURCE_DIR..."
+> "$MANIFEST"  # reset manifest
+DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+for pair in "${BINS[@]}"; do
+  src_name="${pair%%:*}"
+  dst_name="${pair##*:}"
+  src_file="$SOURCE_DIR/$src_name"
+  dst_file="$SCRIPT_DIR/$dst_name"
+
+  if [ ! -f "$src_file" ]; then
+    echo "  SKIP: $src_name (not found)"
+    continue
+  fi
+
+  src_hash=$(shasum -a 256 "$src_file" | awk '{print $1}')
+
+  # Copy and adapt
+  cp "$src_file" "$dst_file"
+
+  # Adjust internal cross-references
+  sed -i '' \
+    -e 's|gstack-slug|lb-slug|g' \
+    -e 's|gstack-config|lb-config|g' \
+    -e 's|gstack-learnings-search|lb-learnings-search|g' \
+    -e 's|gstack-learnings-log|lb-learnings-log|g' \
+    -e 's|gstack-timeline-log|lb-timeline-log|g' \
+    -e 's|gstack-repo-mode|lb-repo-mode|g' \
+    "$dst_file" 2>/dev/null || true
+
+  # Update header comment to note the port
+  sed -i '' "2s|.*|# $dst_name — ported from $src_name (https://github.com/garrytan/gstack)|" "$dst_file" 2>/dev/null || true
+
+  # Remove gstack-relink call from lb-config
+  if [ "$dst_name" = "lb-config" ]; then
+    sed -i '' '/gstack-relink\|GSTACK_RELINK\|GSTACK_SETUP_RUNNING/d' "$dst_file" 2>/dev/null || true
+  fi
+
+  chmod +x "$dst_file"
+  echo "$src_name|$src_hash|$DATE" >> "$MANIFEST"
+  echo "  OK: $src_name → $dst_name"
+done
+
+echo ""
+echo "Import complete. Manifest saved to .gstack-import-manifest"
+echo "Run with --check to detect future upstream changes."
