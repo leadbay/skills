@@ -37,6 +37,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 |---------|-------------|
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
+| `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
 
 ## Architecture
 
