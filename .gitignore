@@ -1,3 +1,5 @@
 config/
 .update-cache
 .DS_Store
+.gstack-import-manifest
+.context/

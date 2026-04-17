@@ -20,6 +20,7 @@ If `~/.leadbay-skills` already exists, update instead:
 |---------|-------------|
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence: signups, activation, churn, Big Fish |
+| `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
 
 ## Skill routing
 
@@ -28,6 +29,7 @@ tool as your FIRST action. Do NOT answer directly.
 
 - Weekly retro, what did we ship, engineering retrospective → invoke org-retro
 - Sales retro, user activity, signups, churn, who to call → invoke sales-retro
+- Diagnose this, root cause analysis, deep dive, why is this happening → invoke diagnose
 
 ## Assembly
 
