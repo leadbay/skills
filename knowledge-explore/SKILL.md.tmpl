@@ -1,0 +1,98 @@
+---
+name: knowledge-explore
+description: |
+  Bootstrap a new product surface (UI tab, backend service, user journey) into
+  the leadbay knowledge base. Two modes: code-only (reads OpenAPI specs, route
+  maps, DB schemas, recent commits) and pairing (a developer narrates a UI
+  surface in their already-logged-in browser; the agent attaches via Chrome
+  MCP — never handles credentials). Files concept/, mapping/, user-intent/,
+  journey/ proposals plus a sources/app-tours/ artifact.
+  Triggers: "explore the X tab", "document the X service", "learn about the
+  X surface", "what does Activate do", "bootstrap knowledge for Y".
+version: 1.0.0
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Agent
+  - WebFetch
+  - mcp__claude-in-chrome__navigate
+  - mcp__claude-in-chrome__read_page
+  - mcp__claude-in-chrome__get_page_text
+  - mcp__claude-in-chrome__find
+  - mcp__claude-in-chrome__tabs_context_mcp
+  - mcp__claude-in-chrome__tabs_create_mcp
+  - mcp__claude-in-chrome__javascript_tool
+---
+
+<!-- include: shared/preamble.md -->
+<!-- include: shared/ask-user-format.md -->
+
+# /knowledge-explore — Bootstrap a product surface
+
+Two modes, picked via `--mode` or inferred from context.
+
+## Mode A — Pairing (deep)
+
+Use when a developer is at their machine with a logged-in browser session.
+
+1. **Confirm the topic.** Ask the developer: "What do you want to explore? A UI
+   surface (Discover, Monitor, Activate, ...), a backend service, or an
+   end-to-end journey?"
+2. **Connect to the browser.** Call `mcp__claude-in-chrome__tabs_context_mcp` to
+   see open tabs. If the dashboard is already open, attach. Otherwise create a
+   new tab via `mcp__claude-in-chrome__tabs_create_mcp` (the developer is already
+   authenticated; the agent attaches, does not log in).
+3. **Read the live surface.** Use `mcp__claude-in-chrome__read_page` and
+   `mcp__claude-in-chrome__get_page_text` to capture what's on screen. Save raw
+   capture to `sources/app-tours/<date>-<topic>.md` via
+   `lb-knowledge-write source --subdir app-tours`.
+4. **Cross-reference code.** For each UI element observed, identify:
+   - Frontend route → component file (`grep` for the page route).
+   - API endpoint that route hits (network tab or `grep` in component for fetch
+     calls).
+   - DB tables / functions touched by that endpoint (`grep` in API service).
+5. **Draft proposals.** For each distinct concept/mapping/journey identified,
+   write a `proposed/<concept>/proposals/...` file via `lb-knowledge-write
+   proposed`. Cite the sources.
+6. **Ask clarifying questions.** Where the cross-reference is ambiguous, drop
+   a `questions/` entry via `lb-knowledge-write question` and ask the developer
+   inline. Their answer goes into `sources/` and updates the proposal.
+
+NEVER ask for or accept credentials. The developer is already logged in. The
+agent reads what their browser shows.
+
+## Mode B — Code-only (fast)
+
+Use when no human is paired. Faster but lower-confidence proposals.
+
+```bash
+"$_LB_BIN/lb-knowledge-explore" --mode code-only --repo <path>
+```
+
+The binary scans:
+- Routes from FastAPI / Express / Flask / Spring annotations.
+- OpenAPI spec if one exists.
+- DB schema via `psql` if `$DATABASE_URL_PROD_RO` is set.
+
+For each plausible concept identified, file a low-confidence (3-5) proposal.
+The next pairing session or dream run will validate / promote / drop them.
+
+## Confidence calibration
+
+- Pairing + code cross-confirms: 8-9.
+- Pairing alone (live screen, no code link yet): 6-7.
+- Code alone (route or schema with no UI confirmation): 3-5.
+- Just a guess from a commit message: don't file.
+
+## After
+
+Either:
+- Sync immediately if you want others to see the proposals (`/knowledge-sync`).
+- Or let the periodic timer pick them up.
+
+The next dream run (light or heavy) evaluates promotion. Cross-source quorum
+(≥ 2 distinct slugs) is the bar; a single rich pairing session usually clears
+it because both the code-only sweep and the pairing session count as separate
+slugs (api, frontend).

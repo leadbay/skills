@@ -10,8 +10,8 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 eval "$("$SCRIPT_DIR/lb-slug" 2>/dev/null)"
-GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
-mkdir -p "$GSTACK_HOME/projects/$SLUG"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+mkdir -p "$LEADBAY_HOME/projects/$SLUG"
 
 INPUT="$1"
 
@@ -32,4 +32,4 @@ if ! printf '%s' "$INPUT" | bun -e "const j=JSON.parse(await Bun.stdin.text()); 
   " 2>/dev/null) || true
 fi
 
-echo "$INPUT" >> "$GSTACK_HOME/projects/$SLUG/timeline.jsonl"
+echo "$INPUT" >> "$LEADBAY_HOME/projects/$SLUG/timeline.jsonl"

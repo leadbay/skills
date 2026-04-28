@@ -1,0 +1,177 @@
+#!/usr/bin/env bash
+# lb-knowledge-explore — bootstrap orchestrator for product surfaces.
+#
+# Two modes (per spec §4.5, §9):
+#
+#   --mode code-only        Read OpenAPI specs, route maps, DB schemas, recent
+#                           commits in the current repo. File concept/, mapping/,
+#                           journey/ proposals with low confidence.
+#
+#   --mode pairing          Human-paired exploration. Prompts the developer to
+#                           narrate a UI surface; if the Chrome MCP is wired up,
+#                           also reads the live DOM. Drafts higher-confidence
+#                           proposals + a sources/app-tours/ artifact.
+#                           NEVER handles credentials. Attaches to the
+#                           developer's already-authenticated browser session.
+#
+# This is a thin orchestrator — it doesn't talk to Claude itself. The actual
+# /knowledge-explore SKILL drives the orchestration via prompts; this binary
+# does the file-IO scaffolding (creating the proposed/ + sources/ entries,
+# scanning code on demand, validating each write).
+#
+# Usage:
+#   lb-knowledge-explore --mode code-only [--repo .]
+#   lb-knowledge-explore --mode pairing --topic discover
+#   lb-knowledge-explore scan-routes        # subcommand, prints route → handler map
+#   lb-knowledge-explore scan-openapi <path>
+#   lb-knowledge-explore scan-db-schema     # introspects current DATABASE_URL_RO
+#   lb-knowledge-explore propose --concept <name> --type <t> --title <"..."> < body
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+
+MODE=""
+REPO="."
+TOPIC=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --mode) MODE="$2"; shift 2 ;;
+    --repo) REPO="$2"; shift 2 ;;
+    --topic) TOPIC="$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) break ;;
+    *) break ;;
+  esac
+done
+
+# Subcommand mode (no --mode flag): scan-routes / scan-openapi / scan-db-schema / propose
+if [[ -z "$MODE" && $# -gt 0 ]]; then
+  CMD="$1"; shift
+  case "$CMD" in
+
+    scan-routes)
+      # Best-effort multi-language route scanner. Outputs `METHOD path -> handler`
+      # one per line. Skips when nothing recognizable is found.
+      cd "$REPO"
+      # FastAPI / Starlette
+      grep -rEn '@(app|router)\.(get|post|put|delete|patch)\(' --include='*.py' . 2>/dev/null | \
+        sed -E 's|.*@(app|router)\.(get|post|put|delete|patch)\("([^"]+)".*|\U\2\E \3|' | sort -u
+      # Express
+      grep -rEn '\b(app|router)\.(get|post|put|delete|patch)\(' --include='*.js' --include='*.ts' . 2>/dev/null | \
+        sed -E 's|.*\.(get|post|put|delete|patch)\("([^"]+)".*|\U\1\E \2|' | sort -u
+      # Flask
+      grep -rEn '@app\.route\(' --include='*.py' . 2>/dev/null | \
+        sed -E 's|.*@app\.route\("([^"]+)".*|GET \1|' | sort -u
+      # Spring
+      grep -rEn '@(GetMapping|PostMapping|PutMapping|DeleteMapping|RequestMapping)\(' --include='*.java' . 2>/dev/null | \
+        sed -E 's|.*@(Get|Post|Put|Delete)Mapping\("([^"]+)".*|\U\1\E \2|' | sort -u
+      ;;
+
+    scan-openapi)
+      OAS_PATH="${1:-}"
+      if [[ -z "$OAS_PATH" ]]; then
+        # Look in conventional places
+        for c in openapi.yaml openapi.yml openapi.json api.yaml api.yml api.json docs/openapi.yaml; do
+          [[ -f "$REPO/$c" ]] && OAS_PATH="$REPO/$c" && break
+        done
+      fi
+      [[ -z "$OAS_PATH" || ! -f "$OAS_PATH" ]] && { echo "lb-knowledge-explore scan-openapi: no spec found" >&2; exit 1; }
+      LB_OAS="$OAS_PATH" python3 - <<'PY'
+import json, os, sys, pathlib
+p = pathlib.Path(os.environ["LB_OAS"])
+data = None
+try:
+    if p.suffix in (".yaml", ".yml"):
+        import yaml  # type: ignore
+        data = yaml.safe_load(p.read_text())
+    else:
+        data = json.loads(p.read_text())
+except Exception as e:
+    print(f"failed to parse {p}: {e}", file=sys.stderr); sys.exit(1)
+if not isinstance(data, dict) or "paths" not in data:
+    print("not a valid OpenAPI document (missing paths)", file=sys.stderr); sys.exit(1)
+for path, ops in (data.get("paths") or {}).items():
+    if not isinstance(ops, dict):
+        continue
+    for method, op in ops.items():
+        if method.lower() not in ("get","post","put","delete","patch"):
+            continue
+        summary = (op or {}).get("summary", "") if isinstance(op, dict) else ""
+        print(f"{method.upper()} {path}\t{summary}")
+PY
+      ;;
+
+    scan-db-schema)
+      # Tries DATABASE_URL_PROD_RO first, then DATABASE_URL, then $1.
+      DB_URL="${1:-${DATABASE_URL_PROD_RO:-${DATABASE_URL:-}}}"
+      if [[ -z "$DB_URL" ]]; then
+        echo "lb-knowledge-explore scan-db-schema: set DATABASE_URL_PROD_RO or pass URL" >&2
+        exit 2
+      fi
+      if ! command -v psql >/dev/null 2>&1; then
+        echo "lb-knowledge-explore scan-db-schema: psql not installed" >&2
+        exit 2
+      fi
+      psql "$DB_URL" -At -c "
+        SELECT table_schema || '.' || table_name AS qual,
+               array_to_string(array_agg(column_name ORDER BY ordinal_position), ', ') AS cols
+        FROM information_schema.columns
+        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+        GROUP BY 1
+        ORDER BY 1
+      " 2>/dev/null
+      ;;
+
+    propose)
+      # Pass-through to lb-knowledge-write proposed
+      exec "$SCRIPT_DIR/lb-knowledge-write" proposed "$@"
+      ;;
+
+    *) echo "Unknown subcommand: $CMD" >&2; exit 2 ;;
+  esac
+  exit 0
+fi
+
+# --mode dispatch (orchestration helpers — the SKILL drives the rest)
+case "$MODE" in
+  code-only)
+    cd "$REPO"
+    REPO_NAME=$(basename "$(pwd)")
+    echo "[lb-knowledge-explore] code-only sweep on $REPO_NAME"
+    echo ""
+    echo "## Routes"
+    "$SCRIPT_DIR/lb-knowledge-explore" scan-routes 2>/dev/null | head -50 || true
+    echo ""
+    echo "## OpenAPI summary"
+    "$SCRIPT_DIR/lb-knowledge-explore" scan-openapi 2>/dev/null | head -50 || true
+    echo ""
+    echo "## DB schema"
+    "$SCRIPT_DIR/lb-knowledge-explore" scan-db-schema 2>/dev/null | head -50 || true
+    echo ""
+    echo "Now invoke /knowledge-explore (skill) to file proposed/ entries from the above."
+    ;;
+  pairing)
+    [[ -z "$TOPIC" ]] && { echo "lb-knowledge-explore --mode pairing requires --topic" >&2; exit 2; }
+    echo "[lb-knowledge-explore] pairing mode for topic: $TOPIC"
+    echo ""
+    echo "Skill workflow:"
+    echo "  1. Open the live app in your already-logged-in browser."
+    echo "  2. Navigate to the relevant screen for '$TOPIC'."
+    echo "  3. The skill will read the live DOM via Chrome MCP (if connected)"
+    echo "     OR ask you to narrate what's visible."
+    echo "  4. Cross-references frontend route → API endpoint → DB schema."
+    echo "  5. Files concept/, mapping/, journey/ proposals + a sources/app-tours/"
+    echo "     artifact via lb-knowledge-write."
+    echo ""
+    echo "Credentials never appear in the agent prompt. The agent attaches to"
+    echo "your existing browser session — it does not log in."
+    ;;
+  *)
+    echo "Usage: lb-knowledge-explore --mode {code-only|pairing} [--topic <topic>] [--repo <path>]" >&2
+    echo "       lb-knowledge-explore [scan-routes|scan-openapi|scan-db-schema|propose] [args...]" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,62 @@
+---
+name: knowledge-dream
+description: |
+  Manually trigger a dream consolidator run against the local mirror. The dream
+  is normally fired by the leadbay/knowledge GitHub workflows (light on every
+  push, heavy nightly), but during bootstrap or while iterating you may want
+  to see what the next dream would do without waiting. This skill runs the
+  consolidator locally over ~/.leadbay/knowledge.
+  Triggers: "dream now", "consolidate the wiki", "run the consolidator",
+  "preview the next dream".
+version: 1.0.0
+allowed-tools:
+  - Bash
+  - Read
+  - Edit
+  - Write
+---
+
+# /knowledge-dream — Manual local consolidator run
+
+Runs the same consolidation logic as the GitHub workflows, but locally and
+against the local mirror. Useful during bootstrap when the wiki is small and
+you want fast feedback, or when previewing what the next nightly dream will do.
+
+## When to invoke
+
+- During Phase 0–3 bootstrap when iterating on proposed/ → wiki/ promotion.
+- When you've just written a lot of journal entries and want to see them
+  consolidated without waiting for the workflow.
+- To preview-debug the consolidation prompt itself before pushing changes
+  to `dream-light.yml` / `dream.yml`.
+
+DO NOT invoke as part of a normal coding session — the GitHub workflows will
+run the dream within minutes of your push, and they coordinate via the
+`concurrency: dream` group so they don't race.
+
+## How
+
+```bash
+cd ~/.leadbay/knowledge
+git pull --rebase --autostash
+# Light pass — only entries since last dream
+LB_LANE=cold python3 bin/lb-knowledge-validate-all
+# (For the actual consolidation prompt, follow the steps in
+# .github/workflows/dream-light.yml or dream.yml against the journal/proposed
+# entries that need processing. Local invocation is documented in
+# leadbay/knowledge/CLAUDE.md.)
+```
+
+## What you must follow
+
+The strict write rules from `CLAUDE.md` in `leadbay/knowledge`:
+- Cold lane (this skill operating with `LB_LANE=cold`) is the ONLY lane allowed
+  to write `wiki/`, `glossary.md`, `index.md`, `log.md`.
+- Hot lane (every other agent invocation) writes only to `journal/`,
+  `proposed/`, `sources/`, `questions/`.
+- Provenance is mandatory on every wiki page.
+- Promote proposals only with cross-source quorum (≥ 2 distinct slugs) or
+  explicit `force_promote: true`.
+
+When done locally, `git push` from `~/.leadbay/knowledge` so the workflows
+don't redo the work.

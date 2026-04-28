@@ -4,8 +4,8 @@ After compaction or at session start, check for recent project artifacts.
 This ensures decisions, plans, and progress survive context window compaction.
 
 ```bash
-GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
-_PROJ="$GSTACK_HOME/projects/${SLUG:-unknown}"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+_PROJ="$LEADBAY_HOME/projects/${SLUG:-unknown}"
 if [ -d "$_PROJ" ]; then
   echo "--- RECENT ARTIFACTS ---"
   # Last 3 artifacts across plans and checkpoints

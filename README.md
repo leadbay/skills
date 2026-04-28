@@ -5,13 +5,26 @@ Team skills for Claude Code.
 ## Install
 
 ```bash
-git clone https://github.com/leadbay/skills.git ~/.leadbay-skills && ~/.leadbay-skills/setup
+git clone https://github.com/leadbay/skills.git ~/.leadbay-skills && \
+  ~/.leadbay-skills/setup --with-knowledge
+```
+
+`--with-knowledge` clones the [`leadbay/knowledge`](https://github.com/leadbay/knowledge)
+mirror into `~/.leadbay/knowledge`, installs Claude Code hooks
+(`UserPromptSubmit`, `Stop`, `PreToolUse`), and a 30-min sync timer (launchd on
+macOS, systemd on Linux).
+
+For developers who also use [gstack](https://github.com/garrytan/gstack) and
+want one shared learnings store:
+
+```bash
+~/.leadbay-skills/setup --with-knowledge --gstack-interop
 ```
 
 ## Update
 
 ```bash
-~/.leadbay-skills/setup --update
+~/.leadbay-skills/setup --update --with-knowledge
 ```
 
 Each skill checks for updates on launch and notifies you.
@@ -35,9 +48,15 @@ This appends skill routing rules to your `CLAUDE.md`.
 
 | Command | Description |
 |---------|-------------|
+| `/knowledge-find` | Pre-task brief from the shared wiki + journal (auto-fired by hook) |
+| `/knowledge-capture` | Post-task journal write (auto-fired by hook) |
+| `/knowledge-explore` | Bootstrap a new product surface (paired or code-only) |
+| `/knowledge-question` | Flag an open question into the questions/ folder |
+| `/knowledge-sync` | Push local journal to leadbay/knowledge |
+| `/knowledge-dream` | Manual local consolidator preview |
+| `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
-| `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
 
 ## Architecture
 
