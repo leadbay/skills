@@ -81,6 +81,8 @@ case "$CMD" in
     KEYS_ARRAY=$(printf '%s' "$KEYS" | awk -F, 'NF{ printf "["; for(i=1;i<=NF;i++) printf (i>1?", ":"")"\""$i"\""; print "]" }')
     [[ -z "$KEYS_ARRAY" ]] && KEYS_ARRAY="[\"$SAFE_TOPIC\"]"
 
+    YAML_ACTOR=$(printf '%s' "$LB_ACTOR" | sed 's/"/\\"/g')
+
     if [[ "$BODY" == "---"* ]]; then
       PAYLOAD="$BODY"
     else
@@ -88,7 +90,7 @@ case "$CMD" in
 ---
 schema: journal-entry-v1
 slug: $SLUG
-actor: $LB_ACTOR
+actor: "$YAML_ACTOR"
 run_id: $LB_RUN_ID
 timestamp: $TIMESTAMP
 skill: $SKILL
@@ -137,7 +139,12 @@ EOF
     BODY="$(cat)"
     SAFE_CONCEPT=$(printf '%s' "$CONCEPT" | tr -cd 'a-zA-Z0-9._-')
     SAFE_ACTOR=$(printf '%s' "$LB_ACTOR" | tr -cd 'a-zA-Z0-9._-')
-    FNAME="$KNOWLEDGE_DIR/proposed/$SAFE_CONCEPT/proposals/${DATE}-${SAFE_ACTOR}-${LB_RUN_ID}.md"
+    SAFE_SLUG=$(printf '%s' "$SLUG" | tr -cd 'a-zA-Z0-9._-')
+    FNAME="$KNOWLEDGE_DIR/proposed/$SAFE_CONCEPT/proposals/${DATE}-${SAFE_SLUG}-${SAFE_ACTOR}-${LB_RUN_ID}.md"
+
+    # Escape any embedded double-quotes in TITLE / ACTOR for YAML quoting.
+    YAML_TITLE=$(printf '%s' "$TITLE" | sed 's/"/\\"/g')
+    YAML_ACTOR=$(printf '%s' "$LB_ACTOR" | sed 's/"/\\"/g')
 
     if [[ "$BODY" == "---"* ]]; then
       PAYLOAD="$BODY"
@@ -146,11 +153,11 @@ EOF
 ---
 schema: proposal-v1
 slug: $SLUG
-actor: $LB_ACTOR
+actor: "$YAML_ACTOR"
 run_id: $LB_RUN_ID
 timestamp: $TIMESTAMP
 type: $TYPE
-title: $TITLE
+title: "$YAML_TITLE"
 confidence: $CONFIDENCE
 ---
 $BODY

@@ -53,21 +53,51 @@ if [[ -z "$MODE" && $# -gt 0 ]]; then
   case "$CMD" in
 
     scan-routes)
-      # Best-effort multi-language route scanner. Outputs `METHOD path -> handler`
-      # one per line. Skips when nothing recognizable is found.
+      # Best-effort multi-language route scanner. Outputs `METHOD path` one per line.
+      # Portable across BSD (macOS) and GNU (Linux) — uses python instead of sed.
       cd "$REPO"
-      # FastAPI / Starlette
-      grep -rEn '@(app|router)\.(get|post|put|delete|patch)\(' --include='*.py' . 2>/dev/null | \
-        sed -E 's|.*@(app|router)\.(get|post|put|delete|patch)\("([^"]+)".*|\U\2\E \3|' | sort -u
-      # Express
-      grep -rEn '\b(app|router)\.(get|post|put|delete|patch)\(' --include='*.js' --include='*.ts' . 2>/dev/null | \
-        sed -E 's|.*\.(get|post|put|delete|patch)\("([^"]+)".*|\U\1\E \2|' | sort -u
-      # Flask
-      grep -rEn '@app\.route\(' --include='*.py' . 2>/dev/null | \
-        sed -E 's|.*@app\.route\("([^"]+)".*|GET \1|' | sort -u
-      # Spring
-      grep -rEn '@(GetMapping|PostMapping|PutMapping|DeleteMapping|RequestMapping)\(' --include='*.java' . 2>/dev/null | \
-        sed -E 's|.*@(Get|Post|Put|Delete)Mapping\("([^"]+)".*|\U\1\E \2|' | sort -u
+      LB_REPO="$(pwd)" python3 - <<'PY'
+import os, pathlib, re
+repo = pathlib.Path(os.environ["LB_REPO"])
+methods = "|".join(["get","post","put","delete","patch"])
+
+patterns = [
+    # FastAPI / Starlette: @app.get("/x") or @router.post("/y")
+    (re.compile(rf'@(?:app|router)\.({methods})\(\s*[\'"]([^\'"]+)[\'"]'), "{0} {1}", "*.py"),
+    # Express: app.get("/x", handler) or router.post("/y", ...)
+    (re.compile(rf'\b(?:app|router)\.({methods})\(\s*[\'"]([^\'"]+)[\'"]'), "{0} {1}", ("*.js","*.ts","*.tsx","*.mjs","*.cjs")),
+    # Flask: @app.route("/x", methods=["GET","POST"])
+    (re.compile(r'@app\.route\(\s*[\'"]([^\'"]+)[\'"]'), "GET {0}", "*.py"),
+    # Spring (Kotlin / Java): @GetMapping("/x"), @PostMapping("/y"), …
+    (re.compile(r'@(Get|Post|Put|Delete|Patch)Mapping\(\s*[\'"]([^\'"]+)[\'"]'),
+     "{0} {1}", ("*.kt","*.java")),
+    # Ktor: routing { get("/x") { … } } / post("/y") { … }
+    (re.compile(rf'\b({methods})\(\s*[\'"]([^\'"]+)[\'"]\s*\)\s*\{{'), "{0} {1}", ("*.kt",)),
+    # Rails: get '/x', to: '...' (basic — covers many but not nested resources)
+    (re.compile(rf"^\s*({methods})\s+[\'\"]([^\'\"]+)[\'\"]"), "{0} {1}", "*.rb"),
+]
+
+results = set()
+for pat, fmt, glob in patterns:
+    globs = (glob,) if isinstance(glob, str) else glob
+    for g in globs:
+        for path in repo.rglob(g):
+            # Skip node_modules / vendor / build / .git noise
+            if any(skip in path.parts for skip in ("node_modules", ".git", "build", "dist", "target", "vendor")):
+                continue
+            try:
+                text = path.read_text(errors="replace")
+            except Exception:
+                continue
+            for m in pat.finditer(text):
+                method = m.group(1).upper()
+                rest = m.group(2) if m.lastindex and m.lastindex >= 2 else ""
+                line = fmt.format(method, rest).strip()
+                results.add(line)
+
+for line in sorted(results):
+    print(line)
+PY
       ;;
 
     scan-openapi)
