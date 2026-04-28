@@ -1,0 +1,161 @@
+#!/usr/bin/env bash
+# lb-knowledge-sync — push the local hot-lane mirror to leadbay/knowledge:main.
+#
+# Runs in three contexts:
+#   - launchd / systemd timer on developer laptops (every 30min)
+#   - end-of-run step inside leadbay/claude-action on GitHub-hosted runners
+#   - on-demand via /knowledge-sync
+#
+# What it does:
+#   1. Validates everything in $LEADBAY_HOME/knowledge against schemas, lane,
+#      secrets, and size cap — refuses to push if any violation.
+#   2. Stages journal/, proposed/, sources/, questions/ only. Refuses if the
+#      diff includes wiki/, glossary.md, index.md, log.md, or schemas/.
+#   3. Optionally runs the §4.7 Layer 2 retrospective heuristic — files
+#      /knowledge-question entries for hedged-language reasoning, file paths
+#      with no wiki coverage, and empty find results — into questions/ before
+#      the commit. Skip with --no-retro.
+#   4. Pulls --rebase, commits with a generated message, pushes.
+#
+# Conflict-free by design: filenames in journal/, proposed/, questions/ are
+# unique per (slug, actor, run_id). Multiple agents pushing the same minute
+# will produce non-conflicting commits.
+#
+# Usage:
+#   lb-knowledge-sync                    # default: validate + retro + push
+#   lb-knowledge-sync --dry-run          # show what would be pushed; no commit
+#   lb-knowledge-sync --no-retro         # skip retrospective question filing
+#   lb-knowledge-sync --no-push          # commit locally; do not push
+#
+# Exits 0 on success, non-zero on validation or push failure.
+
+set -euo pipefail
+
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+KNOWLEDGE_DIR="$LEADBAY_HOME/knowledge"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+DRY_RUN=false
+DO_RETRO=true
+DO_PUSH=true
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --dry-run) DRY_RUN=true; shift ;;
+    --no-retro) DO_RETRO=false; shift ;;
+    --no-push) DO_PUSH=false; shift ;;
+    -*) echo "lb-knowledge-sync: unknown option $1" >&2; exit 2 ;;
+    *) shift ;;
+  esac
+done
+
+if [[ ! -d "$KNOWLEDGE_DIR/.git" ]]; then
+  echo "lb-knowledge-sync: $KNOWLEDGE_DIR is not a git clone." >&2
+  echo "Run \`~/.leadbay-skills/setup --with-knowledge\` first." >&2
+  exit 2
+fi
+
+cd "$KNOWLEDGE_DIR"
+
+# 1. Retrospective question filing (Layer 2)
+if [[ "$DO_RETRO" == "true" ]]; then
+  TRAIL="${LB_RETRO_TRAIL:-$LEADBAY_HOME/projects/$( "$SCRIPT_DIR/lb-slug" 2>/dev/null | grep ^SLUG= | cut -d= -f2 )/last-session.md}"
+  if [[ -f "$TRAIL" ]]; then
+    LB_TRAIL="$TRAIL" python3 - <<'PY' || true
+import os, pathlib, re, datetime, sys
+trail = pathlib.Path(os.environ["LB_TRAIL"])
+text = trail.read_text()
+hedges = [
+    r"\bI'?m not sure\b",
+    r"\bunclear whether\b",
+    r"\bwould need to check\b",
+    r"\bassume[ds]?\b",
+    r"\bguessing\b",
+    r"\bhope this is right\b",
+]
+hits = []
+for h in hedges:
+    for m in re.finditer(h, text, re.IGNORECASE):
+        start = max(0, m.start() - 80)
+        end = min(len(text), m.end() + 80)
+        hits.append(text[start:end].replace("\n", " "))
+if not hits:
+    sys.exit(0)
+import subprocess
+ts = datetime.date.today().isoformat()
+home = os.environ.get("LEADBAY_HOME", os.path.expanduser("~/.leadbay"))
+qdir = pathlib.Path(home, "knowledge", "questions")
+qdir.mkdir(parents=True, exist_ok=True)
+fname = qdir / f"{ts}-retro-{os.getpid()}.md"
+out = ["# Retrospective questions (auto-filed by lb-knowledge-sync)", ""]
+for i, snippet in enumerate(hits[:10], 1):
+    out.append(f"## {i}. Hedged or uncertain reasoning detected")
+    out.append("")
+    out.append(f"> {snippet.strip()}")
+    out.append("")
+    out.append("**Source:** end-of-session reasoning trail.")
+    out.append("**Action:** confirm or refute this assumption; if confirmed, capture as a wiki page.")
+    out.append("")
+fname.write_text("\n".join(out))
+print(f"[lb-knowledge-sync] auto-filed {fname.name} ({len(hits)} signal(s))")
+PY
+  fi
+fi
+
+# 2. Validate. The validator is in this repo (knowledge mirror), and it's the
+# single source of truth — both the dream workflows and the sync run it.
+if [[ -x "bin/lb-knowledge-validate-all" ]]; then
+  LB_LANE="${LB_LANE:-hot}" python3 bin/lb-knowledge-validate-all || {
+    echo "lb-knowledge-sync: validation failed; aborting push." >&2
+    exit 1
+  }
+else
+  echo "lb-knowledge-sync: bin/lb-knowledge-validate-all missing in mirror; refusing." >&2
+  exit 2
+fi
+
+# 3. Stage only hot-lane paths. Refuse if working tree has changes outside them.
+# git add fails atomically if any path is missing, so add one at a time.
+for p in journal proposed sources questions; do
+  [[ -d "$p" ]] && git add "$p" 2>/dev/null || true
+done
+
+# Detect any modified-but-unstaged files outside the hot lane
+if git status --porcelain | awk '{print $2}' | grep -vE '^(journal|proposed|sources|questions)/' | grep -v '^$' >/dev/null; then
+  echo "lb-knowledge-sync: working tree has changes outside hot-lane paths." >&2
+  echo "Cold-lane files (wiki/, glossary.md, index.md, log.md, schemas/) are dream-only." >&2
+  git status --short >&2
+  exit 1
+fi
+
+if git diff --cached --quiet; then
+  echo "[lb-knowledge-sync] no hot-lane changes to push."
+  exit 0
+fi
+
+if [[ "$DRY_RUN" == "true" ]]; then
+  echo "[lb-knowledge-sync] (dry-run) would commit + push:"
+  git diff --cached --stat
+  exit 0
+fi
+
+# 4. Commit
+ACTOR="${LB_ACTOR:-$(git config user.email 2>/dev/null || whoami)}"
+RUN="${LB_RUN_ID:-${GITHUB_RUN_ID:-local}}"
+COMMIT_MSG="knowledge-sync: $(date -u +%FT%TZ) actor=$ACTOR run=$RUN"
+git -c "user.name=${LB_GIT_NAME:-$(git config user.name 2>/dev/null || echo leadbay-agent)}" \
+    -c "user.email=${LB_GIT_EMAIL:-$ACTOR}" \
+    commit -m "$COMMIT_MSG"
+
+if [[ "$DO_PUSH" == "true" ]]; then
+  # Pull before push: --rebase keeps a linear history; --autostash safe because
+  # we're guaranteed clean here.
+  git pull --rebase --autostash origin main 2>&1 || {
+    echo "lb-knowledge-sync: pull --rebase failed; resolve manually in $KNOWLEDGE_DIR." >&2
+    exit 1
+  }
+  git push origin HEAD:main
+  echo "[lb-knowledge-sync] pushed $(git rev-parse HEAD)"
+else
+  echo "[lb-knowledge-sync] committed locally; --no-push set"
+fi

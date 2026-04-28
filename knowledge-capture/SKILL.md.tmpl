@@ -1,0 +1,93 @@
+---
+name: knowledge-capture
+description: |
+  Post-task journal write to the leadbay shared knowledge base. Auto-invoked by
+  the Stop hook (always); can also be invoked explicitly. Drops a journal entry
+  under journal/YYYY-MM-DD/ AND a compact learning into the local jsonl. Schema-
+  validated. Generates a proposed/ entry if a new product concept, mapping, or
+  journey was identified.
+  Triggers: "save what I learned", "capture this", "log this learning",
+  "remember this for next time".
+version: 1.0.0
+allowed-tools:
+  - Bash
+  - Read
+---
+
+<!-- include: shared/preamble.md -->
+<!-- include: shared/gstack-detect.md -->
+
+# /knowledge-capture — Post-task knowledge write
+
+Captures learnings from the just-completed task into the shared knowledge base.
+The Stop hook fires this automatically; you can also invoke explicitly to capture
+a specific insight mid-session.
+
+## When to invoke explicitly
+
+- The user said "save this" or "remember this".
+- You hit a non-obvious gotcha that future agents will hit too.
+- You synthesised a mapping (UI ↔ backend) that wasn't documented anywhere.
+- You discovered an architectural pattern or pitfall worth promoting.
+
+## What to capture (vs what NOT to)
+
+CAPTURE: things a future agent would have benefited from knowing at the start.
+- Conventions you had to infer.
+- Behaviour that surprised you or contradicted apparent obvious-ness.
+- Hidden contracts between services.
+- Pitfalls you stepped on.
+- New product concepts or mappings.
+
+DO NOT capture:
+- Code patterns already documented in CLAUDE.md or the existing wiki.
+- Trivial info ("the file is at src/api.py").
+- Anything that's just `git log` away.
+- Information you're not confident about.
+- Anything containing secrets, PII, or raw customer data.
+
+## How
+
+For each thing worth capturing:
+
+```bash
+echo "<one-paragraph insight>" | \
+  LB_ACTOR="$(git config user.email 2>/dev/null || whoami)" \
+  LB_RUN_ID="${LB_RUN_ID:-$(date +%s)}" \
+  LB_SKILL="${LB_SKILL:-knowledge-capture}" \
+  "$_LB_BIN/lb-knowledge-write" journal \
+    --topic <kebab-name> \
+    --type {pattern|pitfall|architecture|operational|preference|tool} \
+    --keys <comma,separated,keywords> \
+    --confidence <1-10>
+```
+
+If you identified a new product concept, mapping, or journey, additionally drop
+a `proposed/` entry:
+
+```bash
+echo "<concept body>" | \
+  "$_LB_BIN/lb-knowledge-write" proposed \
+    --concept <kebab-name> \
+    --type {concept|mapping|user-intent|journey} \
+    --title "<Display Name>" \
+    --confidence <1-10>
+```
+
+The dream consolidator promotes proposed entries to `wiki/` once they have
+cross-source quorum (≥ 2 proposals from distinct slugs).
+
+## Confidence scoring
+
+- 10: user-stated explicitly.
+- 8-9: observed and verified in code.
+- 6-7: inferred from multiple sources.
+- 4-5: educated guess; needs further verification.
+- < 4: don't capture.
+
+## After writing
+
+The local timer / wrapper-Action's end-of-run step runs `lb-knowledge-sync` to
+push journal entries to `leadbay/knowledge`. The light-dream workflow there
+folds them into the wiki within minutes. Your write is visible to the next
+agent immediately via `lb-knowledge-find`'s read-time augmentation.

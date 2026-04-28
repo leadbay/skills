@@ -11,8 +11,8 @@ source <("$_LB_BIN/lb-repo-mode" 2>/dev/null) || true
 REPO_MODE=${REPO_MODE:-unknown}
 echo "REPO_MODE: $REPO_MODE"
 # Learnings count
-GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
-_LEARN_FILE="$GSTACK_HOME/projects/$SLUG/learnings.jsonl"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+_LEARN_FILE="$LEADBAY_HOME/projects/$SLUG/learnings.jsonl"
 if [ -f "$_LEARN_FILE" ]; then
   _LEARN_COUNT=$(wc -l < "$_LEARN_FILE" 2>/dev/null | tr -d ' ')
   echo "LEARNINGS: $_LEARN_COUNT entries loaded"

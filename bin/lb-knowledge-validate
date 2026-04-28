@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+# lb-knowledge-validate — single-file schema/lane/secret/size validator.
+#
+# Used by:
+#   - the PreToolUse(Write|Edit) hook to block hot-lane writes that would
+#     corrupt the cold lane (wiki/, glossary.md, index.md, log.md) or violate
+#     a schema.
+#   - lb-knowledge-write internally before each write.
+#
+# Delegates to bin/lb-knowledge-validate-all in the leadbay/knowledge repo for
+# the actual validation logic — keeps that logic single-source-of-truth in the
+# knowledge repo (so the dream workflows and local hooks agree).
+#
+# Usage:
+#   lb-knowledge-validate --file <path> [--lane hot|cold] [--skip-schema]
+#
+# Env:
+#   LEADBAY_HOME (default ~/.leadbay) — knowledge mirror lives at $LEADBAY_HOME/knowledge
+#   LB_LANE      (override --lane)
+#
+# Exit 0 on pass, non-zero on failure.
+
+set -euo pipefail
+
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+KNOWLEDGE_DIR="$LEADBAY_HOME/knowledge"
+
+VALIDATOR="$KNOWLEDGE_DIR/bin/lb-knowledge-validate-all"
+if [[ ! -x "$VALIDATOR" ]]; then
+  # The full validator lives in the knowledge repo. If the mirror isn't
+  # synced yet, decline to validate but don't block — the user is probably
+  # mid-setup and the dream workflows in the repo itself will still gate.
+  echo "lb-knowledge-validate: $VALIDATOR not found; skipping (run setup --with-knowledge)" >&2
+  exit 0
+fi
+
+# Pass through args unchanged
+exec python3 "$VALIDATOR" "$@"

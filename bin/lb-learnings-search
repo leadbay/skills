@@ -3,13 +3,13 @@
 # Ported from gstack-learnings-search (https://github.com/garrytan/gstack)
 # Usage: lb-learnings-search [--type TYPE] [--query KEYWORD] [--limit N] [--cross-project]
 #
-# Reads ~/.gstack/projects/$SLUG/learnings.jsonl, applies confidence decay,
+# Reads ~/.leadbay/projects/$SLUG/learnings.jsonl, applies confidence decay,
 # resolves duplicates (latest winner per key+type), and outputs formatted text.
 # Exit 0 silently if no learnings file exists.
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 eval "$("$SCRIPT_DIR/lb-slug" 2>/dev/null)"
-GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
 
 TYPE=""
 QUERY=""
@@ -26,7 +26,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-LEARNINGS_FILE="$GSTACK_HOME/projects/$SLUG/learnings.jsonl"
+LEARNINGS_FILE="$LEADBAY_HOME/projects/$SLUG/learnings.jsonl"
 
 # Collect all JSONL files to search
 FILES=()
@@ -34,7 +34,7 @@ FILES=()
 
 if [ "$CROSS_PROJECT" = true ]; then
   # Add other projects' learnings (max 5, sorted by mtime)
-  for f in $(find "$GSTACK_HOME/projects" -name "learnings.jsonl" -not -path "*/$SLUG/*" 2>/dev/null | head -5); do
+  for f in $(find "$LEADBAY_HOME/projects" -name "learnings.jsonl" -not -path "*/$SLUG/*" 2>/dev/null | head -5); do
     FILES+=("$f")
   done
 fi
@@ -44,14 +44,14 @@ if [ ${#FILES[@]} -eq 0 ]; then
 fi
 
 # Process all files through bun for JSON parsing, decay, dedup, filtering
-GSTACK_SEARCH_TYPE="$TYPE" GSTACK_SEARCH_QUERY="$QUERY" GSTACK_SEARCH_LIMIT="$LIMIT" GSTACK_SEARCH_SLUG="$SLUG" GSTACK_SEARCH_CROSS="$CROSS_PROJECT" \
-cat "${FILES[@]}" 2>/dev/null | GSTACK_SEARCH_TYPE="$TYPE" GSTACK_SEARCH_QUERY="$QUERY" GSTACK_SEARCH_LIMIT="$LIMIT" GSTACK_SEARCH_SLUG="$SLUG" GSTACK_SEARCH_CROSS="$CROSS_PROJECT" bun -e "
+LB_SEARCH_TYPE="$TYPE" LB_SEARCH_QUERY="$QUERY" LB_SEARCH_LIMIT="$LIMIT" LB_SEARCH_SLUG="$SLUG" LB_SEARCH_CROSS="$CROSS_PROJECT" \
+cat "${FILES[@]}" 2>/dev/null | LB_SEARCH_TYPE="$TYPE" LB_SEARCH_QUERY="$QUERY" LB_SEARCH_LIMIT="$LIMIT" LB_SEARCH_SLUG="$SLUG" LB_SEARCH_CROSS="$CROSS_PROJECT" bun -e "
 const lines = (await Bun.stdin.text()).trim().split('\n').filter(Boolean);
 const now = Date.now();
-const type = process.env.GSTACK_SEARCH_TYPE || '';
-const query = (process.env.GSTACK_SEARCH_QUERY || '').toLowerCase();
-const limit = parseInt(process.env.GSTACK_SEARCH_LIMIT || '10', 10);
-const slug = process.env.GSTACK_SEARCH_SLUG || '';
+const type = process.env.LB_SEARCH_TYPE || '';
+const query = (process.env.LB_SEARCH_QUERY || '').toLowerCase();
+const limit = parseInt(process.env.LB_SEARCH_LIMIT || '10', 10);
+const slug = process.env.LB_SEARCH_SLUG || '';
 
 const entries = [];
 for (const line of lines) {
@@ -69,7 +69,7 @@ for (const line of lines) {
 
     // Determine if this is from the current project or cross-project
     // Cross-project entries are tagged for display
-    const isCrossProject = !line.includes(slug) && process.env.GSTACK_SEARCH_CROSS === 'true';
+    const isCrossProject = !line.includes(slug) && process.env.LB_SEARCH_CROSS === 'true';
     e._crossProject = isCrossProject;
 
     // Trust gate: cross-project learnings only loaded if trusted (user-stated)

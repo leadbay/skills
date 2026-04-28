@@ -47,8 +47,8 @@ source <("$_LB_BIN/lb-repo-mode" 2>/dev/null) || true
 REPO_MODE=${REPO_MODE:-unknown}
 echo "REPO_MODE: $REPO_MODE"
 # Learnings count
-GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
-_LEARN_FILE="$GSTACK_HOME/projects/$SLUG/learnings.jsonl"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+_LEARN_FILE="$LEADBAY_HOME/projects/$SLUG/learnings.jsonl"
 if [ -f "$_LEARN_FILE" ]; then
   _LEARN_COUNT=$(wc -l < "$_LEARN_FILE" 2>/dev/null | tr -d ' ')
   echo "LEARNINGS: $_LEARN_COUNT entries loaded"
@@ -90,8 +90,8 @@ After compaction or at session start, check for recent project artifacts.
 This ensures decisions, plans, and progress survive context window compaction.
 
 ```bash
-GSTACK_HOME="${GSTACK_HOME:-$HOME/.gstack}"
-_PROJ="$GSTACK_HOME/projects/${SLUG:-unknown}"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+_PROJ="$LEADBAY_HOME/projects/${SLUG:-unknown}"
 if [ -d "$_PROJ" ]; then
   echo "--- RECENT ARTIFACTS ---"
   # Last 3 artifacts across plans and checkpoints
@@ -271,7 +271,7 @@ echo "=== BROADER ARCHITECTURE (remaining maps) ==="
 
 Replace `ISSUE_KEYWORD` with the most specific keyword from the issue (e.g., "monitor", "payment", "auth"). The keyword search matches against `key`, `insight`, and `files` fields.
 
-This searches `~/.gstack/projects/{slug}/learnings.jsonl` (the shared learnings store). If all produce no output, no prior learnings exist — proceed to 0a.
+This searches `~/.leadbay/projects/{slug}/learnings.jsonl` (the shared learnings store). If all produce no output, no prior learnings exist — proceed to 0a.
 
 **When many learnings load (>15):** Don't read them all in detail. Scan the `[key]` names and confidence scores. Print only the ones relevant to the current issue. The rest are there for future sessions on other code paths.
 
@@ -521,7 +521,7 @@ B) Code-only diagnosis — I just have the source code
 
 **NEVER persist secret values (API keys, connection strings, tokens, passwords) to CLAUDE.md or any file that could be committed to git.**
 
-All Phase 0 discoveries are persisted via learnings (`~/.gstack/projects/$SLUG/learnings.jsonl`), which lives outside the repo. Only **structural information** is logged: tool names, env var NAMES (prefixed with `$`, never values), regions, endpoints, repo layout. Actual secret values are always resolved at runtime from environment variables.
+All Phase 0 discoveries are persisted via learnings (`~/.leadbay/projects/$SLUG/learnings.jsonl`), which lives outside the repo. Only **structural information** is logged: tool names, env var NAMES (prefixed with `$`, never values), regions, endpoints, repo layout. Actual secret values are always resolved at runtime from environment variables.
 
 ### 0h. Connectivity validation
 
@@ -546,7 +546,7 @@ Before logging any learnings, verify the learnings file won't be committed to gi
 
 ```bash
 eval "$("$_LB_BIN/lb-slug" 2>/dev/null)" 2>/dev/null || true
-_LEARNINGS_DIR="${GSTACK_HOME:-$HOME/.gstack}/projects/${SLUG:-unknown}"
+_LEARNINGS_DIR="${LEADBAY_HOME:-$HOME/.leadbay}/projects/${SLUG:-unknown}"
 _LEARNINGS_FILE="$_LEARNINGS_DIR/learnings.jsonl"
 
 # Check if the learnings file is inside the current repo's git tree
@@ -1343,7 +1343,7 @@ Replace `FLOW_NAME` with a short name (e.g., `set-lead-status`, `user-registrati
 - **All database queries are read-only.** No INSERT, UPDATE, DELETE, DROP, TRUNCATE, ALTER. Ever.
 - **Sanitize before searching.** Strip hostnames, IPs, file paths, SQL fragments, customer data, API keys from any WebSearch queries.
 - **Don't expose secrets in the report.** Connection strings, API keys, customer PII must never appear in the diagnostic report.
-- **Never persist secrets to git-tracked files.** API keys, tokens, connection strings, and passwords must NEVER be written to CLAUDE.md, README, or any file inside the repo. Use env var references (`$SENTRY_AUTH_TOKEN`) not literal values. All diagnostic data persists via learnings (`~/.gstack/projects/$SLUG/learnings.jsonl`) which is outside the repo. Phase 0i verifies gitignore safety before writing.
+- **Never persist secrets to git-tracked files.** API keys, tokens, connection strings, and passwords must NEVER be written to CLAUDE.md, README, or any file inside the repo. Use env var references (`$SENTRY_AUTH_TOKEN`) not literal values. All diagnostic data persists via learnings (`~/.leadbay/projects/$SLUG/learnings.jsonl`) which is outside the repo. Phase 0i verifies gitignore safety before writing.
 - **EXPLAIN before expensive queries.** If a DB query scans >100k rows, optimize it or sample.
 
 ### Cross-repo rules

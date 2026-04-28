@@ -1,0 +1,248 @@
+#!/usr/bin/env bash
+# lb-knowledge-find — pre-task retrieval brief for any agent run.
+#
+# Auto-invoked by the UserPromptSubmit hook (see setup --with-knowledge). Takes
+# the user's prompt as argument(s) or stdin, and returns a focused brief from
+# THREE sources:
+#
+#   1. Local learnings (~/.leadbay/projects/<slug>/learnings.jsonl) via lb-learnings-search
+#   2. Consolidated wiki   (~/.leadbay/knowledge/wiki/**/*.md) by frontmatter title/aliases/backend_names
+#   3. Recent unconsolidated journal (~/.leadbay/knowledge/journal/) — last 7 days,
+#      tagged "unconsolidated" so the model knows to weight them less.
+#
+# It also reads ~/.leadbay/knowledge/glossary.md for alias expansion of product terms.
+#
+# Output is markdown, prefixed with a "## Knowledge brief" heading and ending with
+# the standing-instructions block (see KNOWLEDGE_PROTOCOL_INSTRUCTIONS below).
+# The hook prepends this to the user's actual prompt as system context.
+#
+# Usage:
+#   lb-knowledge-find "<prompt text>"          # one shot
+#   echo "<prompt>" | lb-knowledge-find        # via stdin
+#   lb-knowledge-find --quiet "<prompt>"       # suppress headers if no results
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+KNOWLEDGE_DIR="$LEADBAY_HOME/knowledge"
+
+QUIET=false
+WIKI_LIMIT="${LB_FIND_WIKI_LIMIT:-3}"
+JOURNAL_DAYS="${LB_FIND_JOURNAL_DAYS:-7}"
+JOURNAL_LIMIT="${LB_FIND_JOURNAL_LIMIT:-5}"
+LEARNINGS_LIMIT="${LB_FIND_LEARNINGS_LIMIT:-5}"
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --quiet) QUIET=true; shift ;;
+    --wiki-limit) WIKI_LIMIT="$2"; shift 2 ;;
+    --journal-days) JOURNAL_DAYS="$2"; shift 2 ;;
+    --journal-limit) JOURNAL_LIMIT="$2"; shift 2 ;;
+    --learnings-limit) LEARNINGS_LIMIT="$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) echo "lb-knowledge-find: unknown option $1" >&2; exit 2 ;;
+    *) break ;;
+  esac
+done
+
+PROMPT="${*:-}"
+if [[ -z "$PROMPT" ]] && [[ ! -t 0 ]]; then
+  PROMPT="$(cat)"
+fi
+
+# Strip newlines, lower-case for matching
+NORMALIZED=$(printf '%s' "$PROMPT" | tr '\n' ' ' | tr '[:upper:]' '[:lower:]')
+
+# --- 1. Local learnings ---
+LEARNINGS_OUT=""
+if [[ -x "$SCRIPT_DIR/lb-learnings-search" ]]; then
+  KEYWORD=$(printf '%s' "$NORMALIZED" | tr -cd 'a-z0-9 \-_' | awk '{for(i=1;i<=NF;i++) if (length($i)>=4) {print $i; exit}}')
+  if [[ -n "$KEYWORD" ]]; then
+    LEARNINGS_OUT=$("$SCRIPT_DIR/lb-learnings-search" --query "$KEYWORD" --limit "$LEARNINGS_LIMIT" 2>/dev/null || true)
+  else
+    LEARNINGS_OUT=$("$SCRIPT_DIR/lb-learnings-search" --limit "$LEARNINGS_LIMIT" 2>/dev/null || true)
+  fi
+fi
+
+# --- 2. Consolidated wiki ---
+# Match the prompt against frontmatter (title, aliases, backend_names, ui_locations)
+# of every wiki page. Score = number of distinct token hits, weighted by frontmatter
+# field. Top WIKI_LIMIT pages are returned in full.
+WIKI_OUT=""
+WIKI_DIR="$KNOWLEDGE_DIR/wiki"
+if [[ -d "$WIKI_DIR" ]]; then
+  WIKI_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_WIKI_DIR="$WIKI_DIR" LB_WIKI_LIMIT="$WIKI_LIMIT" python3 - <<'PY'
+import os, pathlib, re, sys
+norm = os.environ["LB_NORMALIZED"]
+root = pathlib.Path(os.environ["LB_WIKI_DIR"])
+limit = int(os.environ["LB_WIKI_LIMIT"])
+tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]{2,}", norm))
+hits = []
+for p in root.rglob("*.md"):
+    try:
+        text = p.read_text()
+    except Exception:
+        continue
+    if not text.startswith("---"):
+        continue
+    end = text.find("\n---", 4)
+    if end < 0:
+        continue
+    fm_raw = text[4:end]
+    body = text[end+4:]
+    score = 0
+    field_weight = {"title": 5, "aliases": 4, "backend_names": 3, "ui_locations": 2}
+    for line in fm_raw.splitlines():
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        k = k.strip()
+        if k not in field_weight:
+            continue
+        v_norm = v.lower()
+        for t in tokens:
+            if t in v_norm:
+                score += field_weight[k]
+    if score > 0:
+        hits.append((score, p, text))
+hits.sort(key=lambda x: -x[0])
+out = []
+for score, p, text in hits[:limit]:
+    rel = p.relative_to(root.parent)
+    out.append(f"### {rel} (relevance={score})\n\n{text}")
+print("\n\n---\n\n".join(out))
+PY
+  ) || WIKI_OUT=""
+fi
+
+# --- 3. Recent unconsolidated journal entries ---
+JOURNAL_OUT=""
+JOURNAL_DIR="$KNOWLEDGE_DIR/journal"
+if [[ -d "$JOURNAL_DIR" ]]; then
+  JOURNAL_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_JOURNAL_DIR="$JOURNAL_DIR" LB_JOURNAL_DAYS="$JOURNAL_DAYS" LB_JOURNAL_LIMIT="$JOURNAL_LIMIT" python3 - <<'PY'
+import os, pathlib, re, time, sys
+norm = os.environ["LB_NORMALIZED"]
+root = pathlib.Path(os.environ["LB_JOURNAL_DIR"])
+days = int(os.environ["LB_JOURNAL_DAYS"])
+limit = int(os.environ["LB_JOURNAL_LIMIT"])
+tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]{2,}", norm))
+cutoff = time.time() - days*86400
+hits = []
+for p in root.rglob("*.md"):
+    try:
+        if p.stat().st_mtime < cutoff:
+            continue
+        text = p.read_text()
+    except Exception:
+        continue
+    body_norm = text.lower()
+    score = sum(1 for t in tokens if t in body_norm)
+    if score > 0:
+        hits.append((score, p.stat().st_mtime, p, text))
+hits.sort(key=lambda x: (-x[0], -x[1]))
+out = []
+for score, mtime, p, text in hits[:limit]:
+    rel = p.relative_to(root.parent)
+    out.append(f"### {rel} [unconsolidated, score={score}]\n\n{text}")
+print("\n\n---\n\n".join(out))
+PY
+  ) || JOURNAL_OUT=""
+fi
+
+# --- 4. Glossary alias expansion (informational only) ---
+GLOSSARY_OUT=""
+GLOSSARY_FILE="$KNOWLEDGE_DIR/glossary.md"
+if [[ -f "$GLOSSARY_FILE" ]]; then
+  # Extract any glossary table rows whose term token appears in the prompt
+  GLOSSARY_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_GLOSSARY="$GLOSSARY_FILE" python3 - <<'PY'
+import os, re
+norm = os.environ["LB_NORMALIZED"]
+fp = os.environ["LB_GLOSSARY"]
+tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]{2,}", norm))
+hits = []
+try:
+    txt = open(fp).read()
+except Exception:
+    raise SystemExit
+for line in txt.splitlines():
+    if not line.startswith("|") or "----" in line or "Term" in line:
+        continue
+    cells = [c.strip() for c in line.strip("|").split("|")]
+    blob = " ".join(cells).lower()
+    if any(t in blob for t in tokens):
+        hits.append(line)
+if hits:
+    print("\n".join(hits))
+PY
+  ) || GLOSSARY_OUT=""
+fi
+
+# Standing instructions injected on every brief — Layer 1 of §4.7 enforcement
+read -r -d '' KNOWLEDGE_PROTOCOL_INSTRUCTIONS <<'EOF' || true
+
+## Standing instructions (knowledge protocol)
+
+- If during this task you hit an architectural ambiguity, an unfamiliar
+  product concept, or contradictory information that the brief above
+  doesn't resolve — invoke `/knowledge-question` rather than guessing.
+- If the user is asking you to learn, document, or explore a new product
+  surface (a UI tab, a backend service, a user journey) — invoke
+  `/knowledge-explore` rather than starting to code immediately.
+- If you find yourself about to write more than ~20 lines of code in an
+  area no journal entry or wiki page covers, pause and invoke
+  `/knowledge-question` with what you'd be guessing at.
+- Treat unconsolidated journal entries (tagged above) as *recent observations*,
+  not canonical truth — they outrank stale wiki pages but the dream consolidator
+  may still revise them.
+EOF
+
+# Emit the brief
+HAS_CONTENT=false
+[[ -n "$LEARNINGS_OUT$WIKI_OUT$JOURNAL_OUT$GLOSSARY_OUT" ]] && HAS_CONTENT=true
+
+if [[ "$QUIET" == "true" && "$HAS_CONTENT" == "false" ]]; then
+  exit 0
+fi
+
+echo "## Knowledge brief"
+echo ""
+echo "_Prepended automatically by the \`UserPromptSubmit\` hook from \`~/.leadbay/knowledge\` and local learnings._"
+echo ""
+
+if [[ -n "$GLOSSARY_OUT" ]]; then
+  echo "### Glossary hits"
+  echo ""
+  echo "$GLOSSARY_OUT"
+  echo ""
+fi
+
+if [[ -n "$WIKI_OUT" ]]; then
+  echo "### Wiki pages"
+  echo ""
+  echo "$WIKI_OUT"
+  echo ""
+fi
+
+if [[ -n "$JOURNAL_OUT" ]]; then
+  echo "### Recent journal entries (unconsolidated)"
+  echo ""
+  echo "$JOURNAL_OUT"
+  echo ""
+fi
+
+if [[ -n "$LEARNINGS_OUT" ]]; then
+  echo "### Local learnings (this project)"
+  echo ""
+  echo "$LEARNINGS_OUT"
+  echo ""
+fi
+
+if [[ "$HAS_CONTENT" == "false" ]]; then
+  echo "_No matching wiki pages, journal entries, or learnings. The wiki may not yet cover this topic._"
+  echo ""
+  echo "_Recommend running \`/knowledge-explore\` to seed it from the live app + code._"
+  echo ""
+fi
+
+echo "$KNOWLEDGE_PROTOCOL_INSTRUCTIONS"

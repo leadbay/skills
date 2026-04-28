@@ -1,0 +1,215 @@
+#!/usr/bin/env bash
+# lb-knowledge-write — schema-validated, path-scoped write into the knowledge mirror.
+#
+# Used by /knowledge-capture and /knowledge-explore to drop journal entries, proposals,
+# and source artifacts into ~/.leadbay/knowledge/. Refuses to write outside the
+# allowed paths or violate any schema. Also dual-writes journal entries to
+# ~/.leadbay/projects/<slug>/learnings.jsonl via lb-learnings-log so the local
+# search index stays in sync without waiting for a sync.
+#
+# Usage:
+#   lb-knowledge-write journal --topic <topic> --type <type> --keys <k1,k2> < body.md
+#   lb-knowledge-write proposed --concept <kebab-name> --type <type> --title "<...>" < body.md
+#   lb-knowledge-write source --subdir app-tours --name discover-tab.md < body.md
+#   lb-knowledge-write question --topic <topic> < body.md
+#
+# Frontmatter is constructed from CLI args and prepended to the body if absent.
+# If the body already starts with `---\n`, it's left alone (the body is assumed
+# to have hand-written frontmatter; we just validate it).
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+KNOWLEDGE_DIR="$LEADBAY_HOME/knowledge"
+
+if [[ ! -d "$KNOWLEDGE_DIR" ]]; then
+  echo "lb-knowledge-write: $KNOWLEDGE_DIR does not exist." >&2
+  echo "Run \`~/.leadbay-skills/setup --with-knowledge\` first." >&2
+  exit 2
+fi
+
+eval "$("$SCRIPT_DIR/lb-slug" 2>/dev/null)"
+SLUG="${SLUG:-unknown}"
+
+LB_ACTOR="${LB_ACTOR:-$(whoami)}"
+LB_RUN_ID="${LB_RUN_ID:-${GITHUB_RUN_ID:-$(date +%s)}}"
+TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+DATE="$(date -u +%Y-%m-%d)"
+
+if [[ $# -lt 1 ]]; then
+  echo "Usage: lb-knowledge-write [journal|proposed|source|question] [opts] < body" >&2
+  exit 2
+fi
+CMD="$1"
+shift
+
+write_file() {
+  local target="$1" payload="$2"
+  mkdir -p "$(dirname "$target")"
+  printf '%s' "$payload" > "$target"
+  if "$SCRIPT_DIR/lb-knowledge-validate" --file "$target" --lane hot; then
+    echo "$target"
+  else
+    rm -f "$target"
+    echo "lb-knowledge-write: validation failed; nothing written." >&2
+    exit 1
+  fi
+}
+
+case "$CMD" in
+  journal)
+    TOPIC="" TYPE="pattern" KEYS="" SKILL="${LB_SKILL:-knowledge-capture}" CONFIDENCE=7
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --topic) TOPIC="$2"; shift 2 ;;
+        --type) TYPE="$2"; shift 2 ;;
+        --keys) KEYS="$2"; shift 2 ;;
+        --skill) SKILL="$2"; shift 2 ;;
+        --confidence) CONFIDENCE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+      esac
+    done
+    [[ -z "$TOPIC" ]] && { echo "--topic required" >&2; exit 2; }
+
+    BODY="$(cat)"
+    SAFE_SLUG=$(printf '%s' "$SLUG" | tr -cd 'a-zA-Z0-9._-')
+    SAFE_TOPIC=$(printf '%s' "$TOPIC" | tr -cd 'a-zA-Z0-9._-')
+    SAFE_ACTOR=$(printf '%s' "$LB_ACTOR" | tr -cd 'a-zA-Z0-9._-')
+    FNAME="$KNOWLEDGE_DIR/journal/$DATE/${SAFE_SLUG}-${SAFE_ACTOR}-${LB_RUN_ID}-${SAFE_TOPIC}.md"
+
+    KEYS_ARRAY=$(printf '%s' "$KEYS" | awk -F, 'NF{ printf "["; for(i=1;i<=NF;i++) printf (i>1?", ":"")"\""$i"\""; print "]" }')
+    [[ -z "$KEYS_ARRAY" ]] && KEYS_ARRAY="[\"$SAFE_TOPIC\"]"
+
+    YAML_ACTOR=$(printf '%s' "$LB_ACTOR" | sed 's/"/\\"/g')
+
+    if [[ "$BODY" == "---"* ]]; then
+      PAYLOAD="$BODY"
+    else
+      PAYLOAD=$(cat <<EOF
+---
+schema: journal-entry-v1
+slug: $SLUG
+actor: "$YAML_ACTOR"
+run_id: $LB_RUN_ID
+timestamp: $TIMESTAMP
+skill: $SKILL
+type: $TYPE
+keys: $KEYS_ARRAY
+confidence: $CONFIDENCE
+---
+$BODY
+EOF
+)
+    fi
+
+    write_file "$FNAME" "$PAYLOAD"
+
+    # Dual-write a compact learning to the local jsonl for read-time search
+    if [[ -x "$SCRIPT_DIR/lb-learnings-log" ]]; then
+      INSIGHT_LINE=$(printf '%s' "$BODY" | grep -v '^---' | grep -v '^$' | head -1 | head -c 280 || true)
+      [[ -z "$INSIGHT_LINE" ]] && INSIGHT_LINE="see $FNAME"
+      ALLOWED_TYPE="$TYPE"
+      case "$ALLOWED_TYPE" in
+        pattern|pitfall|preference|architecture|tool|operational) ;;
+        *) ALLOWED_TYPE="pattern" ;;
+      esac
+      printf '{"skill":"%s","type":"%s","key":"%s","insight":%s,"confidence":%d,"source":"observed"}' \
+        "$SKILL" "$ALLOWED_TYPE" "$SAFE_TOPIC" \
+        "$(printf '%s' "$INSIGHT_LINE" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read().strip()))')" \
+        "$CONFIDENCE" \
+        | xargs -I{} "$SCRIPT_DIR/lb-learnings-log" {} 2>/dev/null || true
+    fi
+    ;;
+
+  proposed)
+    CONCEPT="" TYPE="concept" TITLE="" CONFIDENCE=5
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --concept) CONCEPT="$2"; shift 2 ;;
+        --type) TYPE="$2"; shift 2 ;;
+        --title) TITLE="$2"; shift 2 ;;
+        --confidence) CONFIDENCE="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+      esac
+    done
+    [[ -z "$CONCEPT" ]] && { echo "--concept required" >&2; exit 2; }
+    [[ -z "$TITLE" ]] && TITLE="$CONCEPT"
+
+    BODY="$(cat)"
+    SAFE_CONCEPT=$(printf '%s' "$CONCEPT" | tr -cd 'a-zA-Z0-9._-')
+    SAFE_ACTOR=$(printf '%s' "$LB_ACTOR" | tr -cd 'a-zA-Z0-9._-')
+    SAFE_SLUG=$(printf '%s' "$SLUG" | tr -cd 'a-zA-Z0-9._-')
+    FNAME="$KNOWLEDGE_DIR/proposed/$SAFE_CONCEPT/proposals/${DATE}-${SAFE_SLUG}-${SAFE_ACTOR}-${LB_RUN_ID}.md"
+
+    # Escape any embedded double-quotes in TITLE / ACTOR for YAML quoting.
+    YAML_TITLE=$(printf '%s' "$TITLE" | sed 's/"/\\"/g')
+    YAML_ACTOR=$(printf '%s' "$LB_ACTOR" | sed 's/"/\\"/g')
+
+    if [[ "$BODY" == "---"* ]]; then
+      PAYLOAD="$BODY"
+    else
+      PAYLOAD=$(cat <<EOF
+---
+schema: proposal-v1
+slug: $SLUG
+actor: "$YAML_ACTOR"
+run_id: $LB_RUN_ID
+timestamp: $TIMESTAMP
+type: $TYPE
+title: "$YAML_TITLE"
+confidence: $CONFIDENCE
+---
+$BODY
+EOF
+)
+    fi
+
+    write_file "$FNAME" "$PAYLOAD"
+    ;;
+
+  source)
+    SUBDIR="" NAME=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --subdir) SUBDIR="$2"; shift 2 ;;
+        --name) NAME="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+      esac
+    done
+    [[ -z "$SUBDIR" || -z "$NAME" ]] && { echo "--subdir and --name required" >&2; exit 2; }
+    SAFE_SUBDIR=$(printf '%s' "$SUBDIR" | tr -cd 'a-zA-Z0-9._/-')
+    SAFE_NAME=$(printf '%s' "$NAME" | tr -cd 'a-zA-Z0-9._-')
+    FNAME="$KNOWLEDGE_DIR/sources/$SAFE_SUBDIR/${DATE}-${SAFE_NAME}"
+    BODY="$(cat)"
+    mkdir -p "$(dirname "$FNAME")"
+    printf '%s' "$BODY" > "$FNAME"
+    echo "$FNAME"
+    # No schema check on sources/ — these are raw artifacts, but still get secret-scanned by the validator.
+    "$SCRIPT_DIR/lb-knowledge-validate" --file "$FNAME" --lane hot --skip-schema || { rm -f "$FNAME"; exit 1; }
+    ;;
+
+  question)
+    TOPIC=""
+    while [[ $# -gt 0 ]]; do
+      case "$1" in
+        --topic) TOPIC="$2"; shift 2 ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+      esac
+    done
+    [[ -z "$TOPIC" ]] && { echo "--topic required" >&2; exit 2; }
+    SAFE_TOPIC=$(printf '%s' "$TOPIC" | tr -cd 'a-zA-Z0-9._-')
+    BODY="$(cat)"
+    FNAME="$KNOWLEDGE_DIR/questions/${DATE}-${SAFE_TOPIC}.md"
+    # Questions are free-form — no schema, just secret-scan + size cap.
+    mkdir -p "$(dirname "$FNAME")"
+    printf '%s' "$BODY" > "$FNAME"
+    echo "$FNAME"
+    "$SCRIPT_DIR/lb-knowledge-validate" --file "$FNAME" --lane hot --skip-schema || { rm -f "$FNAME"; exit 1; }
+    ;;
+
+  *)
+    echo "Unknown command: $CMD (expected: journal|proposed|source|question)" >&2
+    exit 2
+    ;;
+esac

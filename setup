@@ -3,18 +3,56 @@ set -euo pipefail
 
 SKILLS_HOME="${HOME}/.leadbay-skills"
 CLAUDE_SKILLS="${HOME}/.claude/skills"
+CLAUDE_SETTINGS="${HOME}/.claude/settings.json"
+LEADBAY_HOME="${LEADBAY_HOME:-${HOME}/.leadbay}"
+KNOWLEDGE_REPO_URL="${LEADBAY_KNOWLEDGE_URL:-https://github.com/leadbay/knowledge.git}"
+KNOWLEDGE_DIR="${LEADBAY_HOME}/knowledge"
+
+# Defaults — flags below override these.
+WITH_KNOWLEDGE=false       # set true via --with-knowledge (will become default in v1.0)
+GSTACK_INTEROP=false       # set true via --gstack-interop
+CI_MODE=false              # set true via --ci (skips timers, expects ANTHROPIC env, etc.)
+DO_UPDATE=false            # set true via --update
+ADD_TO_PROJECT=false       # set true via --add-to-project
+GSTACK_INTEROP_REMOVE=false
 
 usage() {
-  echo "Usage: setup [--update] [--add-to-project]"
-  echo ""
-  echo "  (no args)         Install/link skills into Claude Code"
-  echo "  --update          Pull latest from GitHub, then install"
-  echo "  --add-to-project  Add skill routing to current project's CLAUDE.md"
+  cat <<EOF
+Usage: setup [flags]
+
+Flags:
+  --update              Pull latest leadbay-skills from GitHub before install
+  --with-knowledge      Clone leadbay/knowledge mirror into ~/.leadbay/knowledge,
+                        install hooks (UserPromptSubmit, Stop, PreToolUse), and
+                        install a 30-min sync timer (launchd on macOS, systemd
+                        on Linux).
+  --gstack-interop      Bridge ~/.leadbay/ ↔ ~/.gstack/ so both ecosystems share
+                        learnings + slug cache. Idempotent.
+  --gstack-interop --remove   Undo the gstack bridge.
+  --ci                  Run in CI mode (skip timers; designed to be invoked from
+                        leadbay/claude-action).
+  --add-to-project      Append a Leadbay-skills section to the current dir's CLAUDE.md.
+  --help / -h           This help.
+EOF
   exit 0
 }
 
-# Handle --add-to-project
-if [ "${1:-}" = "--add-to-project" ]; then
+# Argument parsing (simple, position-independent).
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --update) DO_UPDATE=true; shift ;;
+    --with-knowledge) WITH_KNOWLEDGE=true; shift ;;
+    --gstack-interop) GSTACK_INTEROP=true; shift ;;
+    --remove) GSTACK_INTEROP_REMOVE=true; shift ;;
+    --ci) CI_MODE=true; shift ;;
+    --add-to-project) ADD_TO_PROJECT=true; shift ;;
+    -h|--help) usage ;;
+    *) echo "Unknown flag: $1" >&2; usage ;;
+  esac
+done
+
+# --- --add-to-project (legacy quick path) ---
+if [ "$ADD_TO_PROJECT" = "true" ]; then
   if [ ! -f "CLAUDE.md" ]; then
     echo "No CLAUDE.md found in current directory."
     exit 1
@@ -31,32 +69,55 @@ If `~/.leadbay-skills` exists, the following team skills are available:
 
 | Command | What it does |
 |---------|-------------|
-| `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
-| `/sales-retro` | Weekly sales intelligence: signups, activation, churn, Big Fish |
+| `/knowledge-find` | Pre-task knowledge brief (auto-fired by hook) |
+| `/knowledge-capture` | Post-task journal write (auto-fired by hook) |
+| `/knowledge-explore` | Bootstrap a new product surface |
+| `/knowledge-question` | Flag an open question |
+| `/knowledge-sync` | Push local journal to leadbay/knowledge |
+| `/knowledge-dream` | Manual consolidator preview |
+| `/diagnose` | Deep diagnostic root cause analysis |
+| `/org-retro` | Weekly org-wide engineering retro |
+| `/sales-retro` | Weekly sales intelligence retro |
 
 When the user's request matches a skill, invoke it with the Skill tool as your FIRST action.
+
+Before any non-trivial coding task, your FIRST action is /knowledge-find with the
+user's request as input. Only proceed once you've read the brief.
+
+After a non-trivial task completes, invoke /knowledge-capture with a one-paragraph
+summary of what was learned.
+
+If you encounter a dilemma you can't resolve from the brief, invoke /knowledge-question
+rather than guessing.
 INJECT
   echo "Added Leadbay skills section to CLAUDE.md"
   exit 0
 fi
 
-# Handle --update
-if [ "${1:-}" = "--update" ]; then
+# --- --gstack-interop --remove ---
+if [ "$GSTACK_INTEROP" = "true" ] && [ "$GSTACK_INTEROP_REMOVE" = "true" ]; then
+  if [ -L "$LEADBAY_HOME" ]; then
+    rm "$LEADBAY_HOME"
+    echo "Removed ~/.leadbay → ~/.gstack symlink."
+  elif [ -L "${HOME}/.gstack" ]; then
+    rm "${HOME}/.gstack"
+    echo "Removed ~/.gstack → ~/.leadbay symlink."
+  else
+    echo "No active interop bridge to remove."
+  fi
+  exit 0
+fi
+
+# --- --update ---
+if [ "$DO_UPDATE" = "true" ] && [ -d "$SKILLS_HOME/.git" ]; then
   echo "Updating leadbay-skills..."
-  cd "$SKILLS_HOME"
-  git pull --rebase origin main
-  echo "Updated to v$(cat VERSION)"
+  (cd "$SKILLS_HOME" && git pull --rebase origin main)
+  echo "Updated to v$(cat "$SKILLS_HOME/VERSION")"
 fi
 
-if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
-  usage
-fi
-
-# Ensure claude skills dir exists
+# --- ensure CLAUDE_SKILLS exists, link skills ---
 mkdir -p "$CLAUDE_SKILLS"
 
-# Create real directories with symlinked SKILL.md inside.
-# This matches how gstack does it — Claude Code expects real dirs, not dir symlinks.
 for skill_dir in "$SKILLS_HOME"/*/; do
   skill_name=$(basename "$skill_dir")
   case "$skill_name" in
@@ -64,21 +125,10 @@ for skill_dir in "$SKILLS_HOME"/*/; do
   esac
   if [ -f "$skill_dir/SKILL.md" ]; then
     target="$CLAUDE_SKILLS/$skill_name"
-
-    # Remove old symlinked directory if present (from previous setup versions)
-    if [ -L "$target" ]; then
-      rm "$target"
-    fi
-
-    # Create real directory
+    if [ -L "$target" ]; then rm "$target"; fi
     mkdir -p "$target"
-
-    # Symlink SKILL.md inside it
-    if [ -L "$target/SKILL.md" ]; then
-      rm "$target/SKILL.md"
-    fi
+    if [ -L "$target/SKILL.md" ]; then rm "$target/SKILL.md"; fi
     ln -sf "$skill_dir/SKILL.md" "$target/SKILL.md"
-
     echo "  Linked /$skill_name"
   fi
 done
@@ -94,8 +144,224 @@ for tmpl in "$SKILLS_HOME"/*/SKILL.md.tmpl; do
   fi
 done
 
+# ============================================================================
+# --gstack-interop bridge
+# ============================================================================
+if [ "$GSTACK_INTEROP" = "true" ]; then
+  echo ""
+  echo "Setting up gstack ↔ leadbay interop..."
+  GSTACK_HOME="${HOME}/.gstack"
+  LB_EXISTS=false
+  GS_EXISTS=false
+  [ -e "$LEADBAY_HOME" ] && LB_EXISTS=true
+  [ -e "$GSTACK_HOME" ] && GS_EXISTS=true
+
+  pick_primary() {
+    # Prefer whichever has more files (rough heuristic for "more data").
+    local lb_count gs_count
+    lb_count=$(find "$LEADBAY_HOME" -type f 2>/dev/null | wc -l | tr -d ' ')
+    gs_count=$(find "$GSTACK_HOME" -type f 2>/dev/null | wc -l | tr -d ' ')
+    if [ "$lb_count" -ge "$gs_count" ]; then
+      echo "leadbay"
+    else
+      echo "gstack"
+    fi
+  }
+
+  if [ "$LB_EXISTS" = "false" ] && [ "$GS_EXISTS" = "false" ]; then
+    mkdir -p "$LEADBAY_HOME"
+    ln -sf "$LEADBAY_HOME" "$GSTACK_HOME"
+    echo "  Created ~/.leadbay; ~/.gstack → ~/.leadbay (symlink)"
+  elif [ "$LB_EXISTS" = "true" ] && [ "$GS_EXISTS" = "false" ]; then
+    ln -sf "$LEADBAY_HOME" "$GSTACK_HOME"
+    echo "  ~/.gstack → ~/.leadbay (symlink)"
+  elif [ "$LB_EXISTS" = "false" ] && [ "$GS_EXISTS" = "true" ]; then
+    ln -sf "$GSTACK_HOME" "$LEADBAY_HOME"
+    echo "  ~/.leadbay → ~/.gstack (symlink)"
+  else
+    # Both exist with content. Avoid destructive merge — pick a primary, the other becomes a symlink.
+    if [ -L "$LEADBAY_HOME" ] || [ -L "$GSTACK_HOME" ]; then
+      echo "  Bridge already in place."
+    else
+      PRIMARY=$(pick_primary)
+      if [ "$PRIMARY" = "leadbay" ]; then
+        echo "  Both directories have content. Backing up ~/.gstack to ~/.gstack.pre-interop, then symlinking."
+        mv "$GSTACK_HOME" "$GSTACK_HOME.pre-interop"
+        ln -sf "$LEADBAY_HOME" "$GSTACK_HOME"
+        echo "  ~/.gstack.pre-interop preserved for manual review; ~/.gstack → ~/.leadbay"
+      else
+        mv "$LEADBAY_HOME" "$LEADBAY_HOME.pre-interop"
+        ln -sf "$GSTACK_HOME" "$LEADBAY_HOME"
+        echo "  ~/.leadbay.pre-interop preserved for manual review; ~/.leadbay → ~/.gstack"
+      fi
+    fi
+  fi
+fi
+
+# ============================================================================
+# --with-knowledge: knowledge mirror, hooks, timer
+# ============================================================================
+if [ "$WITH_KNOWLEDGE" = "true" ]; then
+  echo ""
+  echo "Setting up knowledge mirror at $KNOWLEDGE_DIR..."
+  mkdir -p "$LEADBAY_HOME"
+
+  if [ -d "$KNOWLEDGE_DIR/.git" ]; then
+    echo "  Updating existing mirror..."
+    (cd "$KNOWLEDGE_DIR" && git pull --rebase --autostash origin main 2>&1 | tail -5) || \
+      echo "  WARNING: pull failed; mirror may be stale. Inspect $KNOWLEDGE_DIR." >&2
+  else
+    if [ -d "$KNOWLEDGE_DIR" ]; then
+      echo "  $KNOWLEDGE_DIR exists but is not a git repo. Aborting to avoid clobbering." >&2
+      exit 1
+    fi
+    git clone --depth 50 "$KNOWLEDGE_REPO_URL" "$KNOWLEDGE_DIR" || {
+      echo "  WARNING: clone failed. The knowledge mirror is not set up." >&2
+      echo "  Check that you have access to $KNOWLEDGE_REPO_URL (org membership required)." >&2
+      WITH_KNOWLEDGE=skipped
+    }
+  fi
+
+  # ---- Install hooks ---------------------------------------------------------
+  if [ "$WITH_KNOWLEDGE" = "true" ]; then
+    echo ""
+    echo "Installing Claude Code hooks into $CLAUDE_SETTINGS..."
+    mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
+    LB_BIN="$SKILLS_HOME/bin"
+    PRE_TOOL_CMD="$LB_BIN/lb-knowledge-validate --file \"\$CLAUDE_TOOL_INPUT_file_path\" --lane hot"
+    USER_PROMPT_CMD="$LB_BIN/lb-knowledge-find \"\$CLAUDE_USER_PROMPT\""
+    STOP_CMD="$LB_BIN/lb-knowledge-capture --auto"
+
+    LB_BIN="$LB_BIN" python3 - "$CLAUDE_SETTINGS" <<'PY'
+import json, os, pathlib, sys
+path = pathlib.Path(sys.argv[1])
+bin_dir = os.environ["LB_BIN"]
+data = {}
+if path.exists():
+    try:
+        data = json.loads(path.read_text())
+    except Exception as e:
+        print(f"  WARNING: existing settings.json is not valid JSON: {e}; skipping hook install.", file=sys.stderr)
+        sys.exit(0)
+hooks = data.setdefault("hooks", {})
+
+def merge_hook(name, matcher, command):
+    """Add a hook only if an equivalent one isn't already installed."""
+    existing = hooks.get(name) or []
+    for slot in existing:
+        for h in slot.get("hooks", []):
+            if h.get("command") == command:
+                return False
+    slot = {"hooks": [{"type": "command", "command": command}]}
+    if matcher:
+        slot["matcher"] = matcher
+    existing.append(slot)
+    hooks[name] = existing
+    return True
+
+added_a = merge_hook(
+    "UserPromptSubmit",
+    None,
+    f'{bin_dir}/lb-knowledge-find "$CLAUDE_USER_PROMPT"'
+)
+added_b = merge_hook(
+    "Stop",
+    None,
+    f'{bin_dir}/lb-knowledge-capture --auto || true'
+)
+added_c = merge_hook(
+    "PreToolUse",
+    "Write|Edit|MultiEdit",
+    f'{bin_dir}/lb-knowledge-validate --file "$CLAUDE_TOOL_INPUT_file_path" --lane hot'
+)
+
+added = sum([added_a, added_b, added_c])
+path.write_text(json.dumps(data, indent=2))
+print(f"  Hooks installed: {added} added (UserPromptSubmit, Stop, PreToolUse)")
+PY
+  fi
+
+  # ---- Install 30-min sync timer (skipped in --ci) -------------------------
+  if [ "$WITH_KNOWLEDGE" = "true" ] && [ "$CI_MODE" = "false" ]; then
+    UNAME=$(uname -s)
+    SYNC_BIN="$SKILLS_HOME/bin/lb-knowledge-sync"
+
+    case "$UNAME" in
+      Darwin)
+        PLIST="${HOME}/Library/LaunchAgents/ai.leadbay.knowledge-sync.plist"
+        mkdir -p "$(dirname "$PLIST")"
+        cat > "$PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.leadbay.knowledge-sync</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$SYNC_BIN</string>
+  </array>
+  <key>StartInterval</key>
+  <integer>1800</integer>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>${HOME}/.leadbay/sync.log</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/.leadbay/sync.err</string>
+</dict>
+</plist>
+EOF
+        launchctl unload "$PLIST" 2>/dev/null || true
+        launchctl load "$PLIST" 2>/dev/null || true
+        echo "  launchd timer installed: $PLIST"
+        ;;
+      Linux)
+        UNIT_DIR="${HOME}/.config/systemd/user"
+        mkdir -p "$UNIT_DIR"
+        cat > "$UNIT_DIR/leadbay-knowledge-sync.service" <<EOF
+[Unit]
+Description=Leadbay knowledge sync
+
+[Service]
+Type=oneshot
+ExecStart=$SYNC_BIN
+EOF
+        cat > "$UNIT_DIR/leadbay-knowledge-sync.timer" <<EOF
+[Unit]
+Description=Run leadbay-knowledge-sync every 30 min
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=30min
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+EOF
+        systemctl --user daemon-reload 2>/dev/null || true
+        systemctl --user enable --now leadbay-knowledge-sync.timer 2>/dev/null || true
+        echo "  systemd user timer installed: leadbay-knowledge-sync.timer"
+        ;;
+      *)
+        echo "  WARNING: unsupported OS $UNAME; sync timer not installed." >&2
+        echo "  Run \`$SYNC_BIN\` manually or via your scheduler of choice." >&2
+        ;;
+    esac
+  fi
+fi
+
+# ============================================================================
+# Final report
+# ============================================================================
 echo ""
 echo "Leadbay skills v$(cat "$SKILLS_HOME/VERSION") installed."
-echo "Available: $(find "$SKILLS_HOME" -name SKILL.md -not -path '*/shared/*' -exec dirname {} \; | xargs -I{} basename {} | sort | sed 's/^/\//' | tr '\n' ' ')"
+SKILL_LIST=$(find "$SKILLS_HOME" -name SKILL.md -not -path '*/shared/*' -exec dirname {} \; | xargs -I{} basename {} | sort | sed 's/^/\//' | tr '\n' ' ')
+echo "Available: $SKILL_LIST"
+if [ "$WITH_KNOWLEDGE" = "true" ]; then
+  echo "Knowledge mirror: $KNOWLEDGE_DIR"
+elif [ "$WITH_KNOWLEDGE" = "skipped" ]; then
+  echo "Knowledge mirror: NOT installed (clone failed; check repo access)."
+fi
 echo ""
 echo "Update anytime: ~/.leadbay-skills/setup --update"
