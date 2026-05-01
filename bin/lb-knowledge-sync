@@ -49,8 +49,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-if [[ ! -d "$KNOWLEDGE_DIR/.git" ]]; then
-  echo "lb-knowledge-sync: $KNOWLEDGE_DIR is not a git clone." >&2
+if [[ ! -e "$KNOWLEDGE_DIR/.git" ]]; then
+  echo "lb-knowledge-sync: $KNOWLEDGE_DIR is not a git clone (no .git)." >&2
   echo "Run \`~/.leadbay-skills/setup --with-knowledge\` first." >&2
   exit 2
 fi

@@ -206,10 +206,16 @@ if [ "$WITH_KNOWLEDGE" = "true" ]; then
   echo "Setting up knowledge mirror at $KNOWLEDGE_DIR..."
   mkdir -p "$LEADBAY_HOME"
 
-  if [ -d "$KNOWLEDGE_DIR/.git" ]; then
-    echo "  Updating existing mirror..."
-    (cd "$KNOWLEDGE_DIR" && git pull --rebase --autostash origin main 2>&1 | tail -5) || \
-      echo "  WARNING: pull failed; mirror may be stale. Inspect $KNOWLEDGE_DIR." >&2
+  # `.git` may be a directory (regular clone) or a file (worktree / submodule).
+  # Either is a valid existing git checkout for our purposes.
+  if [ -e "$KNOWLEDGE_DIR/.git" ]; then
+    echo "  Updating existing mirror at $KNOWLEDGE_DIR..."
+    if [ "$CI_MODE" = "true" ]; then
+      echo "  (skipping git pull in --ci mode; the workflow already checked out a fresh ref)"
+    else
+      (cd "$KNOWLEDGE_DIR" && git pull --rebase --autostash origin main 2>&1 | tail -5) || \
+        echo "  WARNING: pull failed; mirror may be stale. Inspect $KNOWLEDGE_DIR." >&2
+    fi
   else
     if [ -d "$KNOWLEDGE_DIR" ]; then
       echo "  $KNOWLEDGE_DIR exists but is not a git repo. Aborting to avoid clobbering." >&2

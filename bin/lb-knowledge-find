@@ -77,7 +77,13 @@ import os, pathlib, re, sys
 norm = os.environ["LB_NORMALIZED"]
 root = pathlib.Path(os.environ["LB_WIKI_DIR"])
 limit = int(os.environ["LB_WIKI_LIMIT"])
-tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]{2,}", norm))
+DOMAIN_SHORT_OK = {"lens", "lead", "wow", "chat", "tab"}
+STOPWORDS = {"the", "and", "for", "with", "from", "this", "that", "what", "when", "where", "how", "why", "are", "was", "were", "but", "not", "you", "your", "have", "has", "had", "can", "did", "does", "into", "out", "any"}
+tokens = set()
+for t in re.findall(r"[a-z0-9][a-z0-9_-]+", norm):
+    if t in STOPWORDS: continue
+    if len(t) >= 4 or t in DOMAIN_SHORT_OK:
+        tokens.add(t)
 hits = []
 for p in root.rglob("*.md"):
     try:
@@ -126,7 +132,13 @@ norm = os.environ["LB_NORMALIZED"]
 root = pathlib.Path(os.environ["LB_JOURNAL_DIR"])
 days = int(os.environ["LB_JOURNAL_DAYS"])
 limit = int(os.environ["LB_JOURNAL_LIMIT"])
-tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]{2,}", norm))
+DOMAIN_SHORT_OK = {"lens", "lead", "wow", "chat", "tab"}
+STOPWORDS = {"the", "and", "for", "with", "from", "this", "that", "what", "when", "where", "how", "why", "are", "was", "were", "but", "not", "you", "your", "have", "has", "had", "can", "did", "does", "into", "out", "any"}
+tokens = set()
+for t in re.findall(r"[a-z0-9][a-z0-9_-]+", norm):
+    if t in STOPWORDS: continue
+    if len(t) >= 4 or t in DOMAIN_SHORT_OK:
+        tokens.add(t)
 cutoff = time.time() - days*86400
 hits = []
 for p in root.rglob("*.md"):
@@ -156,22 +168,41 @@ GLOSSARY_FILE="$KNOWLEDGE_DIR/glossary.md"
 if [[ -f "$GLOSSARY_FILE" ]]; then
   # Extract any glossary table rows whose term token appears in the prompt
   GLOSSARY_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_GLOSSARY="$GLOSSARY_FILE" python3 - <<'PY'
+# Strict glossary match: a row only counts if a prompt token matches the
+# Term cell (the first column) — not any cell. Otherwise typing "status" or
+# "lens" floods the brief with every concept that mentions those words in
+# its backend_names. Short tokens (<4 chars) are dropped except known
+# product-domain words.
 import os, re
 norm = os.environ["LB_NORMALIZED"]
 fp = os.environ["LB_GLOSSARY"]
-tokens = set(re.findall(r"[a-z0-9][a-z0-9_-]{2,}", norm))
+DOMAIN_SHORT_OK = {"lens", "lead", "wow", "chat", "tab"}
+tokens = set()
+for t in re.findall(r"[a-z0-9][a-z0-9_-]{1,}", norm):
+    if len(t) >= 4 or t in DOMAIN_SHORT_OK:
+        tokens.add(t)
 hits = []
 try:
     txt = open(fp).read()
 except Exception:
     raise SystemExit
+seen_pages = set()
 for line in txt.splitlines():
-    if not line.startswith("|") or "----" in line or "Term" in line:
+    if not line.startswith("|") or "----" in line or line.strip().startswith("| Term"):
         continue
     cells = [c.strip() for c in line.strip("|").split("|")]
-    blob = " ".join(cells).lower()
-    if any(t in blob for t in tokens):
-        hits.append(line)
+    if len(cells) < 5:
+        continue
+    term = cells[0].lower()
+    page_link = cells[4]
+    if not any(t in term for t in tokens):
+        continue
+    if page_link in seen_pages:
+        continue
+    seen_pages.add(page_link)
+    hits.append(line)
+    if len(hits) >= 8:
+        break
 if hits:
     print("\n".join(hits))
 PY
