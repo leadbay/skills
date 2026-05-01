@@ -1,0 +1,173 @@
+---
+name: learnings-from-pr
+description: |
+  Pre-PR knowledge capture. Run this skill AFTER the implementation work is
+  done but BEFORE `git push` / `gh pr create`. It reads what the wiki already
+  says about the area you touched, identifies what your work proves the wiki
+  was missing or wrong, and writes ONE small commit directly to
+  leadbay/knowledge:main. Most PRs produce zero wiki edits — that's the
+  expected outcome for "no surprises" PRs.
+
+  Do NOT invoke this skill: after pushing, after opening a PR, in the
+  middle of implementation, or as a substitute for thinking. It's a
+  capture step, not a planning step.
+
+  Triggers: "I'm about to push", "before this PR", "/learnings-from-pr",
+  the standing instruction in `claude-action`.
+version: 1.0.0
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+---
+
+# /learnings-from-pr — capture genuine new knowledge before pushing
+
+## When to invoke
+
+You have JUST finished implementation. Tests pass. The diff is final. You are
+about to run `git push` or `gh pr create`. **STOP.** Run this skill first.
+
+## When NOT to invoke
+
+- After pushing or opening a PR. (Your context shifts to review-reply mode and
+  the learnings get diluted.)
+- In the middle of implementation. (You don't yet know what was new.)
+- When you implemented exactly what the wiki described. (No-op is correct.)
+- As a substitute for `/knowledge-explore`. (That skill builds wiki pages from
+  live tours; this skill captures incremental deltas from one PR's worth of
+  surprises.)
+
+## The discipline that protects the wiki
+
+This skill writes directly to `~/.leadbay/knowledge/wiki/` and pushes to
+`leadbay/knowledge:main` — no PR review. The discipline below MUST hold every
+time. If you can't follow it, write nothing — `git push` your code and stop.
+
+### Hard caps
+
+- **Max 3 wiki edits per skill invocation.** A typical PR produces 0–1.
+- **Max 200 added lines of wiki content total.** If a finding needs more, write
+  a question and let `/knowledge-explore` build it next session.
+- **Max 1 NEW page per invocation.** Edits to existing pages don't count
+  against this.
+
+### Forbidden phrasing in any wiki edit
+
+If your prose contains any of these, do not write — file a question instead:
+
+- "likely" / "probably" / "presumably" / "I think" / "appears to" / "seems to"
+- "should" / "would" (when describing how the system behaves; "should" is fine
+  in a recipe section telling another agent what to do)
+- "to be confirmed" / "TBC" / "needs verification"
+
+### Mandatory evidence per edit
+
+Every wiki delta must cite:
+
+- A file path you touched in this PR (`backend/.../X.kt:NN-MM`), OR
+- A captured URL from a live network panel (`POST /1.5/leads/x/y → 204`), OR
+- A quoted log/error message you observed (`"foo: bar"`), OR
+- A quoted code snippet from the existing codebase (verbatim, with file:line).
+
+If you can't cite, file a question.
+
+## Protocol
+
+### Phase 1: Find the surface area of your change
+
+```bash
+# What files did this PR touch?
+git diff --name-only $(git merge-base HEAD origin/main)..HEAD
+
+# What top-level areas? (routes/, models/, frontend/screens/, etc.)
+```
+
+For each touched area, run `/knowledge-find` (or `lb-knowledge-find` directly)
+on the relevant terms. Read the existing wiki coverage. Take notes on what's
+already documented.
+
+### Phase 2: Identify the genuine deltas
+
+For each surprise / friction encountered during implementation, classify:
+
+| Surprise type | Wiki target |
+|---|---|
+| UI label that didn't grep to anything in the backend | row in `wiki/concept/vocabulary.md` AND row in `wiki/pitfall/vocabulary-mismatch.md` |
+| Hidden side-effect (e.g. "X also writes Y" or "click on A also fires B") | "Pitfalls" subsection of the relevant existing `wiki/journey/<x>.md` |
+| Workflow no journey page covers | NEW `wiki/journey/<workflow>.md` (only if you actually toured it; otherwise file a question) |
+| Ambiguity you had to make a judgment call on | `wiki/questions/<topic>.md` |
+
+Anything that doesn't fit one of these → DO NOT WRITE. Push your code. The
+wiki is not a diary; it's an action-oriented reference.
+
+### Phase 3: Pre-write checks
+
+Before writing:
+
+```bash
+cd ~/.leadbay/knowledge
+git pull --rebase --autostash
+LB_LANE=cold python3 bin/lb-knowledge-validate-all
+```
+
+If validation fails on existing content, abort — don't compound.
+
+### Phase 4: Write
+
+For each delta (max 3):
+
+- **Vocabulary row** — single line in the appropriate table. Format must match the existing rows in [[concept/vocabulary]]. Cite evidence inline.
+- **Pitfall subsection on existing journey** — append to the page's `## Pitfalls` section. Lead with the action ("Don't ..." / "Always ..."). One sentence of context. Evidence quote.
+- **New journey page** — only if you actually navigated the workflow live during this PR. Use the structure from [[journey/lead-curation]] as a template. Required sections: What the user sees / Captured live / Backend handler quote / Vocabulary trap callout / Adding a new X — recipe / Pitfalls.
+- **Question** — `wiki/questions/<date>-<topic>.md`. Include: what's unclear, where you encountered it (PR URL or branch), what you tried, what assumption you ended up making, who could resolve.
+
+### Phase 5: Validate + commit + push
+
+```bash
+cd ~/.leadbay/knowledge
+LB_LANE=cold python3 bin/lb-knowledge-validate-all     # MUST be OK
+git add -A
+git diff --cached --stat                              # show me the delta size
+git commit -m "learnings: <one-line summary>
+
+From PR ${LB_PR_REPO:-unknown} run ${LB_PR_RUN_URL:-unknown}.
+
+<one paragraph: which surprise(s), what got captured, why this is
+worth wiki space>
+"
+git push origin main
+```
+
+### Phase 6: Verify silence is success
+
+After push, **DO NOT** announce in the original PR description that you "also
+updated the wiki". The wiki commit is its own audit trail in
+`leadbay/knowledge`. Polluting the PR description with wiki noise erodes the
+"this is reference, not diary" discipline.
+
+## Self-checks before exiting the skill
+
+- [ ] Did I read the existing wiki for this area? (Or did I just dump?)
+- [ ] Each edit has a concrete file path, URL, or quoted text as evidence?
+- [ ] Zero forbidden phrases in the prose I wrote?
+- [ ] ≤ 3 edits, ≤ 200 added lines, ≤ 1 new page?
+- [ ] LB_LANE=cold validator passes?
+- [ ] If unsure about ANY of the above, did I write a question instead of a wiki claim?
+
+## What "no-op" looks like (the most common outcome)
+
+```
+$ /learnings-from-pr
+
+Read existing wiki for the area: 4 pages found.
+Touched files: routes/LeadsRoutes.kt, frontend/screens/dashboard/...
+Surprises encountered: 0 (everything followed the lead-curation journey
+                          page's recipe; no new findings).
+Result: no-op — nothing to capture. Pushing the original PR.
+```
+
+That is success. The wiki stays clean.

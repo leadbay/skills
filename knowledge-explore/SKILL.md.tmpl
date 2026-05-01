@@ -1,98 +1,128 @@
 ---
 name: knowledge-explore
 description: |
-  Bootstrap a new product surface (UI tab, backend service, user journey) into
-  the leadbay knowledge base. Two modes: code-only (reads OpenAPI specs, route
-  maps, DB schemas, recent commits) and pairing (a developer narrates a UI
-  surface in their already-logged-in browser; the agent attaches via Chrome
-  MCP — never handles credentials). Files concept/, mapping/, user-intent/,
-  journey/ proposals plus a sources/app-tours/ artifact.
-  Triggers: "explore the X tab", "document the X service", "learn about the
-  X surface", "what does Activate do", "bootstrap knowledge for Y".
-version: 1.0.0
+  Map a product workflow into the wiki by USING the product (not by reading
+  code). One run = one journey/<name>.md page + rosetta rows in vocabulary.md
+  + pitfall callouts when the UI label and the backend name disagree. Live
+  network capture is mandatory; source reads are only used to *confirm* what
+  the URL actually does, not to invent claims.
+  Triggers: "explore the X workflow", "document how Y works end-to-end",
+  "we keep getting confused about Z, write it up", "add to the wiki",
+  "/knowledge-explore <topic>".
+version: 2.0.0
 allowed-tools:
   - Bash
   - Read
   - Grep
   - Glob
-  - Agent
-  - WebFetch
   - mcp__claude-in-chrome__navigate
   - mcp__claude-in-chrome__read_page
   - mcp__claude-in-chrome__get_page_text
   - mcp__claude-in-chrome__find
+  - mcp__claude-in-chrome__form_input
+  - mcp__claude-in-chrome__javascript_tool
+  - mcp__claude-in-chrome__read_network_requests
   - mcp__claude-in-chrome__tabs_context_mcp
   - mcp__claude-in-chrome__tabs_create_mcp
-  - mcp__claude-in-chrome__javascript_tool
 ---
 
 <!-- include: shared/preamble.md -->
-<!-- include: shared/ask-user-format.md -->
 
-# /knowledge-explore — Bootstrap a product surface
+# /knowledge-explore — Map ONE workflow into the wiki
 
-Two modes, picked via `--mode` or inferred from context.
+## What this skill produces
 
-## Mode A — Pairing (deep)
+For ONE workflow (e.g. "lead curation", "contact enrichment", "billing"):
 
-Use when a developer is at their machine with a logged-in browser session.
+1. **`sources/app-tours/<date>-<workflow>.md`** — verbatim live capture: every URL with status code, every UI label observed, raw network samples.
+2. **`wiki/journey/<workflow>.md`** — the workflow page. Sections (mandatory):
+   - **What the user sees** — UI labels, columns, button labels, dialog text.
+   - **Captured live** — table of `(UI action) → (network calls in order with status)`.
+   - **Backend handler quotes** — for the canonical entry point only, NOT a code-dump.
+   - **Vocabulary trap callout** — if any UI label differs from a backend name encountered.
+   - **Adding a new X — recipe** — explicit numbered steps an implementing agent would follow to extend this workflow with a similar feature.
+   - **Pitfalls** — sharp edges discovered during the tour (asymmetries, hidden cascades, side effects).
+3. **Rows added to `wiki/concept/vocabulary.md`** — one row per UI label that maps to a non-trivially-named backend identifier.
+4. **`wiki/pitfall/<topic>.md`** — only if a vocabulary mismatch or hidden side effect was important enough to be worth its own page.
 
-1. **Confirm the topic.** Ask the developer: "What do you want to explore? A UI
-   surface (Discover, Monitor, Activate, ...), a backend service, or an
-   end-to-end journey?"
-2. **Connect to the browser.** Call `mcp__claude-in-chrome__tabs_context_mcp` to
-   see open tabs. If the dashboard is already open, attach. Otherwise create a
-   new tab via `mcp__claude-in-chrome__tabs_create_mcp` (the developer is already
-   authenticated; the agent attaches, does not log in).
-3. **Read the live surface.** Use `mcp__claude-in-chrome__read_page` and
-   `mcp__claude-in-chrome__get_page_text` to capture what's on screen. Save raw
-   capture to `sources/app-tours/<date>-<topic>.md` via
-   `lb-knowledge-write source --subdir app-tours`.
-4. **Cross-reference code.** For each UI element observed, identify:
-   - Frontend route → component file (`grep` for the page route).
-   - API endpoint that route hits (network tab or `grep` in component for fetch
-     calls).
-   - DB tables / functions touched by that endpoint (`grep` in API service).
-5. **Draft proposals.** For each distinct concept/mapping/journey identified,
-   write a `proposed/<concept>/proposals/...` file via `lb-knowledge-write
-   proposed`. Cite the sources.
-6. **Ask clarifying questions.** Where the cross-reference is ambiguous, drop
-   a `questions/` entry via `lb-knowledge-write question` and ask the developer
-   inline. Their answer goes into `sources/` and updates the proposal.
+## What this skill does NOT produce
 
-NEVER ask for or accept credentials. The developer is already logged in. The
-agent reads what their browser shows.
+- ❌ A page that quotes a backend file in full (the agent can read source on its own; this wastes tokens).
+- ❌ Pages that say "likely", "probably", "presumably" — speculation goes to `questions/`.
+- ❌ Concept pages that just list enum values (those go in glossary rows).
+- ❌ Pages built without the live tour.
 
-## Mode B — Code-only (fast)
+## Protocol — STRICT order
 
-Use when no human is paired. Faster but lower-confidence proposals.
+### Phase 1: Pre-tour
 
-```bash
-"$_LB_BIN/lb-knowledge-explore" --mode code-only --repo <path>
-```
+1. Identify the ONE workflow to map. If the request is broader, ASK the user to pick one.
+2. Check existing wiki: run `lb-knowledge-find "<workflow>"`. If a journey page already exists, the work is *additive* (extend existing page) not *fresh*.
+3. Open the app in browser via Chrome MCP. Login if needed (use the user's existing tab if it's already authenticated; never handle credentials directly).
 
-The binary scans:
-- Routes from FastAPI / Express / Flask / Spring annotations.
-- OpenAPI spec if one exists.
-- DB schema via `psql` if `$DATABASE_URL_PROD_RO` is set.
+### Phase 2: Live tour (MANDATORY before writing anything)
 
-For each plausible concept identified, file a low-confidence (3-5) proposal.
-The next pairing session or dream run will validate / promote / drop them.
+4. **Install a persistent fetch+XHR interceptor IMMEDIATELY** on the app's tab. Pattern (see binary `lb-knowledge-explore` for the canonical implementation):
 
-## Confidence calibration
+   ```javascript
+   window.__lb = { calls: [] };
+   const origFetch = window.fetch.bind(window);
+   window.fetch = async (...args) => {
+     /* push {method, url, status, sample} to window.__lb.calls */
+   };
+   /* same for XMLHttpRequest */
+   ```
 
-- Pairing + code cross-confirms: 8-9.
-- Pairing alone (live screen, no code link yet): 6-7.
-- Code alone (route or schema with no UI confirmation): 3-5.
-- Just a guess from a commit message: don't file.
+5. **For each user action in the workflow**, do this CYCLE:
+   - Reset `window.__lb.calls.length = 0`.
+   - Trigger the action via JS (`button.click()`, `form_input`, etc.).
+   - Wait 2-4 seconds (or longer for AI calls).
+   - Read `window.__lb.calls` and dump the array.
+   - Capture UI text via `get_page_text` or `read_page` — what's the label? button text? dialog title?
 
-## After
+6. **Record everything verbatim** to `.context/captures/<date>-<workflow>.md` as you go. Don't write the journey page yet.
 
-Either:
-- Sync immediately if you want others to see the proposals (`/knowledge-sync`).
-- Or let the periodic timer pick them up.
+### Phase 3: Code confirmation (NOT exploration)
 
-The next dream run (light or heavy) evaluates promotion. Cross-source quorum
-(≥ 2 distinct slugs) is the bar; a single rich pairing session usually clears
-it because both the code-only sweep and the pairing session count as separate
-slugs (api, frontend).
+7. For each captured URL, find the backend handler. ONE quote per route, only the most informative N lines (15-30 max).
+8. For each UI label that doesn't match the backend name from step 7, add a row to `wiki/concept/vocabulary.md`.
+9. If multiple UI labels collide on one backend concept (or vice versa), open `wiki/pitfall/vocabulary-mismatch.md` and add a row.
+
+### Phase 4: Write the journey page
+
+10. Use the structure under "What this skill produces" above.
+11. **The "Adding a new X — recipe" section is mandatory.** Imagine the most likely follow-up implementation task and list the exact files to touch in order.
+12. Cite sources: link to the `sources/app-tours/` capture and any backend files quoted.
+
+### Phase 5: Self-test
+
+13. Run `lb-knowledge-find "<a hypothetical extension task related to this workflow>"`. The new journey page must be the top hit.
+14. Read the brief output and ask: "Could a fresh agent given this hypothetical task implement it without re-reading 5+ files?". If no, the page is incomplete — go back to step 4 and click more.
+
+### Phase 6: Persist
+
+15. `lb-knowledge-write` is too generic for this. Write directly to `wiki/journey/`, `wiki/concept/vocabulary.md`, `wiki/pitfall/`. Validate: `LB_LANE=cold python3 ~/.leadbay/knowledge/bin/lb-knowledge-validate-all`.
+16. Append to `log.md`: `## [date] knowledge-explore | <workflow> — N captures, M new vocab rows`.
+
+## Checklist before considering the run done
+
+- [ ] At least 5 distinct UI actions clicked live with the interceptor capturing.
+- [ ] At least 1 vocabulary row added (or explicit note "no mismatches found").
+- [ ] The journey page has an "Adding a new X" recipe section.
+- [ ] Self-test on a hypothetical task surfaces the new page as the top hit.
+- [ ] Sources cited inline.
+
+## What to do if the browser is broken / can't log in
+
+DO NOT fall back to source-only "exploration". Stop and ask the user to fix the browser. A code-dump page is worse than no page — it pollutes the wiki and trains the agent to expect garbage.
+
+## Calibration
+
+| Output | Value to implementing agent |
+|---|---|
+| Live URL trace + recipe | **HIGH** — saves 10-20 file reads per task |
+| Single backend file quote | LOW — agent can read source itself |
+| Enum dump | LOW — already in glossary |
+| Hand-wavy summary | NEGATIVE — pollutes brief |
+
+When in doubt, click more. When the brief gets too noisy, prune wide claims, not specific ones.
