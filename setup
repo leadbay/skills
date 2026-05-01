@@ -76,6 +76,7 @@ If `~/.leadbay-skills` exists, the following team skills are available:
 | `/knowledge-sync` | Push local journal to leadbay/knowledge |
 | `/knowledge-dream` | Manual consolidator preview |
 | `/diagnose` | Deep diagnostic root cause analysis |
+| `/relentless` | Overnight autonomous build-deploy-eval-iterate loop |
 | `/org-retro` | Weekly org-wide engineering retro |
 | `/sales-retro` | Weekly sales intelligence retro |
 

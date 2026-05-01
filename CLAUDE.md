@@ -35,6 +35,7 @@ For developers who also use gstack and want one shared learnings store:
 | `/knowledge-sync` | Push local journal to `leadbay/knowledge` |
 | `/knowledge-dream` | Manual local consolidator preview |
 | `/diagnose` | Deep diagnostic root cause analysis (no code changes) |
+| `/relentless` | Overnight autonomous build-deploy-eval-iterate loop on a live system |
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence: signups, activation, churn, Big Fish |
 
@@ -51,6 +52,8 @@ Skill tool as your FIRST action. Do NOT answer directly.
 - Weekly retro, what did we ship, engineering retrospective → `/org-retro`
 - Sales retro, user activity, signups, churn, who to call → `/sales-retro`
 - Diagnose this, root cause analysis, deep dive, why is this happening → `/diagnose`
+- "Relentless mode", "overnight", "iterate until perfect", "I'll be away — keep going",
+  "make it bulletproof", "don't stop until it's great" → `/relentless`
 
 ### Standing instructions (always-on, after install)
 

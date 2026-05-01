@@ -55,6 +55,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/knowledge-sync` | Push local journal to leadbay/knowledge |
 | `/knowledge-dream` | Manual local consolidator preview |
 | `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
+| `/relentless` | Overnight perfectionist loop: deploys live, evals 4-dim, iterates until done |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
 
