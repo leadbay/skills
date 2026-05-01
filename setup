@@ -234,9 +234,6 @@ if [ "$WITH_KNOWLEDGE" = "true" ]; then
     echo "Installing Claude Code hooks into $CLAUDE_SETTINGS..."
     mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
     LB_BIN="$SKILLS_HOME/bin"
-    PRE_TOOL_CMD="$LB_BIN/lb-knowledge-validate --file \"\$CLAUDE_TOOL_INPUT_file_path\" --lane hot"
-    USER_PROMPT_CMD="$LB_BIN/lb-knowledge-find \"\$CLAUDE_USER_PROMPT\""
-    STOP_CMD="$LB_BIN/lb-knowledge-capture --auto"
 
     LB_BIN="$LB_BIN" python3 - "$CLAUDE_SETTINGS" <<'PY'
 import json, os, pathlib, sys
@@ -265,15 +262,19 @@ def merge_hook(name, matcher, command):
     hooks[name] = existing
     return True
 
+# Strip any obsolete Stop hook that calls the removed lb-knowledge-capture binary.
+if "Stop" in hooks:
+    hooks["Stop"] = [
+        slot for slot in hooks["Stop"]
+        if not any("lb-knowledge-capture" in h.get("command","") for h in slot.get("hooks", []))
+    ]
+    if not hooks["Stop"]:
+        del hooks["Stop"]
+
 added_a = merge_hook(
     "UserPromptSubmit",
     None,
     f'{bin_dir}/lb-knowledge-find "$CLAUDE_USER_PROMPT"'
-)
-added_b = merge_hook(
-    "Stop",
-    None,
-    f'{bin_dir}/lb-knowledge-capture --auto || true'
 )
 added_c = merge_hook(
     "PreToolUse",
@@ -281,9 +282,9 @@ added_c = merge_hook(
     f'{bin_dir}/lb-knowledge-validate --file "$CLAUDE_TOOL_INPUT_file_path" --lane hot'
 )
 
-added = sum([added_a, added_b, added_c])
+added = sum([added_a, added_c])
 path.write_text(json.dumps(data, indent=2))
-print(f"  Hooks installed: {added} added (UserPromptSubmit, Stop, PreToolUse)")
+print(f"  Hooks installed: {added} added (UserPromptSubmit, PreToolUse). Stop hook NOT installed (removed in v0.4.0; pre-PR capture is via /learnings-from-pr instead).")
 PY
   fi
 

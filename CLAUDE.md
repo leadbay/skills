@@ -24,6 +24,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 | `/knowledge-find` | Pre-task brief from the wiki — auto-fired by `UserPromptSubmit` hook |
 | `/knowledge-explore` | Map a NEW workflow into the wiki via live tour (browser-based, NOT source-only) |
 | `/knowledge-question` | Flag an open question into `questions/` |
+| `/learnings-from-pr` | Pre-PR knowledge capture — invoke AFTER implementation, BEFORE `git push` |
 | `/diagnose` | Deep diagnostic root cause analysis (no code changes) |
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence retro |
@@ -35,6 +36,7 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 - "what does X do", "show wiki for Y", "find prior knowledge" → `/knowledge-find`
 - "explore the X workflow", "document how Y works", "we keep getting confused about Z" → `/knowledge-explore`
 - "I'm not sure", "open question", "file a question" → `/knowledge-question`
+- about to push / open a PR → `/learnings-from-pr` (FIRST, before `git push`)
 - "weekly retro", "what did we ship" → `/org-retro`
 - "sales retro", "user activity" → `/sales-retro`
 - "diagnose this", "root cause" → `/diagnose`
