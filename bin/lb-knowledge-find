@@ -12,13 +12,21 @@
 #
 # It also reads ~/.leadbay/knowledge/glossary.md for alias expansion of product terms.
 #
+# Per-session dedup (added v0.6.0):
+#   - Style pages (`type: style`) for the current repo are injected on the FIRST
+#     prompt of a session and never again — once is enough; the model has them.
+#   - Other wiki pages: first-hit-of-session emits the full body, subsequent hits
+#     in the same session emit a one-line pointer ("see earlier brief").
+#   - Session detection: prefer `session_id` from stdin JSON (Claude Code modern
+#     hook contract). Falls back to a hash of cwd+PPID for older harnesses.
+#
 # Output is markdown, prefixed with a "## Knowledge brief" heading and ending with
 # the standing-instructions block (see KNOWLEDGE_PROTOCOL_INSTRUCTIONS below).
 # The hook prepends this to the user's actual prompt as system context.
 #
 # Usage:
 #   lb-knowledge-find "<prompt text>"          # one shot
-#   echo "<prompt>" | lb-knowledge-find        # via stdin
+#   echo "<prompt>" | lb-knowledge-find        # via stdin (raw text or JSON)
 #   lb-knowledge-find --quiet "<prompt>"       # suppress headers if no results
 
 set -euo pipefail
@@ -47,8 +55,61 @@ while [[ $# -gt 0 ]]; do
 done
 
 PROMPT="${*:-}"
-if [[ -z "$PROMPT" ]] && [[ ! -t 0 ]]; then
-  PROMPT="$(cat)"
+SESSION_ID=""
+HOOK_CWD="$PWD"
+
+# Detect input: argv > stdin JSON > stdin raw.
+# Claude Code's modern hook contract delivers JSON on stdin like:
+#   {"session_id":"...","cwd":"...","hook_event_name":"UserPromptSubmit","prompt":"..."}
+# Older harnesses pass the prompt as argv only.
+if [[ ! -t 0 ]]; then
+  STDIN_RAW="$(cat 2>/dev/null || true)"
+  if [[ -n "$STDIN_RAW" ]]; then
+    if [[ "${STDIN_RAW:0:1}" == "{" ]]; then
+      # JSON — extract session_id, cwd, prompt
+      PARSED=$(LB_INPUT="$STDIN_RAW" python3 - <<'PY' 2>/dev/null || true
+import os, json, sys
+try:
+    d = json.loads(os.environ["LB_INPUT"])
+except Exception:
+    sys.exit(0)
+print(d.get("session_id", ""))
+print(d.get("cwd", ""))
+print(d.get("prompt", ""))
+PY
+)
+      if [[ -n "$PARSED" ]]; then
+        SESSION_ID=$(printf '%s\n' "$PARSED" | sed -n '1p')
+        STDIN_CWD=$(printf '%s\n' "$PARSED" | sed -n '2p')
+        STDIN_PROMPT=$(printf '%s\n' "$PARSED" | sed -n '3p')
+        [[ -n "$STDIN_CWD" ]] && HOOK_CWD="$STDIN_CWD"
+        [[ -z "$PROMPT" && -n "$STDIN_PROMPT" ]] && PROMPT="$STDIN_PROMPT"
+      fi
+    elif [[ -z "$PROMPT" ]]; then
+      PROMPT="$STDIN_RAW"
+    fi
+  fi
+fi
+
+# Fallback session id when JSON didn't supply one. PPID is the parent process,
+# which under Claude Code is the long-lived `claude` process — stable across
+# hook calls within one session.
+if [[ -z "$SESSION_ID" ]]; then
+  SESSION_ID=$(printf '%s' "$HOOK_CWD-$PPID" | shasum 2>/dev/null | cut -c1-12 || echo "fallback")
+fi
+
+SESSION_DIR="${TMPDIR:-/tmp}/lb-knowledge-find/$SESSION_ID"
+mkdir -p "$SESSION_DIR"
+
+# Detect current repo for style-page targeting. Style pages are pinned on first
+# call only when their `backend_names` frontmatter mentions the current repo.
+CURRENT_REPO=""
+if command -v git >/dev/null 2>&1; then
+  REPO_URL=$(git -C "$HOOK_CWD" config --get remote.origin.url 2>/dev/null || true)
+  if [[ -n "$REPO_URL" ]]; then
+    # Strip .git, take last two path components → "owner/repo"
+    CURRENT_REPO=$(printf '%s' "$REPO_URL" | sed -E 's#\.git$##; s#^.*[:/]([^/]+/[^/]+)$#\1#')
+  fi
 fi
 
 # Strip newlines, lower-case for matching
@@ -65,26 +126,55 @@ if [[ -x "$SCRIPT_DIR/lb-learnings-search" ]]; then
   fi
 fi
 
-# --- 2. Consolidated wiki ---
-# Match the prompt against frontmatter (title, aliases, backend_names, ui_locations)
-# of every wiki page. Score = number of distinct token hits, weighted by frontmatter
-# field. Top WIKI_LIMIT pages are returned in full.
+# --- 2. Consolidated wiki (with session-aware dedup) ---
 WIKI_OUT=""
+STYLE_OUT=""
 WIKI_DIR="$KNOWLEDGE_DIR/wiki"
 if [[ -d "$WIKI_DIR" ]]; then
-  WIKI_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_WIKI_DIR="$WIKI_DIR" LB_WIKI_LIMIT="$WIKI_LIMIT" python3 - <<'PY'
+  WIKI_AND_STYLE=$(LB_NORMALIZED="$NORMALIZED" \
+                   LB_WIKI_DIR="$WIKI_DIR" \
+                   LB_WIKI_LIMIT="$WIKI_LIMIT" \
+                   LB_SESSION_DIR="$SESSION_DIR" \
+                   LB_CURRENT_REPO="$CURRENT_REPO" \
+                   python3 - <<'PY'
 import os, pathlib, re, sys
 norm = os.environ["LB_NORMALIZED"]
 root = pathlib.Path(os.environ["LB_WIKI_DIR"])
 limit = int(os.environ["LB_WIKI_LIMIT"])
+session_dir = pathlib.Path(os.environ["LB_SESSION_DIR"])
+current_repo = os.environ["LB_CURRENT_REPO"].lower()
+
 DOMAIN_SHORT_OK = {"lens", "lead", "wow", "chat", "tab"}
 STOPWORDS = {"the", "and", "for", "with", "from", "this", "that", "what", "when", "where", "how", "why", "are", "was", "were", "but", "not", "you", "your", "have", "has", "had", "can", "did", "does", "into", "out", "any"}
 tokens = set()
 for t in re.findall(r"[a-z0-9][a-z0-9_-]+", norm):
-    if t in STOPWORDS: continue
+    if t in STOPWORDS:
+        continue
     if len(t) >= 4 or t in DOMAIN_SHORT_OK:
         tokens.add(t)
-hits = []
+
+def parse_frontmatter(text):
+    if not text.startswith("---"):
+        return None, ""
+    end = text.find("\n---", 4)
+    if end < 0:
+        return None, ""
+    fm = {}
+    for line in text[4:end].splitlines():
+        if ":" not in line:
+            continue
+        k, _, v = line.partition(":")
+        fm[k.strip()] = v.strip()
+        # Crude — only captures single-line values; fine for the fields we score.
+    return fm, text[end+4:]
+
+def slug(p):
+    return str(p.relative_to(root.parent)).replace("/", "_").replace(".md", "")
+
+style_hits = []      # [(p, text)]
+wiki_hits = []       # [(score, p, text)]
+field_weight = {"title": 5, "aliases": 4, "backend_names": 3, "ui_locations": 2}
+
 for p in root.rglob("*.md"):
     try:
         text = p.read_text()
@@ -96,9 +186,33 @@ for p in root.rglob("*.md"):
     if end < 0:
         continue
     fm_raw = text[4:end]
-    body = text[end+4:]
+
+    # Detect type=style and backend_names match for current repo
+    is_style = False
+    matches_repo = False
+    in_backend_names = False
+    for line in fm_raw.splitlines():
+        ls = line.strip()
+        if ls.startswith("type:") and "style" in ls:
+            is_style = True
+        if ls.startswith("backend_names:"):
+            in_backend_names = True
+            v = ls.split(":", 1)[1].strip()
+            if v.startswith("[") and current_repo and current_repo in v.lower():
+                matches_repo = True
+        elif in_backend_names and ls.startswith("- "):
+            v = ls[2:].strip().lower()
+            if current_repo and current_repo in v:
+                matches_repo = True
+        elif in_backend_names and not ls.startswith("- ") and ls and not ls.startswith("#"):
+            in_backend_names = False
+
+    if is_style and matches_repo:
+        style_hits.append((p, text))
+        continue  # style pages don't get scored against the prompt — they're always-on for the repo
+
+    # Score non-style pages by frontmatter token hits
     score = 0
-    field_weight = {"title": 5, "aliases": 4, "backend_names": 3, "ui_locations": 2}
     for line in fm_raw.splitlines():
         if ":" not in line:
             continue
@@ -111,32 +225,63 @@ for p in root.rglob("*.md"):
             if t in v_norm:
                 score += field_weight[k]
     if score > 0:
-        hits.append((score, p, text))
-hits.sort(key=lambda x: -x[0])
-out = []
-for score, p, text in hits[:limit]:
+        wiki_hits.append((score, p, text))
+
+wiki_hits.sort(key=lambda x: -x[0])
+
+# Style block — emit only on first prompt of session
+style_flag = session_dir / "_styles_injected.flag"
+style_out_lines = []
+if style_hits and not style_flag.exists():
+    for p, text in style_hits:
+        rel = p.relative_to(root.parent)
+        style_out_lines.append(f"### {rel} (repo style — injected once per session)\n\n{text}")
+    style_flag.touch()
+elif style_hits:
+    rels = ", ".join(str(p.relative_to(root.parent)) for p, _ in style_hits)
+    style_out_lines.append(f"_Repo style pages already in this session's context: {rels}_")
+
+# Non-style wiki: full body on first hit per session, pointer on subsequent
+wiki_out_lines = []
+for score, p, text in wiki_hits[:limit]:
     rel = p.relative_to(root.parent)
-    out.append(f"### {rel} (relevance={score})\n\n{text}")
-print("\n\n---\n\n".join(out))
+    marker = session_dir / f"page-{slug(p)}.seen"
+    if marker.exists():
+        wiki_out_lines.append(f"_Already in this session's context: {rel} (relevance={score})_")
+    else:
+        wiki_out_lines.append(f"### {rel} (relevance={score})\n\n{text}")
+        marker.touch()
+
+# Output style block first, then \n\n---WIKI---\n\n separator, then wiki block
+print("\n\n".join(style_out_lines))
+print("---WIKI---")
+print("\n\n---\n\n".join(wiki_out_lines))
 PY
-  ) || WIKI_OUT=""
+)
+  STYLE_OUT="${WIKI_AND_STYLE%%---WIKI---*}"
+  WIKI_OUT="${WIKI_AND_STYLE#*---WIKI---}"
+  STYLE_OUT="${STYLE_OUT%$'\n'}"
+  WIKI_OUT="${WIKI_OUT#$'\n'}"
 fi
 
 # --- 3. Recent unconsolidated journal entries ---
 JOURNAL_OUT=""
 JOURNAL_DIR="$KNOWLEDGE_DIR/journal"
 if [[ -d "$JOURNAL_DIR" ]]; then
-  JOURNAL_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_JOURNAL_DIR="$JOURNAL_DIR" LB_JOURNAL_DAYS="$JOURNAL_DAYS" LB_JOURNAL_LIMIT="$JOURNAL_LIMIT" python3 - <<'PY'
+  JOURNAL_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_JOURNAL_DIR="$JOURNAL_DIR" LB_JOURNAL_DAYS="$JOURNAL_DAYS" LB_JOURNAL_LIMIT="$JOURNAL_LIMIT" LB_SESSION_DIR="$SESSION_DIR" python3 - <<'PY'
 import os, pathlib, re, time, sys
 norm = os.environ["LB_NORMALIZED"]
 root = pathlib.Path(os.environ["LB_JOURNAL_DIR"])
 days = int(os.environ["LB_JOURNAL_DAYS"])
 limit = int(os.environ["LB_JOURNAL_LIMIT"])
+session_dir = pathlib.Path(os.environ["LB_SESSION_DIR"])
+
 DOMAIN_SHORT_OK = {"lens", "lead", "wow", "chat", "tab"}
 STOPWORDS = {"the", "and", "for", "with", "from", "this", "that", "what", "when", "where", "how", "why", "are", "was", "were", "but", "not", "you", "your", "have", "has", "had", "can", "did", "does", "into", "out", "any"}
 tokens = set()
 for t in re.findall(r"[a-z0-9][a-z0-9_-]+", norm):
-    if t in STOPWORDS: continue
+    if t in STOPWORDS:
+        continue
     if len(t) >= 4 or t in DOMAIN_SHORT_OK:
         tokens.add(t)
 cutoff = time.time() - days*86400
@@ -156,7 +301,13 @@ hits.sort(key=lambda x: (-x[0], -x[1]))
 out = []
 for score, mtime, p, text in hits[:limit]:
     rel = p.relative_to(root.parent)
-    out.append(f"### {rel} [unconsolidated, score={score}]\n\n{text}")
+    slug = str(rel).replace("/", "_").replace(".md", "")
+    marker = session_dir / f"journal-{slug}.seen"
+    if marker.exists():
+        out.append(f"_Already in this session's context: {rel} [unconsolidated, score={score}]_")
+    else:
+        out.append(f"### {rel} [unconsolidated, score={score}]\n\n{text}")
+        marker.touch()
 print("\n\n---\n\n".join(out))
 PY
   ) || JOURNAL_OUT=""
@@ -166,13 +317,9 @@ fi
 GLOSSARY_OUT=""
 GLOSSARY_FILE="$KNOWLEDGE_DIR/glossary.md"
 if [[ -f "$GLOSSARY_FILE" ]]; then
-  # Extract any glossary table rows whose term token appears in the prompt
   GLOSSARY_OUT=$(LB_NORMALIZED="$NORMALIZED" LB_GLOSSARY="$GLOSSARY_FILE" python3 - <<'PY'
 # Strict glossary match: a row only counts if a prompt token matches the
-# Term cell (the first column) — not any cell. Otherwise typing "status" or
-# "lens" floods the brief with every concept that mentions those words in
-# its backend_names. Short tokens (<4 chars) are dropped except known
-# product-domain words.
+# Term cell (the first column) — not any cell.
 import os, re
 norm = os.environ["LB_NORMALIZED"]
 fp = os.environ["LB_GLOSSARY"]
@@ -209,7 +356,7 @@ PY
   ) || GLOSSARY_OUT=""
 fi
 
-# Standing instructions injected on every brief — Layer 1 of §4.7 enforcement
+# Standing instructions injected on every brief
 read -r -d '' KNOWLEDGE_PROTOCOL_INSTRUCTIONS <<'EOF' || true
 
 ## Standing instructions (knowledge protocol)
@@ -226,11 +373,14 @@ read -r -d '' KNOWLEDGE_PROTOCOL_INSTRUCTIONS <<'EOF' || true
 - Treat unconsolidated journal entries (tagged above) as *recent observations*,
   not canonical truth — they outrank stale wiki pages but the dream consolidator
   may still revise them.
+- If the current repo has no `wiki/style/<repo>.md` and you're about to write
+  non-trivial code, invoke `/distill-style` first to extract the dominant
+  reviewer's convictions from PR history.
 EOF
 
 # Emit the brief
 HAS_CONTENT=false
-[[ -n "$LEARNINGS_OUT$WIKI_OUT$JOURNAL_OUT$GLOSSARY_OUT" ]] && HAS_CONTENT=true
+[[ -n "$LEARNINGS_OUT$WIKI_OUT$STYLE_OUT$JOURNAL_OUT$GLOSSARY_OUT" ]] && HAS_CONTENT=true
 
 if [[ "$QUIET" == "true" && "$HAS_CONTENT" == "false" ]]; then
   exit 0
@@ -240,6 +390,13 @@ echo "## Knowledge brief"
 echo ""
 echo "_Prepended automatically by the \`UserPromptSubmit\` hook from \`~/.leadbay/knowledge\` and local learnings._"
 echo ""
+
+if [[ -n "$STYLE_OUT" ]]; then
+  echo "### Repo coding style"
+  echo ""
+  echo "$STYLE_OUT"
+  echo ""
+fi
 
 if [[ -n "$GLOSSARY_OUT" ]]; then
   echo "### Glossary hits"

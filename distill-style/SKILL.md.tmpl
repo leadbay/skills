@@ -1,0 +1,210 @@
+---
+name: distill-style
+description: |
+  Generate or refresh a `wiki/style/<repo>.md` page from the dominant human
+  reviewer's PR comments. Call this when an agent is about to do non-trivial
+  work in a repo whose style page is missing or stale (>90 days).
+
+  The output is a single wiki page that distills 10–20 convictions held by
+  the people who actually approve PRs in that repo, each backed by ≥1
+  verbatim quote and ≥1 PR citation. The point is to make code more likely
+  to land cleanly with this team.
+
+  Triggers: "/distill-style", "no style page for this repo", "extract Amaury's
+  conviction list", "what does the reviewer want", standing-instructions hint
+  when current repo lacks `wiki/style/<repo>.md`.
+version: 1.0.0
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - WebFetch
+---
+
+# /distill-style — extract a repo's reviewer convictions into a wiki page
+
+## When to invoke
+
+The current repo has no `~/.leadbay/knowledge/wiki/style/<repo>.md`, OR the
+existing page's `last_verified` is older than 90 days, AND the agent is about
+to do non-trivial coding work that will be PR-reviewed.
+
+Already covered: `leadbay/backend` (Amaury / @TheKinrar) and `leadbay/frontend`
+(Damien / @damienesp). Don't regenerate those unless the user asks for a refresh.
+
+## When NOT to invoke
+
+- The repo is small / one-off / not maintained by humans.
+- The repo has no merged human PRs (e.g. greenfield, single-author).
+- The user is asking you to learn the **product**, not the **code style** —
+  use `/knowledge-explore` for that.
+- The wiki page already exists and `last_verified` is recent (<90 days).
+
+## What this produces
+
+A single file at `~/.leadbay/knowledge/wiki/style/<repo-shortname>.md` with:
+
+```yaml
+---
+type: style
+title: <Repo> code style — convictions of the people reviewing
+aliases: [<repo>-style, <lang>-style, <reviewer-handle>-style]
+backend_names:
+  - <owner>/<repo>
+ui_locations: []
+confidence: <1-10>
+last_verified: <YYYY-MM-DD>
+sources:
+  - .context/style-analysis/<handle>-review-comments.json
+  - https://github.com/<owner>/<repo>/pulls?q=is%3Apr+author%3A<handle>
+related: []
+---
+```
+
+Body: 10–20 numbered rules, each tagged `(must)` / `(prefer)` / `(quirk)`,
+each with ≥1 verbatim quote (in `>` blockquotes) and ≥1 PR citation.
+
+## Workflow
+
+### 1. Identify the dominant reviewer
+
+```bash
+# Detect repo from cwd
+REPO_URL=$(git config --get remote.origin.url)
+REPO=$(echo "$REPO_URL" | sed -E 's#\.git$##; s#^.*[:/]([^/]+/[^/]+)$#\1#')
+SHORT=$(echo "$REPO" | sed 's#.*/##')
+
+# Top reviewers by # of review comments in last 12 months, excluding bots
+gh api -X GET "repos/$REPO/pulls/comments" \
+  --paginate \
+  -F per_page=100 \
+  --jq '.[] | select(.created_at > (now - 365*86400 | todate)) | .user.login' \
+  | grep -v -E '\[bot\]|claude-bot|dependabot|renovate' \
+  | sort | uniq -c | sort -rn | head -5
+```
+
+Pick the top 1, occasionally top 2 if the gap is small. If there's no clear
+dominant reviewer (top one has < 30 review comments in 12 months), abort —
+write a `questions/` entry instead saying "no dominant reviewer; style page
+not warranted".
+
+### 2. Pull verbatim review comments
+
+```bash
+mkdir -p .context/style-analysis
+HANDLE=<picked-reviewer>
+gh api -X GET "repos/$REPO/pulls/comments" \
+  --paginate \
+  -F per_page=100 \
+  --jq "[.[] | select(.user.login == \"$HANDLE\") | {body, line, path, pr: (.pull_request_url | split(\"/\") | last)}]" \
+  > .context/style-analysis/$HANDLE-review-comments.json
+```
+
+Aim for ≥80 comments. If <30, the style page won't be useful — abort.
+
+### 3. Pull their authored PRs
+
+```bash
+gh api -X GET "repos/$REPO/pulls" \
+  --paginate \
+  -F state=closed \
+  -F per_page=100 \
+  --jq "[.[] | select(.user.login == \"$HANDLE\" and .merged_at != null) | {number, title, merged_at}]" \
+  > .context/style-analysis/$HANDLE-authored-prs.tsv
+```
+
+Their own PR titles often signal what they CARE about (you'll see things
+like "Fix missing index", "Drop unused HNSW indexes", "Optimize ... upserts").
+Cite 3–5 of these in the page — they're proof of conviction by action.
+
+### 4. Cluster comments into rules (use an Explore subagent)
+
+Launch an Agent with subagent_type=Explore. Brief:
+
+> Read `.context/style-analysis/<handle>-review-comments.json` and produce
+> 10–20 distinct rules the reviewer keeps making. For each rule, return:
+> - one-line headline
+> - tag: (must) | (prefer) | (quirk)
+> - 2–4 verbatim quotes from different PRs
+> - the PR numbers
+> - 1-paragraph explanation in your voice
+>
+> Cluster aggressively — don't make 20 rules from 30 comments. Combine
+> comments that say the same thing with different examples. Drop comments
+> that are about a one-off bug rather than a general pattern.
+
+### 5. Write the wiki page
+
+Use the format of `wiki/style/backend.md` and `wiki/style/frontend.md` as
+templates. Frontmatter MUST include:
+- `type: style` (validated by JSON schema)
+- `aliases` with `<repo>-style` AND `<reviewer-handle>-style`
+- `backend_names: [<owner>/<repo>]`
+- `confidence: 7-10` based on volume of evidence (7 if ~30 comments,
+  10 if 100+)
+- `last_verified: <today>` (YYYY-MM-DD)
+- `sources` listing the JSON file AND the GitHub PR-search URL
+
+Body must:
+- Open with one paragraph naming the reviewer and their GitHub handle.
+- Number the rules.
+- Tag each rule (must) / (prefer) / (quirk).
+- For each rule: ≥1 verbatim quote in a `>` blockquote, with PR # citation.
+- Close with sections "Anti-patterns — things they'll reject" and "Workflow —
+  how they expect PRs to flow".
+
+## Hard caps
+
+- **Max 20 rules.** Beyond that the page becomes unread.
+- **Max 1 NEW page per invocation.** Always exactly one — `wiki/style/<repo>.md`.
+- **Min 30 review comments OR abort.** Don't write a fluff page.
+- **Verbatim quotes only.** No paraphrasing reviewer comments.
+
+## Validation
+
+```bash
+LB_LANE=cold python3 ~/.leadbay/knowledge/bin/lb-knowledge-validate-all
+```
+
+Must pass before commit.
+
+## Refresh mode
+
+If the page already exists and `last_verified > 90 days ago`:
+
+1. Read the existing page first.
+2. Pull only comments newer than `last_verified` (filter on `created_at`).
+3. If <10 new comments: bump `last_verified` to today and commit. The rules
+   haven't moved — the reviewer hasn't said anything new worth filing.
+4. If ≥10 new comments: re-run clustering on the **combined** old+new corpus.
+   Add new rules, remove rules whose evidence is all stale (>2 years) and
+   not reinforced by recent comments. Bump `confidence` if rules held up;
+   drop it if they didn't.
+
+## Commit + push
+
+Same convention as `/learnings-from-pr`: write directly to
+`leadbay/knowledge:main` (no PR review for knowledge edits). One commit,
+message format:
+
+```
+wiki/style/<repo>: distilled <reviewer-handle>'s convictions (<N> rules)
+
+Sourced from <comment-count> review comments + <pr-count> authored PRs.
+Refresh-after: <date 90 days from now>.
+```
+
+## Failure modes to avoid
+
+- **Don't invent rules from a single comment.** If a conviction only shows up
+  once, it's noise. Two distinct comments minimum.
+- **Don't paraphrase quotes.** The reviewer's exact wording is the artifact.
+- **Don't grade the reviewer's taste.** Style pages capture what THEY want,
+  not what's "objectively correct".
+- **Don't cite the bot.** If `claude-bot` or `[bot]` appears in the author
+  list, filter it out.
+- **Don't write the page if comment volume is too low.** A page based on
+  20 comments will be wrong half the time and worse than no page.

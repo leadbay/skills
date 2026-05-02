@@ -25,6 +25,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 | `/knowledge-explore` | Map a NEW workflow into the wiki via live tour (browser-based, NOT source-only) |
 | `/knowledge-question` | Flag an open question into `questions/` |
 | `/learnings-from-pr` | Pre-PR knowledge capture — invoke AFTER implementation, BEFORE `git push` |
+| `/distill-style` | Generate or refresh `wiki/style/<repo>.md` from the dominant reviewer's PR comments |
 | `/diagnose` | Deep diagnostic root cause analysis (no code changes) |
 | `/relentless` | Overnight autonomous build-deploy-eval-iterate loop on a live system |
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
@@ -38,6 +39,7 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 - "explore the X workflow", "document how Y works", "we keep getting confused about Z" → `/knowledge-explore`
 - "I'm not sure", "open question", "file a question" → `/knowledge-question`
 - about to push / open a PR → `/learnings-from-pr` (FIRST, before `git push`)
+- "no style page for this repo", "extract <reviewer> conviction", "what does the reviewer want" → `/distill-style`
 - "weekly retro", "what did we ship" → `/org-retro`
 - "sales retro", "user activity" → `/sales-retro`
 - "diagnose this", "root cause" → `/diagnose`

@@ -50,6 +50,8 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/knowledge-find` | Pre-task brief from the shared wiki (auto-fired by hook) |
 | `/knowledge-explore` | Map a NEW workflow into the wiki via live tour (browser-based, NOT source-only) |
 | `/knowledge-question` | Flag an open question into the questions/ folder |
+| `/learnings-from-pr` | Pre-PR knowledge capture (invoke before `git push`) |
+| `/distill-style` | Generate `wiki/style/<repo>.md` from dominant reviewer's PR comments |
 | `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
 | `/relentless` | Overnight perfectionist loop: deploys live, evals 4-dim, iterates until done |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
