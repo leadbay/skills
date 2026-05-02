@@ -2,10 +2,19 @@
 ---
 name: relentless
 description: |
-  Long-horizon overnight perfectionist mode (v6). The Milan Check
-  passes IF AND ONLY IF any further improvement is actually
-  impossible — but the *work itself* tells you when that's true,
-  not a hardcoded iteration count. v5 had a hardcoded floor of 15
+  Long-horizon overnight perfectionist mode (v7). v7 hardens the
+  per-iteration plan + self-review (4a-iii) into an actual
+  engineering sanity check / completeness / edge-cases pass —
+  before this, the self-review was header-only and an agent could
+  write "DRY: nothing to reuse" without grepping. Plan now requires
+  `## Functions / methods to add or modify` (≥1 file:name entry)
+  and `## Edge cases this slice must handle` (≥3 enumerated). Self-
+  review's DRY check must cite either a `Searched:` line or a
+  path-with-extension; Coupling check must name a module path. New
+  `plan-substantive` gate enforces this beyond `plan-reviewed`.
+  The Milan Check still passes IF AND ONLY IF any further
+  improvement is actually impossible — but the *work itself* tells
+  you when that's true, not a hardcoded iteration count. v5 had a hardcoded floor of 15
   iterations; v6 drops it because (a) we don't know in advance how
   many iterations any given task needs, and (b) the other v5 gates
   (q-saturated, attempts-exhausted, second-opinions-consistent) are
@@ -30,7 +39,7 @@ description: |
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 6.0.0
+version: 7.0.0
 allowed-tools:
   - Bash
   - Read
@@ -199,7 +208,7 @@ Direct, concrete, no filler. Sound like a builder reporting to builders.
 Name specific people, specific numbers. Skip generic praise.
 If something is noteworthy, say exactly what and why.
 
-# /relentless — Overnight Perfectionist Mode (v6)
+# /relentless — Overnight Perfectionist Mode (v7)
 
 You are about to enter **Relentless mode**. Milan is leaving the keyboard.
 He will not answer questions, hand you credentials mid-flight, or
@@ -409,6 +418,7 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Even with v3's mission-bar gate (Mission alignment ≥75), agents stopped at 4 iterations. Reason: when the agent self-scores AND the gate uses an absolute threshold, the agent converges to "score high enough to satisfy the threshold." Same problem as Goodhart's law — any score that becomes a target stops being a useful measure. The agent reported "Mission alignment 84/100, all gates green" while explicitly listing 5 fixable open items in the same report. | v4 makes exit conditions **mechanical and process-based, not score-based**: (1) hard iteration floor of 10 — the gate auto-rewrites PROCEED to CONTINUE below it, period; (2) `attempts-exhausted` gate — each iteration's plan declares a Q-target + projected score, each iteration's eval records IMPROVED/NO_MOVEMENT/REGRESSED, PROCEED requires ≥3 of last 5 to be NO_MOVEMENT/REGRESSED (proving the agent tried and the score didn't move, vs the agent stopped trying); (3) fresh-context second-opinion subagent — when PROCEED is being considered, a subagent with no conversation history reviews mission + criteria + latest iter and names 5 things still wrong, with `Verdict: CLEAN | EXTERNAL_ONLY | CONTINUE_LOOP_REQUIRED`. The independent reviewer is the antidote to the agent's self-justification. |
 | v4 still allowed PROCEED while improvement was possible: 3-of-5 plateau leaves 2 of the last 5 having IMPROVED (= room to improve still exists), and one CLEAN second-opinion might be a single subagent being lucky/cursory. The user's clarification: "Pass IF AND ONLY IF any further improvement is actually impossible." | v5 tightens the bar: (1) iteration floor raised to 15; (2) `attempts-exhausted` requires ALL 5 of last 5 to be NO_MOVEMENT/REGRESSED (was 3-of-5) — if even one IMPROVED, gradient is alive; (3) NEW `second-opinions-consistent` gate requires ≥2 second-opinion files (`99-second-opinion-NN.md`), both CLEAN/EXTERNAL_ONLY, with ≥5 iterations between them. The second subagent receives the first's findings + verifies each was addressed before adding new ones. Two independent reviewers across time agreeing nothing's fixable is the operational definition of "further improvement is actually impossible." |
 | v5's hardcoded `iteration-count: 15` floor was prescriptive about something we can't know in advance. A tiny task might honestly converge in ~8 iterations; a complex one may need 80+. Imposing a fixed minimum either wastes iterations on small tasks (degrading quality with make-work) or under-specifies for big ones. The user's clarification: "we might be overprescriptive about the minimal number of iterations for things we have no clue how many iterations they will take." | v6 drops the auto-call to `iteration-count` from the exit gates. The other gates are work-based and organically require a window of iterations to pass honestly: `q-saturated` needs 5 iters of plateau, `attempts-exhausted 5-of-5` needs 5 iters of NO_MOVEMENT outcomes, `second-opinions-consistent` needs ≥2 opinions ≥3 iters apart. Together they impose a natural floor of ~6–8 iterations for the smallest honest task, scaling organically up to 80+ for complex ones. The work tells you when you're done; we don't. The `iteration-count` subcommand is kept for diagnostic use only. |
+| v6's per-iteration plan + self-review (4a-iii) had the shape of an engineering review without the substance. The `plan-reviewed` gate just checked header presence; an agent could write "DRY: nothing to reuse, looks clean" under each heading and pass. No file-path evidence required, no enumerated edge cases, no actual grep cited. | v7 adds two new required plan sections: `## Functions / methods to add or modify` (≥1 entry shaped like `<file.ext>:<name>: ADD\|MODIFY`) and `## Edge cases this slice must handle` (≥3 enumerated). New `plan-substantive` gate (run after `plan-reviewed`) checks: (a) ≥1 path-shaped function entry, (b) ≥3 edge-case bullets, (c) DRY check cites either a `Searched: <pattern>` line OR a path-with-extension, (d) Coupling check names a module path. Self-review sub-sections updated with evidence-required wording. Style-guide check sub-section now reads `wiki/style/<repo>.md` (or invokes `/distill-style` first if missing) and cites at least one applicable rule. |
 
 ---
 
@@ -1355,6 +1365,29 @@ generic platitudes. Examples:
 - "Brooks: this is essential complexity (per-user signal is real),
   not accidental — the LLM round-trip is unavoidable."
 
+## Functions / methods to add or modify
+v7-required: ≥1 entry. Each line names a path with extension and
+the function/method affected, plus ADD or MODIFY plus a one-line
+purpose. The `plan-substantive` gate parses these lines.
+- <file/path.ext>:<function_name>: ADD — <one-line purpose>
+- <file/path.ext>:<function_name>: MODIFY — <one-line purpose>
+
+## Edge cases this slice must handle
+v7-required: ≥3 enumerated. Each is a concrete edge condition AND
+how this slice handles it (or why it's out of scope and won't
+break). Generic prompts to reach into:
+- Empty / single-element / max-size input
+- Concurrent invocation of the same code path
+- Time / TZ boundaries (DST, midnight UTC)
+- Failure-injection (third-party down, DB unreachable)
+- Partial state from a prior failed run
+- Trust-boundary input (unauthenticated, cross-tenant)
+- Input the planner generates that the validator rejects
+Examples (substitute for your slice):
+- Empty user history (<3 prior emails): fall back to default style
+- Inference timeout (>200ms): proceed with prior baseline; log warn
+- Non-English body: skip classifier; use generic template
+
 ## What can go wrong
 Walk the blast radius. For each item, name the impact AND the
 mitigation.
@@ -1393,35 +1426,68 @@ of the headings below, then end with a `## Final decision:` line:
   flag, parallel impl) instead of a structural rewrite?
 
 ### DRY check
+v7-required: must contain either a `Searched: <pattern>` line
+naming what you grepped, OR a path-with-extension reference.
+"Looks clean" without evidence fails `plan-substantive`.
 - Walk the codebase for existing functions / classes / patterns that
-  do what this plan duplicates. Name them with paths. Decide reuse
-  vs duplicate, with a reason.
+  do what this plan duplicates. State what you grepped (`Searched:
+  def *Classifier across harness/`) and what you found (or didn't).
+- Name reused symbols with their path:line (e.g.,
+  `tests/fixtures/tone-classifier.py:42`).
+- If genuinely nothing exists: state the search terms used, so a
+  reviewer can verify.
 
 ### Coupling check
-- Does this introduce a new dependency edge? Is it the right
-  direction (high-level depends on low-level)? Could it be inverted
-  via DI / interface?
+v7-required: must name an existing module path.
+- Does this introduce a new dependency edge? Name the edge with
+  paths (e.g., `harness/planner/run.py → harness/llm/voice_match.py`).
+- Is the direction right (high-level depends on low-level)?
+- Could it be inverted via DI / interface? If yes, name the hook
+  point (`harness/planner/run.py:14`).
 
 ### Race / ordering
 - Are there concurrent execution paths? Webhook + cron, two requests
-  to same row, mid-flight migration? Name the worst case and the
-  defense.
+  to same row, mid-flight migration? Name the worst case AND the
+  defense (lock, idempotency key, ordering invariant).
+- "No race: this code path is single-writer because <evidence>" — if
+  claiming none, name why.
 
 ### State machine impact
-- Are any state transitions added, removed, or constrained? Is the
-  validate_transition wired? Are reverse transitions still possible?
+- Are any state transitions added, removed, or constrained? If yes,
+  list them as `<from> → <to>`. Is `validate_transition` wired?
+- "No transitions affected: verified by grep `validate_transition`
+  in plan, no matches" — if claiming none, name what was verified.
 
 ### Test coverage gap
-- What tests cover the new behaviour? What tests SHOULD cover it
-  that don't yet? Add them as part of the build, not after.
+v7-required: must name a test file path.
+- What tests cover the new behaviour? Cite the test file path
+  (`tests/integration/test_voice_match.py`).
+- What tests SHOULD cover it that don't yet? Add them in this
+  iteration's build, not after.
 
 ### Backward compatibility
-- What existing callers / fixtures / clients does this affect?
-  Do they need a flag / shim / migration?
+v7-required: must name ≥1 existing caller OR state what was searched.
+- What existing callers / fixtures / clients does this affect? Cite
+  them with paths.
+- "No existing callers: grepped `voice_match` across `harness/` and
+  `tests/`, no matches" — if claiming none, name the search.
 
 ### Failure mode the plan didn't address
 - Re-read 02c-eval-framework.md F-rows. Does this slice introduce a
-  new F-row that should be added? If yes, add it now.
+  new F-row that should be added? If yes, add it now AND name it.
+
+### Style-guide check
+v7-added. The repo's dominant reviewer's convictions live in
+`~/.leadbay/knowledge/wiki/style/<repo>.md` if the repo has been
+distilled. If the file doesn't exist, run `/distill-style` first
+(it mines PR review history) — for a long /relentless run, the
+upfront cost is small relative to the run length.
+- Read `wiki/style/<repo>.md` (or note "no style page exists,
+  invoked /distill-style → result: <file or no PRs>").
+- Cite ≥1 rule from it that applies to this slice (e.g., "must:
+  no `var` in Kotlin — using `val` for the new field"), OR state
+  "no rules from style-guide apply to this slice (checked: rules
+  about <topic-1>, <topic-2>, neither relevant)".
 
 ### Mission-fit
 - Does this slice move us toward the mission, or only toward a Q
@@ -1430,7 +1496,7 @@ of the headings below, then end with a `## Final decision:` line:
 ### Cross-criterion side effects
 - Does pushing this Q-criterion up risk pushing another DOWN?
   (e.g., adding a confirmation step might raise "Trust signals" but
-  lower "Effort vs outcome".) Name the trade-off.
+  lower "Effort vs outcome".) Name the trade-off explicitly.
 
 ## Final decision: PROCEED | REVISED | ABORT
 - If PROCEED: build as planned.
@@ -1448,6 +1514,7 @@ NZ=$(printf '%02d' $N)
 PLAN_FILE="$ART_DIR/iter-$NZ-plan.md"
 "$_LB_BIN/lb-relentless-gate" phase "Plan iter $N" "$PLAN_FILE" 30 "## Self-review"
 "$_LB_BIN/lb-relentless-gate" plan-reviewed "$PLAN_FILE"
+"$_LB_BIN/lb-relentless-gate" plan-substantive "$PLAN_FILE"
 "$_LB_BIN/lb-relentless-gate" banned "$PLAN_FILE"
 ```
 

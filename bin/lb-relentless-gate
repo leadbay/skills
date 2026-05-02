@@ -15,6 +15,19 @@
 #   mission-defined FILE               — mission file has required sections
 #   plan-reviewed FILE                 — iter plan has plan + self-review +
 #                                        final-decision sections
+#   plan-substantive FILE              — v7 hardening of plan review.
+#                                        Beyond plan-reviewed (header
+#                                        presence), checks that the
+#                                        engineering review actually has
+#                                        substance: ≥1 file-path-shaped
+#                                        function entry, ≥3 enumerated
+#                                        edge cases, DRY section cites a
+#                                        path or a Searched: line,
+#                                        Coupling section names a module
+#                                        path. Catches the failure mode
+#                                        where the agent writes "DRY:
+#                                        nothing to reuse" without
+#                                        actually grepping.
 #   q-saturated ART_DIR [WIN] [DELTA]  — Q TOTAL moving-avg plateau check
 #                                        (default DELTA scales with Q range:
 #                                        12 for ≥100-scale, 0.5 for ≤10-scale)
@@ -119,12 +132,29 @@ Subcommands:
       imagination". Exit 1 with named missing sections.
 
   plan-reviewed FILE
-      Phase 4a-iii: the iteration plan file must contain
-      "## What I want to improve", "## In which way",
-      "## Why this way", "## Alternatives considered",
-      "## What can go wrong", "## Self-review", and a
-      "## Final decision: PROCEED" or "## Final decision: REVISED"
-      line. Exit 1 with named missing sections.
+      Phase 4a-iii: the iteration plan file must contain (v7 list):
+      "## Targeted Q-criterion", "## Current score",
+      "## Projected score", "## What I want to improve",
+      "## In which way", "## Why this way",
+      "## Alternatives considered",
+      "## Functions / methods to add or modify",
+      "## Edge cases this slice must handle",
+      "## What can go wrong", "## Self-review", and
+      "## Final decision: PROCEED|REVISED|ABORT".
+      Header presence only — pair with plan-substantive for the
+      content check. Exit 1 with named missing sections.
+
+  plan-substantive FILE
+      v7 hardening: beyond plan-reviewed (header presence), checks
+      that the engineering review actually has substance:
+        - ≥1 file-path-shaped entry under
+          "## Functions / methods to add or modify"
+        - ≥3 enumerated items under "## Edge cases this slice must
+          handle"
+        - "### DRY check" contains either a "Searched: <pattern>"
+          line OR a path-with-extension reference
+        - "### Coupling check" names a module path
+      Catches "DRY: nothing to reuse" without an actual grep.
 
   q-saturated ART_DIR [WINDOW] [MAX_DELTA]
       Read Q TOTAL from the last WINDOW iter-NN.md files in ART_DIR
@@ -374,9 +404,9 @@ case "$cmd" in
       exit 2
     fi
     missing=""
-    # v4 adds: Targeted Q-criterion, Current score, Projected score
-    # — mandatory for the attempts-exhausted gate to work.
-    for section in "## Targeted Q-criterion" "## Current score" "## Projected score" "## What I want to improve" "## In which way" "## Why this way" "## Alternatives considered" "## What can go wrong" "## Self-review"; do
+    # v4 added: Targeted Q-criterion, Current score, Projected score
+    # v7 added: Functions / methods to add or modify, Edge cases this slice must handle
+    for section in "## Targeted Q-criterion" "## Current score" "## Projected score" "## What I want to improve" "## In which way" "## Why this way" "## Alternatives considered" "## Functions / methods to add or modify" "## Edge cases this slice must handle" "## What can go wrong" "## Self-review"; do
       if ! grep -qF -- "$section" "$file"; then
         missing="$missing\n  - $section"
       fi
@@ -391,6 +421,69 @@ case "$cmd" in
       exit 1
     fi
     echo "PLAN_REVIEWED: $file"
+    ;;
+
+  plan-substantive)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate plan-substantive FILE" >&2
+      exit 2
+    fi
+    fail=""
+
+    # 1. Functions section: ≥1 line that looks like a path (e.g.,
+    #    "harness/api/webhook.py:handler: ADD") — match a path-like
+    #    token containing a slash AND a dot+extension.
+    # Note: regex passed as string to avoid awk literal-/ delimiter issues.
+    funcs=$(awk '
+      /^## Functions \/ methods to add or modify/ { in_b=1; next }
+      in_b && /^## / { in_b=0 }
+      in_b && $0 ~ "[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\\.[a-zA-Z]+" { print }
+    ' "$file") || true
+    funcs_n=$(printf "%s\n" "$funcs" | grep -c . || true)
+    if [ "$funcs_n" -lt 1 ]; then
+      fail="$fail\n  - ## Functions / methods to add or modify: need ≥1 entry shaped like '<path/file.ext>:<name>: ADD|MODIFY — <purpose>'"
+    fi
+
+    # 2. Edge cases: ≥3 bulleted/numbered items
+    edges=$(awk '
+      /^## Edge cases this slice must handle/ { in_b=1; next }
+      in_b && /^## / { in_b=0 }
+      in_b && /^[[:space:]]*[-*0-9]+\.?[[:space:]]+./ { print; n++ }
+      END { exit n>=3 ? 0 : 1 }
+    ' "$file") || true
+    edges_n=$(printf "%s\n" "$edges" | grep -c . || true)
+    if [ "$edges_n" -lt 3 ]; then
+      fail="$fail\n  - ## Edge cases this slice must handle: need ≥3 enumerated items (found $edges_n)"
+    fi
+
+    # 3. DRY check: needs either a 'Searched:' line OR a path-with-extension
+    dry_block=$(awk '
+      /^### DRY check/ { in_b=1; next }
+      in_b && /^### / { in_b=0 }
+      in_b { print }
+    ' "$file") || true
+    if ! printf "%s\n" "$dry_block" | grep -qE 'Searched:|[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\.[a-zA-Z]+'; then
+      fail="$fail\n  - ### DRY check: must contain either 'Searched: <pattern>' (what you grepped) OR a path/file.ext reference"
+    fi
+
+    # 4. Coupling check: needs a path-with-extension OR a named module path
+    cpl_block=$(awk '
+      /^### Coupling check/ { in_b=1; next }
+      in_b && /^### / { in_b=0 }
+      in_b { print }
+    ' "$file") || true
+    if ! printf "%s\n" "$cpl_block" | grep -qE '[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\.[a-zA-Z]+|[a-zA-Z0-9_-]+/[a-zA-Z0-9_./-]+'; then
+      fail="$fail\n  - ### Coupling check: must name an existing module path (e.g., 'harness/scheduler/jobs.py' or 'harness/capabilities/')"
+    fi
+
+    if [ -n "$fail" ]; then
+      echo "PLAN_NOT_SUBSTANTIVE in $file:" >&2
+      printf "%b\n" "$fail" >&2
+      echo "  → v7: header presence isn't enough. The engineering review must surface concrete things." >&2
+      exit 1
+    fi
+    echo "PLAN_SUBSTANTIVE: funcs=$funcs_n edges=$edges_n dry=ok coupling=ok"
     ;;
 
   mission-bar-met)
