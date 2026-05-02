@@ -27,23 +27,39 @@
 #                                        every iter-NN.md (number, goal,
 #                                        Q TOTAL, Δ, milan verdict, fixes)
 #   iteration-count ART_DIR [MIN]      — count iter-NN.md files; fail if
-#                                        below MIN (default 10). v4 hard
-#                                        floor — agents settled at 4
-#                                        without it.
+#                                        below MIN (default 15 in v5;
+#                                        was 10 in v4). Per-criterion
+#                                        exploration needs room.
 #   attempts-exhausted ART_DIR [WIN] [MIN_FAILS]
 #                                      — gradient-descent stagnation check.
 #                                        Last WIN iter-NN.md files must
 #                                        contain '## Q-target outcome:
 #                                        NO_MOVEMENT|REGRESSED' for ≥
-#                                        MIN_FAILS of them. Proves the
-#                                        agent tried and the score actually
-#                                        didn't move (vs the agent stopped
-#                                        trying and called the plateau).
-#                                        Defaults: WIN=5, MIN_FAILS=3.
-#   second-opinion-clean ART_DIR       — 99-second-opinion.md must exist
-#                                        with a Verdict line of CLEAN or
-#                                        EXTERNAL_ONLY. Spawned by Phase
-#                                        4a-xiv before PROCEED is allowed.
+#                                        MIN_FAILS of them. v5 default:
+#                                        5-of-5 (was 3-of-5 in v4). If
+#                                        even one of the last 5 IMPROVED,
+#                                        gradient is alive — keep going.
+#                                        Defaults: WIN=5, MIN_FAILS=5.
+#   second-opinion-clean ART_DIR [FILE]
+#                                      — single second-opinion file check.
+#                                        FILE defaults to
+#                                        99-second-opinion.md. Used as
+#                                        the inner check; second-opinions-
+#                                        consistent walks every per-iter
+#                                        file. Verdict must be CLEAN or
+#                                        EXTERNAL_ONLY.
+#   second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]
+#                                      — v5 strengthening of single
+#                                        second-opinion. Requires ≥
+#                                        MIN_OPINIONS files matching
+#                                        99-second-opinion-NN.md, all
+#                                        CLEAN/EXTERNAL_ONLY, with at
+#                                        least MIN_GAP iterations between
+#                                        first and last. Two independent
+#                                        reviewers across time agreeing
+#                                        nothing's fixable >> one CLEAN.
+#                                        Defaults: MIN_OPINIONS=2,
+#                                        MIN_GAP=5.
 #
 # Exit codes:
 #   0 — gate passed
@@ -138,9 +154,9 @@ Subcommands:
       Always exits 0; emits "_no iterations found_" if empty.
 
   iteration-count ART_DIR [MIN]
-      Count iter-NN.md files; fail if below MIN (default 10).
-      The v4 hard floor. Without it, agents settled at 4 iterations
-      because every other gate could be self-justified around.
+      Count iter-NN.md files; fail if below MIN (default 15 in v5).
+      Hard floor. Per-criterion exploration needs room: ~1 baseline
+      + ~3 binary floor + ~10 push iterations on the bottom-N.
       Stdout: "ITERATIONS=N MIN=M". Exit 1 if N < M.
 
   attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]
@@ -148,17 +164,29 @@ Subcommands:
       iter-NN.md files. Counts how many contain a
       '## Q-target outcome:' line whose value is NO_MOVEMENT or
       REGRESSED. Exit 0 if count ≥ MIN_FAILS — i.e., the agent
-      genuinely tried and the score didn't move. Exit 1 otherwise:
-      either too few attempts to know, or every attempt succeeded
-      (which means there's still gradient to descend).
-      Defaults: WINDOW=5, MIN_FAILS=3.
+      genuinely tried and the score didn't move.
+      v5 defaults: WINDOW=5, MIN_FAILS=5 (all of last 5 must
+      plateau). v4 was 3-of-5 — too lax: 2 of the last 5 could
+      still have IMPROVED, meaning gradient was alive but the agent
+      exited anyway. v5 framing: "if and only if any further
+      improvement is actually impossible" — even one IMPROVED in
+      the last window means improvement IS possible.
 
-  second-opinion-clean ART_DIR
-      99-second-opinion.md must exist (created by Phase 4a-xiv when
-      the agent considers PROCEED — fresh-context Agent subagent
-      reviews mission + criteria + latest iter, names what's still
-      wrong). The file must have a 'Verdict:' line whose value is
-      CLEAN or EXTERNAL_ONLY. CONTINUE_LOOP_REQUIRED → fail.
+  second-opinion-clean ART_DIR [FILE]
+      Single-file check. FILE defaults to 99-second-opinion.md
+      (relative to ART_DIR). Verdict must be CLEAN or EXTERNAL_ONLY,
+      with ≥3 numbered findings. Used internally by
+      second-opinions-consistent.
+
+  second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]
+      v5 strengthening: requires ≥MIN_OPINIONS second-opinion files
+      saved as 99-second-opinion-NN.md (NN = iteration number when
+      spawned), all with Verdict CLEAN or EXTERNAL_ONLY, AND with
+      at least MIN_GAP iterations between earliest and latest.
+      Two independent fresh-context reviewers across time agreeing
+      nothing's fixable left is a much stronger signal than one
+      CLEAN — catches a single subagent being lucky/cursory.
+      Defaults: MIN_OPINIONS=2, MIN_GAP=5.
 
   help
       This message.
@@ -556,7 +584,7 @@ case "$cmd" in
     ;;
 
   iteration-count)
-    art_dir="${1:-}"; min="${2:-10}"
+    art_dir="${1:-}"; min="${2:-15}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
       echo "Usage: lb-relentless-gate iteration-count ART_DIR [MIN]" >&2
       exit 2
@@ -565,14 +593,14 @@ case "$cmd" in
     echo "ITERATIONS=$n MIN=$min"
     if [ "$n" -lt "$min" ]; then
       echo "ITERATION_FLOOR_NOT_MET — only $n iterations, need ≥$min before PROCEED is allowed" >&2
-      echo "  → v4 hard floor. Empirically, runs that exit below this floor are 'implementation done, declared victory' — not relentless." >&2
+      echo "  → v5 hard floor. Per-criterion exploration needs room — typically 1 baseline + 3 binary-floor + 10 push attempts." >&2
       exit 1
     fi
     echo "ITERATION_FLOOR_MET"
     ;;
 
   attempts-exhausted)
-    art_dir="${1:-}"; window="${2:-5}"; min_fails="${3:-3}"
+    art_dir="${1:-}"; window="${2:-5}"; min_fails="${3:-5}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
       echo "Usage: lb-relentless-gate attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]" >&2
       exit 2
@@ -608,12 +636,16 @@ case "$cmd" in
     ;;
 
   second-opinion-clean)
-    art_dir="${1:-}"
+    art_dir="${1:-}"; explicit_file="${2:-}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
-      echo "Usage: lb-relentless-gate second-opinion-clean ART_DIR" >&2
+      echo "Usage: lb-relentless-gate second-opinion-clean ART_DIR [FILE]" >&2
       exit 2
     fi
-    file="$art_dir/99-second-opinion.md"
+    if [ -n "$explicit_file" ]; then
+      file="$explicit_file"
+    else
+      file="$art_dir/99-second-opinion.md"
+    fi
     if [ ! -f "$file" ]; then
       echo "SECOND_OPINION_MISSING: $file does not exist" >&2
       echo "  → Before PROCEED, spawn a fresh-context Agent (Phase 4a-xiv) to review mission + criteria + latest iter; save findings + Verdict to $file." >&2
@@ -622,13 +654,12 @@ case "$cmd" in
     verdict=$(grep -E '^[[:space:]]*Verdict:[[:space:]]*' "$file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*Verdict:[[:space:]]*//' | awk '{print $1}' || true)
     case "$verdict" in
       CLEAN|EXTERNAL_ONLY)
-        # also require ≥3 numbered findings exist in the file (proves the subagent actually engaged, didn't return empty)
         findings=$(grep -cE '^[0-9]+\.[[:space:]]+' "$file" 2>/dev/null || true)
         if [ "$findings" -lt 3 ]; then
           echo "SECOND_OPINION_THIN: $file Verdict=$verdict but only $findings numbered findings (need ≥3 to prove the subagent engaged)" >&2
           exit 1
         fi
-        echo "SECOND_OPINION_CLEAN: Verdict=$verdict findings=$findings"
+        echo "SECOND_OPINION_CLEAN: $(basename "$file") Verdict=$verdict findings=$findings"
         ;;
       CONTINUE_LOOP_REQUIRED)
         echo "SECOND_OPINION_REQUIRES_CONTINUE: $file says CONTINUE_LOOP_REQUIRED" >&2
@@ -644,6 +675,49 @@ case "$cmd" in
         exit 1
         ;;
     esac
+    ;;
+
+  second-opinions-consistent)
+    art_dir="${1:-}"; min_op="${2:-2}"; min_gap="${3:-5}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]" >&2
+      exit 2
+    fi
+    files=$(ls "$art_dir"/99-second-opinion-[0-9][0-9].md 2>/dev/null | sort || true)
+    n=$(echo "$files" | grep -c . || true)
+    if [ "$n" -lt "$min_op" ]; then
+      echo "SECOND_OPINIONS_TOO_FEW: found $n files matching 99-second-opinion-NN.md, need ≥$min_op" >&2
+      echo "  → v5 requires multiple second-opinion calls across the run, named 99-second-opinion-NN.md (NN = iteration when spawned)." >&2
+      echo "  → Spawn another fresh-context Agent at iter $(($(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | wc -l | tr -d ' ') + 1)) and save its output to 99-second-opinion-<NN>.md." >&2
+      exit 1
+    fi
+    # All files must be CLEAN or EXTERNAL_ONLY (re-use the single-file check)
+    bad=""
+    iters=""
+    for f in $files; do
+      if ! "$0" second-opinion-clean "$art_dir" "$f" >/dev/null 2>&1; then
+        # capture the verdict for the error message
+        v=$(grep -E '^[[:space:]]*Verdict:[[:space:]]*' "$f" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*Verdict:[[:space:]]*//' | awk '{print $1}')
+        bad="$bad $(basename "$f")=${v:-MISSING}"
+      fi
+      iter_n=$(basename "$f" | sed -E 's/^99-second-opinion-0*([0-9]+)\.md$/\1/')
+      iters="$iters $iter_n"
+    done
+    if [ -n "$bad" ]; then
+      echo "SECOND_OPINIONS_NOT_ALL_CLEAN:$bad" >&2
+      echo "  → Every 99-second-opinion-NN.md file must have Verdict CLEAN or EXTERNAL_ONLY." >&2
+      exit 1
+    fi
+    # MIN_GAP check: difference between earliest and latest iter must be ≥ MIN_GAP
+    first=$(echo $iters | tr ' ' '\n' | sort -n | head -1)
+    last=$(echo $iters | tr ' ' '\n' | sort -n | tail -1)
+    gap=$((last - first))
+    if [ "$gap" -lt "$min_gap" ]; then
+      echo "SECOND_OPINIONS_TOO_CLOSE: opinions spawned at iters [$iters], gap=$gap < min_gap=$min_gap" >&2
+      echo "  → The point of multiple opinions is to verify consistency over time. Spawn the next one ≥$min_gap iterations after the previous." >&2
+      exit 1
+    fi
+    echo "SECOND_OPINIONS_CONSISTENT: $n opinions across iters [$iters], gap=$gap ≥ $min_gap, all CLEAN/EXTERNAL_ONLY"
     ;;
 
   help|--help|-h|"")
