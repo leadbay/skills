@@ -70,11 +70,9 @@ If `~/.leadbay-skills` exists, the following team skills are available:
 | Command | What it does |
 |---------|-------------|
 | `/knowledge-find` | Pre-task knowledge brief (auto-fired by hook) |
-| `/knowledge-capture` | Post-task journal write (auto-fired by hook) |
-| `/knowledge-explore` | Bootstrap a new product surface |
+| `/knowledge-explore` | Map a NEW workflow into the wiki via live tour |
 | `/knowledge-question` | Flag an open question |
-| `/knowledge-sync` | Push local journal to leadbay/knowledge |
-| `/knowledge-dream` | Manual consolidator preview |
+| `/learnings-from-pr` | Pre-PR knowledge capture (invoke before `git push`) |
 | `/diagnose` | Deep diagnostic root cause analysis |
 | `/relentless` | Overnight autonomous build-deploy-eval-iterate loop |
 | `/org-retro` | Weekly org-wide engineering retro |
@@ -85,8 +83,8 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 Before any non-trivial coding task, your FIRST action is /knowledge-find with the
 user's request as input. Only proceed once you've read the brief.
 
-After a non-trivial task completes, invoke /knowledge-capture with a one-paragraph
-summary of what was learned.
+Before pushing or opening a PR, invoke /learnings-from-pr to capture durable
+knowledge from the work just completed.
 
 If you encounter a dilemma you can't resolve from the brief, invoke /knowledge-question
 rather than guessing.
@@ -207,10 +205,16 @@ if [ "$WITH_KNOWLEDGE" = "true" ]; then
   echo "Setting up knowledge mirror at $KNOWLEDGE_DIR..."
   mkdir -p "$LEADBAY_HOME"
 
-  if [ -d "$KNOWLEDGE_DIR/.git" ]; then
-    echo "  Updating existing mirror..."
-    (cd "$KNOWLEDGE_DIR" && git pull --rebase --autostash origin main 2>&1 | tail -5) || \
-      echo "  WARNING: pull failed; mirror may be stale. Inspect $KNOWLEDGE_DIR." >&2
+  # `.git` may be a directory (regular clone) or a file (worktree / submodule).
+  # Either is a valid existing git checkout for our purposes.
+  if [ -e "$KNOWLEDGE_DIR/.git" ]; then
+    echo "  Updating existing mirror at $KNOWLEDGE_DIR..."
+    if [ "$CI_MODE" = "true" ]; then
+      echo "  (skipping git pull in --ci mode; the workflow already checked out a fresh ref)"
+    else
+      (cd "$KNOWLEDGE_DIR" && git pull --rebase --autostash origin main 2>&1 | tail -5) || \
+        echo "  WARNING: pull failed; mirror may be stale. Inspect $KNOWLEDGE_DIR." >&2
+    fi
   else
     if [ -d "$KNOWLEDGE_DIR" ]; then
       echo "  $KNOWLEDGE_DIR exists but is not a git repo. Aborting to avoid clobbering." >&2
@@ -229,9 +233,6 @@ if [ "$WITH_KNOWLEDGE" = "true" ]; then
     echo "Installing Claude Code hooks into $CLAUDE_SETTINGS..."
     mkdir -p "$(dirname "$CLAUDE_SETTINGS")"
     LB_BIN="$SKILLS_HOME/bin"
-    PRE_TOOL_CMD="$LB_BIN/lb-knowledge-validate --file \"\$CLAUDE_TOOL_INPUT_file_path\" --lane hot"
-    USER_PROMPT_CMD="$LB_BIN/lb-knowledge-find \"\$CLAUDE_USER_PROMPT\""
-    STOP_CMD="$LB_BIN/lb-knowledge-capture --auto"
 
     LB_BIN="$LB_BIN" python3 - "$CLAUDE_SETTINGS" <<'PY'
 import json, os, pathlib, sys
@@ -260,15 +261,19 @@ def merge_hook(name, matcher, command):
     hooks[name] = existing
     return True
 
+# Strip any obsolete Stop hook that calls the removed lb-knowledge-capture binary.
+if "Stop" in hooks:
+    hooks["Stop"] = [
+        slot for slot in hooks["Stop"]
+        if not any("lb-knowledge-capture" in h.get("command","") for h in slot.get("hooks", []))
+    ]
+    if not hooks["Stop"]:
+        del hooks["Stop"]
+
 added_a = merge_hook(
     "UserPromptSubmit",
     None,
     f'{bin_dir}/lb-knowledge-find "$CLAUDE_USER_PROMPT"'
-)
-added_b = merge_hook(
-    "Stop",
-    None,
-    f'{bin_dir}/lb-knowledge-capture --auto || true'
 )
 added_c = merge_hook(
     "PreToolUse",
@@ -276,9 +281,9 @@ added_c = merge_hook(
     f'{bin_dir}/lb-knowledge-validate --file "$CLAUDE_TOOL_INPUT_file_path" --lane hot'
 )
 
-added = sum([added_a, added_b, added_c])
+added = sum([added_a, added_c])
 path.write_text(json.dumps(data, indent=2))
-print(f"  Hooks installed: {added} added (UserPromptSubmit, Stop, PreToolUse)")
+print(f"  Hooks installed: {added} added (UserPromptSubmit, PreToolUse). Stop hook NOT installed (removed in v0.4.0; pre-PR capture is via /learnings-from-pr instead).")
 PY
   fi
 
