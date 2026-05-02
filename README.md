@@ -53,7 +53,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/learnings-from-pr` | Pre-PR knowledge capture (invoke before `git push`) |
 | `/distill-style` | Generate `wiki/style/<repo>.md` from dominant reviewer's PR comments |
 | `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
-| `/relentless` | Overnight perfectionist loop: deploys live, evals 4-dim, iterates until done |
+| `/relentless` | Overnight perfectionist loop (v2): artifact-file phase gates, banned-phrase grep, iteration-1 must deploy live, Milan Check requires file-path evidence |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
 

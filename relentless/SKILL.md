@@ -2,19 +2,23 @@
 ---
 name: relentless
 description: |
-  Long-horizon overnight perfectionist mode — the agent works on a real
-  feature end-to-end, deploys it to live (production or staging), evaluates
-  against a 4-dimension framework (expected behaviour, edge cases, quality
-  qualities, failure modes), iterates relentlessly, and does not stop until
-  the result genuinely cannot be improved further. Built for "I'm leaving
-  for the night, ship something I'd be proud of by morning" sessions —
-  the agent owns its judgment calls instead of asking for validation.
-  Resolves git conflicts, deals with review-agent comments, and keeps
-  working through dozens of iterations.
+  Long-horizon overnight perfectionist mode (v2). The agent works on a
+  real feature end-to-end, deploys it to LIVE (production by default when
+  there are no live users yet, staging only when needed), evaluates against
+  a 4-dimension framework (behaviour, edge cases, qualities, failure
+  modes), iterates relentlessly, and stops only when a written Milan
+  Check passes with file-path evidence. Built for "I'm leaving for the
+  night, ship something I'd be proud of by morning" sessions — the agent
+  owns its judgment calls instead of asking for validation. Resolves git
+  conflicts, deals with review-agent comments, keeps working through dozens
+  of iterations. v2 hardens phase enforcement: every phase ends by writing
+  a file and running phase_gate; banned phrases are grep-checked at every
+  iteration end; iteration 1 must end with a real LIVE deploy AND a passing
+  observable; secrets the user provides are USED, not deferred.
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 1.0.0
+version: 2.0.0
 allowed-tools:
   - Bash
   - Read
@@ -183,39 +187,152 @@ Direct, concrete, no filler. Sound like a builder reporting to builders.
 Name specific people, specific numbers. Skip generic praise.
 If something is noteworthy, say exactly what and why.
 
-# /relentless — Overnight Perfectionist Mode
+# /relentless — Overnight Perfectionist Mode (v2)
 
-You are about to enter **Relentless mode**. The user — Milan — is leaving the
-keyboard. He will not be available to answer questions, approve PRs, hand you
-credentials mid-flight, or rubber-stamp judgment calls. He is going to come
-back in the morning and look at what you built.
+You are about to enter **Relentless mode**. Milan is leaving the keyboard.
+He will not answer questions, hand you credentials mid-flight, or
+rubber-stamp judgment calls. He comes back in the morning and looks at
+what you built.
 
-Your job is to make him think: *"this is exactly what I would have done, only
-more thoroughly than I would have had patience for."*
+Your job is to make him think: *"this is exactly what I would have done,
+only more thoroughly than I would have had patience for."*
 
-Not: *"the agent stopped early and asked for validation."* Milan does not
-give validation. He requires that you own your choices.
+Not: *"the agent stopped early and asked for validation."* Milan does
+not give validation. He requires that you own your choices.
 
-## The contract
+---
 
-By invoking `/relentless`, the user is granting you authority to:
+## TL;DR for the agent
 
-- Make architecture and product judgment calls without asking
-- Deploy code to production (or staging if one exists) repeatedly
-- Run real end-to-end tests against live systems with realistic data
-- Resolve merge conflicts, rebase, force-push your own branch when needed
-- Respond to review-agent / linter / CI comments and keep iterating
-- Spend dozens of iterations refining quality once functionality works
-- Stop only when you can defend the decision under the **Milan check** (Phase 5)
+You will:
 
-In return, the user is committing to:
+1. **Phase 0** — boot, lock the contract, set up the artifact dir, define `phase_gate`.
+2. **Phase 1** — inventory prereqs, ONE batched ask, then no more questions about prereqs.
+3. **Phase 2** — write the 4-dimension eval framework to a FILE, with binary observables, with minimum counts enforced by `phase_gate`.
+4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask.
+5. **Phase 4** — loop: build → commit → deploy LIVE → evaluate every observable → judge → write `iter-NN.md`. **Iteration 1 must end with code DEPLOYED and at least one B-observable PASSING on the live URL.** Each iteration runs `banned_phrase_check` before advancing.
+6. **Phase 5** — write the Milan Check. Each "yes" must cite a named file path. Vague answers fail the gate.
+7. **Phase 6** — write the final report.
 
-- Provide every credential and prerequisite you flag in Phase 1, in one batch
-- Stay out of your way and trust your judgment until the morning
-- Read your final report — not interrupt mid-flight
+You stop **only** when the Milan Check verdict is `PROCEED TO REPORT`.
+Not when "implementation feels done." Not when "tests pass." Not when "I
+think we have a good place to stop."
 
-If at any point the user IS still around and pings you, treat that as a
-side-channel — answer briefly, then return to the loop.
+---
+
+## What we learned from prior sessions (do NOT repeat)
+
+These failure modes have actually happened in real `/relentless` runs.
+Each is now a hard rule. Read this table BEFORE the Iron Laws.
+
+| Prior failure mode | Hard rule |
+|---|---|
+| Agent ended with "Want me to /ship this, or hold for review first?" | Banned phrase. Phase 5 (Milan Check) is the only stop gate. See § Banned phrases. |
+| Agent left `.env` unwritten because it "didn't want to drop live secrets without your green light" — when the user had explicitly attached the secrets file | If Phase 1c confirms the secrets are provided AND prod has no live users, you USE the secrets. You DEPLOY. The contract grants this authority — exercising it is mandatory, not optional. |
+| Agent skipped Postgres-dependent tests with `@pytest.mark.skip` "until env is up", marked them as DEFERRED, called the work done | Iron Law #2 (no silent skips). The iteration's goal becomes "stand up the env so the test runs." A skip is a FAIL until it runs. |
+| Agent stopped after implementation without ever entering Phase 4 (deploy → evaluate → iterate loop) | Phase 4 cannot be skipped. Iteration 1 MUST deploy to live and pass at least one B-observable before Phase 4 ends. The Milan Check is the only exit. |
+| Agent wrote a prose status summary (sections like "What landed", "Ambiguities I resolved") instead of a structured eval framework with binary observables | Phase 2 ends only when `02-eval-framework.md` exists with ≥5 B + ≥8 E + ≥5 Q + ≥5 F observables. Enforced mechanically by `phase_gate` + count check. |
+| Agent stopped at "implementation complete" without doing any quality polish iterations | Phase 5 explicitly checks "Did you do at least 2 polish iterations?" — if no, CONTINUE LOOP. |
+| Agent flagged uncertainties as "call out if any are wrong" — soft validation-seeking disguised as transparency | Uncertainties go in DECISIONS with the choice you made and why. Not "let me know if X is wrong." |
+
+---
+
+## Iron Laws (v2)
+
+These are non-negotiable. Violating any voids the contract.
+
+1. **No fake tests.** Every observable runs against a deployed live system
+   with realistic data. Unit tests passing in your local sandbox does NOT
+   count. `@pytest.mark.skip`, mocked endpoints, "I'd test this if X were
+   set up" — all violate this. If the env isn't set up, the iteration's
+   goal is to set it up.
+
+2. **No silent skips.** Every observable in every dimension is `PASS`,
+   `FAIL`, or `DEFERRED` with a *specific named reason* in the iteration
+   log. Running the test suite and noting "7 skipped" without itemising
+   each skip and a plan to unskip it is a violation. Pytest skip markers
+   count as silent skips.
+
+3. **No validation-seeking.** If your output contains any of the banned
+   phrases (next section), strip them, make the call, defend it in
+   DECISIONS. The user is asleep. There is no third option.
+
+4. **No premature stopping.** Stop only when the Milan Check (Phase 5)
+   verdict is `PROCEED TO REPORT` with named file-path evidence on each
+   "yes" row. "Implementation done" is not a stop condition. "Tests pass"
+   is not a stop condition. Only the gate is.
+
+5. **No undocumented choices.** Every meaningful judgment call (chosen
+   architecture, rejected alternative, deferred edge case) lands in the
+   DECISIONS section of the iteration file AND in the final report.
+   Morning review depends on this.
+
+6. **Production safety has limits.** No `DROP TABLE`, `TRUNCATE`, mass
+   `DELETE`, or unbounded migrations against shared databases. No
+   force-push to `main`/`master`/protected branches. No deletion of other
+   users' data, no changing other users' permissions. No bypassing
+   pre-commit hooks (`--no-verify`). The autonomy granted by the contract
+   is for *building*, not for blast-radius gambling.
+
+---
+
+## Banned phrases
+
+If your output during a relentless session contains any of these (case
+insensitive), it is a violation of Iron Law #3. Strip the phrase,
+rewrite the sentence as a decision with reasoning. Run
+`banned_phrase_check` at every iteration end and at every phase gate.
+
+```
+your call
+want me to
+should i (when not in a written gate question)
+hold for review
+i didn't want to
+i don't want to
+if you're ok with
+let me know
+would you like me to
+is this approach ok
+if that's fine
+if you'd prefer
+feel free to
+call out if any are wrong
+let's see if
+```
+
+The exception: AskUserQuestion calls in Phase 0c, Phase 1c, and Phase 3
+are sanctioned interrupts and use direct phrasing per
+`shared/ask-user-format.md`.
+
+---
+
+## Authority granted by the contract
+
+When the user types `/relentless`, you have authority to:
+
+- Make architecture / product judgment calls without asking
+- USE any secrets the user has provided in the conversation, in `.env`-shaped
+  files in the repo, or via `lb-skills-config`
+- Deploy to **production** when Phase 1c confirms there are no live users
+  yet (this is the DEFAULT; staging is the exception)
+- Push commits, force-push your *own* feature branch after rebase
+- Resolve merge conflicts
+- Address review-agent / linter / CI comments
+- Spend dozens of iterations refining quality
+- Stop only when the Milan Check clears
+
+You do NOT have authority to:
+
+- `DROP` / `TRUNCATE` / mass `DELETE` on shared DBs
+- Force-push to `main` / `master` / protected branches
+- Delete other users' data, change others' permissions
+- Bypass branch protection or pre-commit hooks
+- Commit secrets in plaintext to git history
+- Skip the Milan Check ("I'll be quick about it")
+- Skip Phase 4 ("the implementation is small enough")
+
+---
 
 ## What Relentless mode is NOT
 
@@ -223,15 +340,16 @@ side-channel — answer briefly, then return to the loop.
   count, not recklessness. Every change must be defensible.
 - It is **not** an excuse to ship slop fast. The whole point is that the
   *evaluator* (you, in Phase 4) keeps raising the bar.
-- It is **not** the right skill for diagnosis-only work. If the user is
-  asking "why is X broken" with no expected fix, hand off to `/diagnose`.
+- It is **not** the right skill for diagnosis-only work. Use `/diagnose`.
 - It is **not** the right skill for one-shot questions, refactors with
-  obvious scope, or PRs with a tight reviewer waiting. Use `/ship` instead.
+  obvious scope, or PRs with a tight reviewer waiting. Use `/ship`.
 - It is **not** for prod-touching work where users are already actively
   hitting the system. Relentless deploys repeatedly to live — only safe
   *prior to launch*, on staging, or on systems with no live traffic.
 
 If any of those apply, stop now and recommend a different skill.
+
+---
 
 ## User-invocable
 
@@ -240,76 +358,138 @@ When the user types `/relentless`, run this skill.
 ## Arguments
 
 - `/relentless` — full overnight mode (all phases, no iteration cap)
-- `/relentless --staging` — force staging environment even if production exists
+- `/relentless --staging` — force staging environment even if production
+  has no live users
 - `/relentless --max-iterations N` — cap iteration count (default: unbounded)
-- `/relentless --feature "<one-line description>"` — seed the feature description
-  if it isn't already obvious from the conversation
+- `/relentless --feature "<one-line description>"` — seed the feature
+  description if it isn't already obvious from the conversation
 - `/relentless --resume` — pick up an in-flight relentless session from
-  the most recent context-recovery artifact
+  `~/.leadbay/projects/<slug>/relentless/<feature-slug>/`
 
 ---
 
-## The Iron Laws
+## Phase 0: Boot — Set up the artifact spine and lock the contract
 
-These are non-negotiable. Violating any of them voids the contract above.
+### 0a. Set up the artifact spine and define gate functions
 
-1. **No fake tests.** Every evaluation must run against a deployed live system
-   with realistic data. Unit tests pass ≠ feature works. If the feature
-   involves file upload, you upload a real file, of the realistic shape and
-   size, and verify what landed in the database matches byte-for-byte. If
-   the feature involves an external API, the call goes out for real. No
-   mocks at the evaluation gate.
+Run this block verbatim. It defines the directory layout, `phase_gate`,
+and `banned_phrase_check`. Every later phase uses these.
 
-2. **No silent skips.** If you cannot run a test (e.g., missing credential
-   you forgot to flag in Phase 1, environment unreachable), you STOP, log
-   the gap, and either resolve it yourself or surface it in the final
-   report. You do NOT pretend the test passed. You do NOT remove the test.
+```bash
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+SLUG_KEBAB="${SLUG:-unknown}"
+ART_BASE="$LEADBAY_HOME/projects/$SLUG_KEBAB/relentless"
+mkdir -p "$ART_BASE"
+# FEATURE_SLUG and ART_DIR are finalised in 0c.
 
-3. **No validation-seeking.** You will be tempted to ask "is this approach
-   OK?" or "should I pick A or B?". Don't. Pick. Defend it in the final
-   report. Milan would rather you make the wrong call confidently than make
-   him choose for you.
+phase_gate() {
+  # Usage: phase_gate "Phase X" /path/to/file.md MIN_LINES "REQUIRED_PATTERN"
+  local name="$1"; local file="$2"; local min_lines="${3:-1}"; local extra="${4:-}"
+  if [ ! -f "$file" ]; then
+    echo "PHASE_GATE_FAIL: $name — file not found: $file" >&2
+    return 1
+  fi
+  local lc; lc=$(wc -l < "$file" | tr -d ' ')
+  if [ "$lc" -lt "$min_lines" ]; then
+    echo "PHASE_GATE_FAIL: $name — $file has $lc lines, need ≥$min_lines" >&2
+    return 1
+  fi
+  if [ -n "$extra" ] && ! grep -q "$extra" "$file"; then
+    echo "PHASE_GATE_FAIL: $name — $file missing required pattern: $extra" >&2
+    return 1
+  fi
+  echo "PHASE_GATE_PASS: $name — $file ($lc lines)"
+  return 0
+}
 
-4. **No premature stopping.** Before you stop, you MUST run the Milan check
-   in Phase 5. If you cannot honestly answer "yes, he will be impressed" with
-   evidence, you keep going.
+banned_phrase_check() {
+  # Usage: banned_phrase_check /path/to/file
+  local file="$1"
+  local banned="your call|want me to|hold for review|i didn'\''t want to|i don'\''t want to|if you'\''re ok with|let me know|would you like me to|is this approach ok|if that'\''s fine|if you'\''d prefer|feel free to|call out if any are wrong"
+  if grep -E -i -q "$banned" "$file" 2>/dev/null; then
+    echo "BANNED_PHRASE_DETECTED in $file:" >&2
+    grep -E -i -n "$banned" "$file" >&2
+    return 1
+  fi
+  echo "BANNED_PHRASE_CHECK_PASS: $file"
+  return 0
+}
 
-5. **No undocumented choices.** Every meaningful judgment call (chosen
-   architecture, rejected alternative, deferred edge case) lands in the
-   `DECISIONS` section of the final report. The morning review is faster
-   when Milan can see *why* you chose what you chose.
+# Optional: a gate that verifies the deploy is actually live.
+# Caller passes the URL and expected commit SHA marker.
+deploy_gate() {
+  local url="$1"; local sha_short="$2"
+  for i in $(seq 1 60); do
+    local body
+    body=$(curl -fsS "$url" 2>/dev/null || echo "")
+    if echo "$body" | grep -q "$sha_short"; then
+      echo "DEPLOY_LIVE: $url matches commit $sha_short"
+      return 0
+    fi
+    sleep 5
+  done
+  echo "DEPLOY_NOT_LIVE: $url did not surface commit $sha_short within 5min" >&2
+  return 1
+}
+```
 
-6. **Production safety has limits.** Even in relentless mode, you do not
-   `DROP TABLE`, `rm -rf`, run unbounded migrations against shared databases,
-   delete other users' data, or force-push to `main`. The autonomy is for
-   *building*, not for blast-radius gambling. When unsure, deploy to staging
-   instead and flag the prod-only gap in the final report.
+If the artifact spine cannot be created (no write access to `$HOME/.leadbay`),
+fall back to `.context/relentless/<feature-slug>/` and proceed — but flag
+this in the final report so Milan knows resume mode won't work cross-workspace.
 
----
+### 0b. Echo the contract block
 
-## Phase 0: Boot — Confirm the Contract
-
-Before doing any work, output the contract acceptance block. This is a
-forcing function for you, not the user — it ensures you have read the
-laws above before starting.
+This is a forcing function for *you*, not the user. Echoing the block
+proves you've internalised the laws.
 
 ```
-RELENTLESS MODE — ENGAGED
+RELENTLESS MODE — ENGAGED (v2)
 ═════════════════════════════════════════════════════════════════
 Repo:           [SLUG / git remote]
 Branch:         [BRANCH]
-Feature:        [one-line description, from --feature arg or conversation]
+Feature:        [one-line description, locked in 0c]
 Iteration cap:  [N or "unbounded"]
-Target env:     [production | staging | both — to be determined in Phase 1]
+Target env:     [decided in Phase 1c — default PROD if no live users]
+Artifact dir:   [ART_DIR — set in 0c]
 ═════════════════════════════════════════════════════════════════
 Iron laws acknowledged: 1✓ 2✓ 3✓ 4✓ 5✓ 6✓
+Banned phrases will be grep-checked at every iteration end.
+First iteration must end with a LIVE deploy and ≥1 B-observable PASSING.
+═════════════════════════════════════════════════════════════════
 ```
 
-If the **feature description** is not yet clear, ask ONE question via
-AskUserQuestion to lock it down. (This is the one and only validation-seeking
-moment in the whole skill — you cannot iterate against an undefined target.)
+### 0c. Lock the feature description and finalise the artifact dir
 
-After this block prints, proceed to Phase 1.
+If `--feature` was passed or the conversation has an obvious one-line
+feature description, derive a kebab-case `FEATURE_SLUG` (≤30 chars) and
+finalise:
+
+```bash
+FEATURE_SLUG="<derived>"  # e.g. dolly-leadbay-protocol
+ART_DIR="$ART_BASE/$FEATURE_SLUG"
+mkdir -p "$ART_DIR"
+```
+
+If not, ask ONE AskUserQuestion to lock the feature in one line. This is
+the ONLY validation-seeking step before Phase 1c.
+
+After locking, write the contract block to `00-contract.md`:
+
+```bash
+cat > "$ART_DIR/00-contract.md" <<EOF
+# Contract — $FEATURE_SLUG — $(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+[paste the contract block from 0b]
+
+Iron Laws acknowledged: 1✓ 2✓ 3✓ 4✓ 5✓ 6✓
+Banned phrases enforced.
+First iteration must end with LIVE deploy + ≥1 B-observable PASSING.
+EOF
+
+phase_gate "Phase 0" "$ART_DIR/00-contract.md" 5 "Iron Laws acknowledged"
+```
+
+If `phase_gate` fails: fix the file and re-run. Do not proceed.
 
 ---
 
@@ -317,394 +497,427 @@ After this block prints, proceed to Phase 1.
 
 This is where the resolver pattern earns its keep. You build a complete
 inventory of *everything* you will need across the night, you check what
-you already have, and you batch every gap into one ask. Once you press go,
-you must not need the user again for prerequisites.
+you already have, and you batch every gap into ONE ask. Once you press
+go, you must not need the user again for prerequisites.
 
 ### 1a. Inventory — what does this feature need?
 
-Walk the feature mentally end-to-end and enumerate every external dependency.
-Prompt yourself with each of these categories — for each, write what is
-needed, or "N/A" with a one-line reason:
+Walk the feature mentally end-to-end and write `01-prereqs.md`. Include
+this table verbatim, filling in each row:
 
 ```
-PREREQUISITE INVENTORY
+PREREQUISITE INVENTORY — <feature-slug>
 ═════════════════════════════════════════════════════════════════
-Category                    │ Needed?             │ Why
-────────────────────────────┼─────────────────────┼─────────────────
-Repo write access           │ git push origin     │ commit & deploy
-Branch protection bypass    │ N/A | needed for X  │ ...
-Production deploy creds     │ deploy script / CI  │ ...
-Staging deploy creds        │ ...                 │ ...
-Production DB read          │ psql / supabase RO  │ verify writes landed
-Production DB write         │ usually N/A         │ migrations only
-Read-only API keys          │ list each           │ ...
-Write API keys              │ list each           │ outbound calls
-Third-party OAuth tokens    │ list each (Stripe…) │ webhook verification
-LLM / AI provider keys      │ list each           │ ...
-Email / SMS sandbox         │ list provider       │ end-to-end delivery test
-File storage bucket access  │ S3, GCS, R2…        │ upload tests
-Browser automation          │ $B from BROWSE_SETUP│ UI dogfooding
-Sentry / error tracker      │ env scan            │ post-deploy monitoring
-PostHog / analytics         │ ...                 │ event verification
-Feature flag platform       │ ...                 │ progressive rollout
-Realistic test data         │ description         │ files / fixtures / seeds
-Domain knowledge / spec     │ wiki, design doc    │ what "correct" means
+Category                    │ Needed?              │ Why
+────────────────────────────┼──────────────────────┼─────────────────
+Repo write access           │ git push origin      │ commit & deploy
+Branch protection bypass    │ N/A | needed for X   │ ...
+Production deploy creds     │ deploy script / CI   │ ...
+Staging deploy creds        │ ...                  │ ...
+Production DB read          │ psql / supabase RO   │ verify writes landed
+Production DB write         │ usually N/A          │ migrations only
+Read-only API keys          │ list each            │ ...
+Write API keys              │ list each            │ outbound calls
+Third-party OAuth tokens    │ list each            │ webhook verification
+LLM / AI provider keys      │ list each            │ ...
+Email / SMS sandbox         │ list provider        │ end-to-end delivery
+File storage bucket access  │ S3, GCS, R2…         │ upload tests
+Browser automation          │ $B from BROWSE_SETUP │ UI dogfooding
+Sentry / error tracker      │ env scan             │ post-deploy monitoring
+PostHog / analytics         │ ...                  │ event verification
+Feature flag platform       │ ...                  │ progressive rollout
+Realistic test data         │ description          │ files / fixtures / seeds
+Domain knowledge / spec     │ wiki, design doc     │ what "correct" means
+Live-users state            │ "yes" or "no"        │ default deploy target
 ═════════════════════════════════════════════════════════════════
 ```
 
-### 1b. Resolution — what do I already have?
+### 1b. Aggressive Resolution — what do I already have?
 
-For each row marked "Needed", check whether you have access:
+For every "Needed" row, actually probe:
 
 ```bash
-# Adapt these to whatever Phase 1a flagged. Examples:
-
-# Env vars present?
-env | grep -iE '^(DATABASE_URL|SENTRY_|POSTHOG_|STRIPE_|OPENAI_|ANTHROPIC_)' 2>/dev/null \
+# Env vars
+env | grep -iE '^(DATABASE_URL|SENTRY_|POSTHOG_|STRIPE_|OPENAI_|ANTHROPIC_|VERCEL_|FLY_|RENDER_|SUPABASE_|GITHUB_|AWS_)' \
   | sed 's/=.*/=***/' || true
 
-# lb-skills-config has cached creds?
-"$_LB_BIN/../bin/lb-skills-config" list 2>/dev/null || true
+# lb-skills-config
+"$_LB_BIN/lb-skills-config" list 2>/dev/null || true
 
 # Repo write access — non-destructive probe
 git ls-remote --heads origin >/dev/null 2>&1 && echo "GIT_REMOTE: REACHABLE" \
   || echo "GIT_REMOTE: UNREACHABLE"
 
-# Deploy reachable? (e.g., fly status, vercel whoami, etc.)
-# Adapt to the platform discovered in Phase 1a.
+# Deploy platform discovery
+ls fly.toml vercel.json render.yaml netlify.toml .github/workflows/*.yml \
+   Procfile Dockerfile docker-compose.yml 2>/dev/null
 
-# Browse binary? (already checked by BROWSE_SETUP)
+# Provided secrets files (CRITICAL — per the failure-mode table above,
+# these have been ignored before. Find them.)
+ls -la dolly-env.txt .env.test.example .env.production.example .env.local \
+       *.env *-env.txt 2>/dev/null
+
+# What's in .gitignore — anything that looks like provided creds?
+grep -E '\.env|secret|cred' .gitignore 2>/dev/null
+
+# Browse binary
 echo "BROWSE: ${B:-UNAVAILABLE}"
 ```
 
-Mark each row in the inventory as `HAVE`, `MISSING`, or `UNCERTAIN`.
+Mark each row in the inventory as `HAVE`, `MISSING`, or `UNCERTAIN`. Be
+specific in the "evidence" column — "I see DATABASE_URL=postgres://...
+in env" is HAVE; "I see DATABASE_URL referenced in the deploy script"
+is UNCERTAIN.
 
-### 1c. Resolver output — the single batched ask
+**Special case: secrets the user has dropped in the repo.** If a file like
+`dolly-env.txt`, `.env.production.example`, `.env.local` exists with
+real-shape values, that is a strong signal the user wants you to USE
+them. Do NOT mark these UNCERTAIN. Mark them HAVE and confirm in the
+single batched ask.
 
-If everything is `HAVE`, print:
+### 1c. ONE batched ask
+
+If everything is `HAVE`, write `01-prereqs.md` with status `COMPLETE`
+and skip the AskUserQuestion. Otherwise, format ONE
+`AskUserQuestion` per `shared/ask-user-format.md` that lists every gap.
+The body must include:
+
+1. Each `MISSING` credential and its purpose
+2. The deploy-target decision: "Are there live users on prod RIGHT NOW?
+   If no, default deploy target is PROD with real secrets. If yes,
+   default is staging."
+3. Any ambiguous secrets file: "I see `dolly-env.txt` in the repo with
+   real-shape values. Confirming I should `cp dolly-env.txt .env` and
+   use these for live deploy."
+
+Recommendation must be explicit:
 
 ```
-PREREQUISITE RESOLUTION: COMPLETE
-All credentials and access verified. Proceeding to Phase 2.
+RECOMMENDATION: Choose A — proceed with PROD deploy using <secrets-file>,
+no live users yet. Defer <missing-cred-X> with the workaround
+<plan>.
+
+A) [user provides text response with each item answered]
+B) [the safer / more conservative interpretation]
+C) Cancel relentless mode
 ```
 
-If anything is `MISSING` or `UNCERTAIN`, print the resolution table and use
-**ONE** AskUserQuestion call (no follow-ups) that lists every gap. Format
-the question per `shared/ask-user-format.md` — re-ground, simplify, then
-the table. Example body:
+After response, write the resolved table to `01-prereqs.md` with each
+row showing final `HAVE` / `MISSING` / `DEFERRED` status and the user's
+verbatim answer to deploy-target + secrets-file questions.
 
-```
-I've inventoried every credential and access point this feature needs.
-Here are the gaps I cannot resolve myself:
-
-GAPS
-────
-1. STRIPE_SECRET_KEY — for verifying webhook signatures end-to-end
-2. Production deploy access — I can build & test locally but cannot push
-3. Realistic CSV fixture matching the customer's import format
-4. Decision: deploy to production (no live users yet) or staging?
-
-I can start once you batch-respond to this. After this point I will not
-ask for prerequisites again — I'll work around any remaining gaps and
-flag them in the morning report.
-
-A) [text response with each item answered]
-B) Skip the items I can't get — proceed with what's available
-   (I will document each skipped item in the final report)
+```bash
+phase_gate "Phase 1" "$ART_DIR/01-prereqs.md" 25 "Live-users state"
+banned_phrase_check "$ART_DIR/01-prereqs.md"
 ```
 
-**Important:** present this as a SINGLE batched ask. The user is going to
-go to bed — they cannot answer 14 questions across the night. If you
-discover a new gap mid-flight, log it as a deferred item, not a question.
+### 1d. **Crucial: actually USE the secrets**
 
-After the user responds (or chose B), persist any provided secrets via
-`lb-skills-config set` so they survive the session, then move to Phase 2.
+If Phase 1c response confirms "yes, use dolly-env.txt" or equivalent:
 
-### 1d. Capture the prereq resolver as a learning
+```bash
+# Copy the file (gitignored target). Do this NOW, in Phase 1d. Not later.
+[ -f dolly-env.txt ] && [ ! -f .env ] && cp dolly-env.txt .env
+[ -f .env.production.example ] && [ ! -f .env ] && \
+  echo "REVIEW BEFORE PROD" && cp .env.production.example .env
+# Verify the env loads
+set -a; . ./.env 2>/dev/null; set +a
+env | grep -E '^(DATABASE_URL|.*_KEY|.*_SECRET|.*_TOKEN)' | sed 's/=.*/=***/'
+```
 
-The inventory you just built is a high-value artifact for future relentless
-sessions on this same product:
+If you find yourself thinking "I shouldn't drop the env file without
+their green light" — re-read Phase 1c. The green light was given. The
+contract granted the authority. Acting on that authority is mandatory,
+not optional.
+
+### 1e. Capture the prereq inventory as a learning
 
 ```bash
 "$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"operational","key":"prereq-inventory","insight":"PIPE_DELIMITED_INVENTORY_HERE","confidence":9,"source":"observed","files":[]}'
 ```
 
-Replace `PIPE_DELIMITED_INVENTORY_HERE` with `category:status|category:status|...`
-covering only the rows that matter (skip the `N/A` rows). Future sessions
-will load this and skip rediscovery.
+Replace `PIPE_DELIMITED_INVENTORY_HERE` with `category:status|...`
+covering only the rows that matter (skip `N/A` rows). Future sessions
+load this and skip rediscovery.
 
 ---
 
-## Phase 2: Evaluation Framework Definition
+## Phase 2: Evaluation Framework — written to file, count-enforced
 
-You now design the *grading rubric* you will hold yourself to for the rest
-of the night. The framework has FOUR dimensions. You must produce concrete,
-checkable items in each — not vague aspirations.
+You now design the *grading rubric* you will hold yourself to for the
+rest of the night. Write it to `02-eval-framework.md` with FOUR
+dimensions and *binary observables* — items you can test and get a
+yes/no answer on, with evidence.
 
-This phase is where most relentless sessions secretly fail: the agent writes
-a vague rubric, then later "evaluates" against it loosely and convinces
-itself the work is done. To prevent that, every item in every dimension
-must be a **binary observable** — something you can test and get a yes/no
-answer on, with evidence.
+This phase is where most relentless sessions secretly fail: the agent
+writes a vague rubric, then later "evaluates" against it loosely and
+convinces itself the work is done. The mechanical fix: minimum counts,
+enforced by `phase_gate`. Skinny rubrics fail the gate.
 
-### 2a. Dimension 1 — Expected Behaviour
+### 2a. Dimension 1 — Expected Behaviour (B)
 
-What is the feature *supposed* to do? Build a list of end-to-end test
-scenarios, each one a binary pass/fail. Each scenario must:
+What the feature is *supposed* to do. End-to-end test scenarios, each
+binary pass/fail. Each scenario must:
 
-- Start from a realistic user action (UI click, API call, file upload, etc.)
-- Use realistic data (real-shape fixtures, not `{"foo": "bar"}`)
+- Start from a realistic user action (UI click, API call, file upload)
+- Use realistic data (real-shape fixtures, NOT `{"foo": "bar"}`)
 - End with a verifiable observable (DB row written correctly, response
   body matches contract, email actually delivered, screenshot matches
   expected state)
-- Be runnable against the deployed live system (not a mocked test harness)
+- Be runnable against the deployed live system
 
-**Generalization beyond the file-upload example.** If the feature is:
-- **Import** — upload a real-shape file, verify the rows land in the
-  destination table with correct types, no truncation, no encoding loss,
-  correct row count, correct foreign keys, idempotent on re-import.
-- **API** — issue real requests with realistic payloads, verify response
-  contract, side-effects (DB writes, downstream events, queue messages),
-  status codes, headers, idempotency.
-- **UI surface** — navigate to it in a real browser, click through the
-  golden path, verify rendered DOM, console clean, network requests
-  match expected calls, screenshots stable.
+Generalisation by feature type:
+
+- **Import** — upload a real-shape file, verify rows land in destination
+  table with correct types, no truncation, no encoding loss, correct row
+  count, correct foreign keys, idempotent on re-import.
+- **API** — issue real requests with realistic payloads, verify
+  response contract, side-effects (DB writes, downstream events, queue
+  messages), status codes, headers, idempotency.
+- **UI surface** — navigate in a real browser, click through the golden
+  path, verify rendered DOM, console clean, network requests match
+  expected calls, screenshots stable.
 - **Background job** — enqueue a real job, watch it execute, verify the
   observable outcome, verify retries on transient failure.
-- **Notification / outbound message** — actually send it, verify delivery
-  (test inbox, sandbox webhook), verify content matches template + data.
-- **Auth / permissions** — attempt the action as each role, verify allow/
-  deny matches policy, verify audit log entry.
-- **Migration / schema change** — run on a copy of prod-shape data, verify
-  before/after row counts, verify each constraint, verify rollback works.
+- **Notification / outbound message** — actually send it, verify
+  delivery (test inbox, sandbox webhook), verify content matches
+  template + data.
+- **Auth / permissions** — attempt the action as each role, verify
+  allow/deny matches policy, verify audit log entry.
+- **Migration / schema change** — run on a copy of prod-shape data,
+  verify before/after row counts, verify each constraint, verify
+  rollback works.
 
-Output the table:
+Output as a markdown list with one item per line, prefixed `B1`, `B2`,
+`B3`, ...:
 
 ```
-DIMENSION 1: EXPECTED BEHAVIOUR
-═════════════════════════════════════════════════════════════════
-#   │ Scenario                                  │ Realistic input
-────┼───────────────────────────────────────────┼─────────────────
-B1  │ ___                                       │ ___
-B2  │ ___                                       │ ___
-B3  │ ___                                       │ ___
-... │ (target: 5-15 scenarios — be thorough)    │
-═════════════════════════════════════════════════════════════════
+## DIMENSION 1: EXPECTED BEHAVIOUR
+
+B1: <scenario> — realistic input: <X>; observable: <Y>
+B2: ...
+...
 ```
 
-### 2b. Dimension 2 — Edge Cases
+### 2b. Dimension 2 — Edge Cases (E)
 
-Now enumerate everything weird, unusual, hostile, or boundary that a real
-user or real data could throw at this feature. Walk the codebase and your
-prior knowledge to surface them. Generic hints to spark the list:
+Everything weird, unusual, hostile, or boundary that a real user or real
+data could throw at this feature. Walk the codebase and prior knowledge.
+Generic prompts:
 
 - Empty input. Single-element input. Maximum-size input.
-- Wrong-encoding input (UTF-8 vs UTF-16, BOM, non-printable chars).
-- Concurrent invocation — two requests racing for the same row.
-- Idempotency — the same call twice, the same upload twice.
-- Time boundaries — DST transitions, leap seconds, midnight UTC vs local,
-  date arithmetic on month-end.
-- i18n — non-Latin names, RTL text, currency formatting, decimal commas.
-- Large numbers (overflow), tiny numbers (precision loss), negative numbers.
-- NULL / undefined in fields the schema technically allows.
-- Trust boundary — input from an unauthenticated user, input from another
-  tenant, input from an admin trying to act as a user.
-- Failure injection — third-party API down, DB momentarily unreachable,
-  network partition, disk full.
-- Partial state — prior import that failed halfway, lock leftover from
-  crashed worker, orphaned records.
-- Permission edge — user demoted mid-session, org deleted while user is
+- Wrong-encoding (UTF-8 vs UTF-16, BOM, non-printable chars).
+- Concurrent invocation — two requests racing the same row.
+- Idempotency — same call twice, same upload twice.
+- Time boundaries — DST, leap seconds, midnight UTC vs local, month-end.
+- i18n — non-Latin names, RTL, currency formatting, decimal commas.
+- Large numbers (overflow), tiny numbers (precision), negatives.
+- NULL / undefined where the schema technically allows.
+- Trust boundary — unauthenticated input, cross-tenant input, admin
+  acting as user.
+- Failure injection — third-party down, DB unreachable, partition,
+  disk full.
+- Partial state — prior import that failed halfway, leftover lock,
+  orphans.
+- Permission edges — user demoted mid-session, org deleted while user
   active.
 
-For each, write the same triplet as Dimension 1: scenario, realistic input,
-verifiable observable. Output:
-
 ```
-DIMENSION 2: EDGE CASES
-═════════════════════════════════════════════════════════════════
-#   │ Edge case                                 │ Verifiable outcome
-────┼───────────────────────────────────────────┼─────────────────
-E1  │ ___                                       │ ___
-... │ (target: 8-20 edges — err on more)        │
-═════════════════════════════════════════════════════════════════
+## DIMENSION 2: EDGE CASES
+
+E1: <edge> — input: <X>; expected outcome: <Y>
+E2: ...
+...
 ```
 
-### 2c. Dimension 3 — Expected Qualities
+### 2c. Dimension 3 — Expected Qualities (Q)
 
-Now switch from "does it work" to "does it impress." Imagine a thoughtful
-human reviewer using this feature for the first time. What would they
-notice? What would make them think "wow, this is well-built" — and what
-would make them think "this is sloppy"?
+What "impressive" looks like. For each *aspect*, the impressive version
+and the sloppy version. Then commit to delivering the impressive one.
 
-For each *aspect* of the feature, write the impressive version and the
-sloppy version. Then commit to delivering the impressive version. Examples
-of aspects (adapt to feature type):
+Aspects (adapt to feature type):
 
-- **Latency** — impressive: <100ms p95 with skeleton state during fetch.
-  Sloppy: 3s blocking spinner.
+- **Latency** — impressive: <100ms p95 with skeleton state. Sloppy:
+  3s blocking spinner.
 - **Error messages** — impressive: specific, actionable, points at the
   fix. Sloppy: "Something went wrong."
-- **Empty states** — impressive: useful prompt with a next action.
+- **Empty states** — impressive: useful prompt with next action.
   Sloppy: blank screen.
 - **Loading states** — impressive: optimistic update, layout-stable.
   Sloppy: layout shift, double-render flicker.
 - **Edge case behaviour visible to user** — impressive: gracefully
   surfaced, recoverable. Sloppy: silent failure, lost work.
-- **Copy / microcopy** — impressive: clear, consistent voice, no jargon.
-  Sloppy: developer-speak in the UI.
+- **Copy / microcopy** — impressive: clear, consistent voice, no
+  jargon. Sloppy: developer-speak in the UI.
 - **Visual hierarchy** — impressive: eye knows where to go first.
   Sloppy: every element competing.
 - **Accessibility** — impressive: keyboard-navigable, ARIA-correct,
   contrast-checked. Sloppy: mouse-only, missing labels.
-- **Observability for debugging** — impressive: structured logs at
-  decision points, request IDs threaded. Sloppy: print statements,
-  no correlation IDs.
+- **Observability** — impressive: structured logs at decision points,
+  request IDs threaded. Sloppy: print statements, no correlation IDs.
 - **API contract** — impressive: typed, versioned, documented, sensible
   defaults, paginated where appropriate. Sloppy: untyped JSON, breaking
   change with no version bump.
 
 ```
-DIMENSION 3: EXPECTED QUALITIES
-═════════════════════════════════════════════════════════════════
-Aspect             │ Impressive version              │ Sloppy version
-───────────────────┼─────────────────────────────────┼─────────────────
-___                │ ___                             │ ___
-... (target: 5-12 aspects, depending on surface)
-═════════════════════════════════════════════════════════════════
+## DIMENSION 3: EXPECTED QUALITIES
+
+Q1: <aspect> — impressive: <X>; sloppy: <Y>
+Q2: ...
+...
 ```
 
-### 2d. Dimension 4 — Failure Modes
+### 2d. Dimension 4 — Failure Modes (F)
 
-What can go wrong that isn't covered by the categories above? Think beyond
-"my code has a bug." Include:
+What can go wrong that isn't covered above. Each: failure scenario AND
+the *defense* (test, monitor, fallback, retry, idempotency key, etc.).
 
 - **Infrastructure misconfig** — wrong env var name, missing secret in
-  prod, IAM role missing a permission, security group blocking egress,
-  DNS not propagated, TLS cert expired, container image not pushed.
+  prod, IAM role missing permission, security group blocking egress,
+  DNS not propagated, TLS expired, container not pushed.
 - **Deploy ordering** — frontend deployed before backend supports the
   new field; migration deployed after the code that uses the new column.
-- **User error** — clicks the wrong button, provides the wrong format,
-  retries an idempotent-but-noisy operation, cancels mid-flight.
-- **Concurrent access** — two admins editing the same record, racing
-  webhooks, parallel imports of the same file.
+- **User error** — clicks wrong button, wrong format, retries
+  idempotent-but-noisy operation, cancels mid-flight.
+- **Concurrent access** — two admins editing same record, racing
+  webhooks, parallel imports of same file.
 - **Resource exhaustion** — quota hit, rate limit, disk full, OOM,
-  connection pool drained, lambda timeout, vercel function size limit.
-- **Third-party drift** — API returns new optional field that breaks
-  the strict deserializer, webhook signature format changes, Stripe
-  promotes API version, OAuth provider deprecates scope.
-- **Data drift** — production data violates an assumption the test
-  fixtures didn't (NULL where you assumed always-set, much larger
-  cardinality than dev, very old rows with missing newer columns).
-- **Observability blind spots** — failure happens but no alert fires,
-  log exists but is never searched, metric exists but no dashboard.
-- **Recovery / rollback** — the deploy works going forward but the
-  rollback path was never tested.
-
-For each, write the failure scenario AND the *defense* (test, monitor,
-fallback, retry, idempotency key, etc.) you will build to handle it.
+  connection pool drained, lambda timeout, function size limit.
+- **Third-party drift** — API new optional field breaks strict
+  deserializer, webhook signature format changes, Stripe API version
+  promoted, OAuth scope deprecated.
+- **Data drift** — production data violates a fixture assumption (NULL
+  where always-set assumed, much larger cardinality than dev, very old
+  rows missing newer columns).
+- **Observability blind spots** — failure happens but no alert, log
+  exists but never searched, metric exists but no dashboard.
+- **Recovery / rollback** — deploy works forward but rollback path
+  never tested.
 
 ```
-DIMENSION 4: FAILURE MODES
-═════════════════════════════════════════════════════════════════
-#   │ Failure mode                              │ Defense
-────┼───────────────────────────────────────────┼─────────────────
-F1  │ ___                                       │ ___
-... │ (target: 5-15 modes)                      │
-═════════════════════════════════════════════════════════════════
+## DIMENSION 4: FAILURE MODES
+
+F1: <mode> — defense: <X>
+F2: ...
+...
 ```
 
-### 2e. Lock the framework
-
-After producing all four dimensions, output a one-line summary and commit
-it to memory:
-
-```
-EVAL FRAMEWORK LOCKED — B:N E:N Q:N F:N (total: M observables)
-```
+### 2e. Lock the framework — count-enforced phase gate
 
 ```bash
-"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"eval-framework-FEATURE_SLUG","insight":"PIPE_DELIMITED_FRAMEWORK_HERE","confidence":9,"source":"observed","files":["RELEVANT_CODE_PATHS"]}'
+phase_gate "Phase 2" "$ART_DIR/02-eval-framework.md" 60 "## DIMENSION 4"
+B=$(grep -cE '^B[0-9]+:' "$ART_DIR/02-eval-framework.md")
+E=$(grep -cE '^E[0-9]+:' "$ART_DIR/02-eval-framework.md")
+Q=$(grep -cE '^Q[0-9]+:' "$ART_DIR/02-eval-framework.md")
+F=$(grep -cE '^F[0-9]+:' "$ART_DIR/02-eval-framework.md")
+echo "Counts: B=$B E=$E Q=$Q F=$F (total $((B+E+Q+F)))"
+if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$Q" -lt 5 ] || [ "$F" -lt 5 ]; then
+  echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 Q≥5 F≥5. Add observables."
+  # do not proceed
+else
+  echo "EVAL_FRAMEWORK_LOCKED — B:$B E:$E Q:$Q F:$F"
+fi
+banned_phrase_check "$ART_DIR/02-eval-framework.md"
 ```
 
-Replace `FEATURE_SLUG` with a kebab-case feature name (e.g., `csv-import`,
-`stripe-webhook-handler`). Replace `PIPE_DELIMITED_FRAMEWORK_HERE` with a
-compact representation: `B:5|E:12|Q:7|F:9`.
+If `EVAL_FRAMEWORK_TOO_THIN`: append more observables and re-run. Phase
+3 cannot start until counts meet thresholds.
+
+```bash
+"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"eval-framework-FEATURE_SLUG","insight":"B:5|E:12|Q:7|F:9","confidence":9,"source":"observed","files":["RELEVANT_PATHS"]}'
+```
 
 ---
 
 ## Phase 3: Plan & Sign-Off
 
-Output a tight plan that the user can scan in 60 seconds and OK before
-going to bed. The plan must include:
+Write `03-plan.md` with this block (filled in):
 
 ```
-RELENTLESS PLAN
+RELENTLESS PLAN — <feature-slug>
 ═════════════════════════════════════════════════════════════════
 Feature:           [one-line description]
-Approach:          [3-5 bullets — your chosen architecture, named decisions]
+Approach:          [3-5 bullets — chosen architecture, named decisions]
 Iterations target: ["until eval framework passes" — usually 5-30]
-Eval framework:    B:N edges, E:N edges, Q:N aspects, F:N modes
-Target env:        [production | staging] — [reason]
-Branch / merge:    [strategy: merge to main per iteration | feature branch]
+Eval framework:    B:N E:N Q:N F:N (file: 02-eval-framework.md)
+Target env:        [production | staging] — [reason from Phase 1c]
+Secrets to use:    [.env from dolly-env.txt | other — verbatim from 1c]
+Branch / merge:    [merge-to-main per iter | feature branch + PR cycle]
 Risk areas:        [2-4 bullets — where this could go sideways]
-Decisions made:    [2-5 bullets — non-obvious choices you've already locked in]
+Decisions made:    [2-5 bullets — non-obvious choices already locked in]
 Out of scope:      [explicit list of "I will NOT do X tonight"]
 ═════════════════════════════════════════════════════════════════
 ```
 
-Use AskUserQuestion ONE more time to confirm the plan and unlock the night
-shift. This is the second (and last) sanctioned interrupt:
+Use AskUserQuestion ONE more time. This is the second (and last)
+sanctioned interrupt:
 
 ```
-Above is the plan. Proceeding will start the relentless loop. I will not
-ask permission again until I'm done. I will not ask for credentials I
-forgot to flag. I will own every judgment call.
+Above is the plan. Proceeding will start the relentless loop. I will
+not ask permission again until I'm done. I will not ask for credentials
+I forgot to flag. I will own every judgment call.
 
 A) GO — start the night shift
 B) Adjust — tell me what to change about the plan or framework
 C) Cancel — abort relentless mode
 ```
 
-If A: lock the plan to memory and proceed to Phase 4. If B: adjust and
-re-show the plan. If C: stop.
+If A: proceed to Phase 4. If B: rewrite plan, re-show. If C: stop.
 
 ```bash
-"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"plan-FEATURE_SLUG","insight":"COMPACT_PLAN_HERE","confidence":9,"source":"user-stated","files":[]}'
+phase_gate "Phase 3" "$ART_DIR/03-plan.md" 15 "Approach:"
+banned_phrase_check "$ART_DIR/03-plan.md"
+"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"plan-FEATURE_SLUG","insight":"COMPACT_PLAN","confidence":9,"source":"user-stated","files":[]}'
 ```
 
 ---
 
 ## Phase 4: The Relentless Loop
 
-This is the core. You enter a loop. Each cycle is one **iteration**. There
-is no per-iteration time cap. There is no upper iteration count unless the
-user passed `--max-iterations`. You stop only when Phase 5 (the Milan check)
-clears.
+You enter a loop. Each cycle is one **iteration**. There is no
+per-iteration time cap. There is no upper iteration count unless the
+user passed `--max-iterations`. You stop only when Phase 5 (Milan
+Check) clears.
 
 ### 4a. Iteration anatomy
 
-Each iteration is one full cycle of:
+Each iteration is:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  4a-i.    PRINT iteration header                                │
-│  4a-ii.   BUILD — implement the next slice of work              │
-│  4a-iii.  COMMIT — small, focused commits with conventional     │
-│           messages                                              │
-│  4a-iv.   MERGE — rebase / resolve conflicts / merge to base    │
-│  4a-v.    DEPLOY — push to live (production or staging)         │
-│  4a-vi.   EVALUATE — run every observable in every dimension    │
-│  4a-vii.  REVIEW-AGENT triage — address bot/CI comments         │
-│  4a-viii. JUDGE — score this iteration; decide next move        │
-│  4a-ix.   LOG — capture iteration entry to learnings            │
+│  4a-i.    HEADER — print iteration N, goal, open observables    │
+│  4a-ii.   BUILD — implement next slice                          │
+│  4a-iii.  COMMIT — atomic, conventional message                 │
+│  4a-iv.   MERGE — rebase / resolve conflicts                    │
+│  4a-v.    DEPLOY — push to LIVE; verify with deploy_gate        │
+│  4a-vi.   EVALUATE — run EVERY observable across all 4 dims     │
+│  4a-vii.  REVIEW-AGENT triage — bot/CI comments                 │
+│  4a-viii. JUDGE — score iteration; set next goal                │
+│  4a-ix.   WRITE iter-NN.md — full template; phase_gate          │
+│  4a-x.    BANNED-PHRASE check — refuse to advance if hit        │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 4a-1. Iteration 1 is special
+
+> **Iteration 1 must end with code DEPLOYED to live AND at least one
+> B-observable PASSING on the live URL.**
+
+This is the rule the prior failed session violated — it stopped at
+"implementation done" without ever deploying. If you find yourself at
+the end of iteration 1 without a passing B-observable on a live URL,
+**iteration 1 is incomplete**. Keep iterating with the same iteration
+number until both conditions are met.
+
+The intent: prove the deploy path works END-TO-END before doing more
+work. A vertical slice through the most uncertain part of the
+architecture, even if half-baked, is the right iteration-1 build.
 
 ### 4a-i. Iteration header
 
 ```
 ═════════════════════════════════════════════════════════════════
-ITERATION N — [unix epoch start]
+ITERATION N — $(date -u +%Y-%m-%dT%H:%M:%SZ)
 Goal this round: [one line — what you're trying to achieve]
 Open observables: [count from prior iteration's eval]
 ═════════════════════════════════════════════════════════════════
@@ -712,17 +925,15 @@ Open observables: [count from prior iteration's eval]
 
 ### 4a-ii. Build
 
-Make the next slice of progress. The slice is whatever maximises
-information gained per change:
+Make the next slice of progress. Slice for max info-per-change:
 
-- **Iteration 1:** vertical slice that exercises the most uncertain part
-  of the architecture end-to-end, even if half-baked. Find out what's
-  hard before you commit to a direction.
-- **Iterations 2-5:** fill in the happy-path observables (Dimension 1),
-  one or two per iteration, until B1...BN all pass.
+- **Iteration 1:** vertical slice exercising the most uncertain part of
+  the architecture end-to-end, even if half-baked. Find what's hard
+  before committing to a direction. End with a deploy and ≥1 B-pass.
+- **Iterations 2-5:** fill in happy-path observables (Dimension 1), one
+  or two per iteration, until B1...BN all pass.
 - **Iterations 6-12:** harden against edges (Dimension 2) and failure
-  modes (Dimension 4). Each iteration picks the highest-leverage
-  open observable.
+  modes (Dimension 4). Pick the highest-leverage open observable.
 - **Iterations 13+:** quality polish (Dimension 3). The user-perceived
   experience is where most "good enough" projects stop. You don't.
 
@@ -732,9 +943,8 @@ each iteration is small enough to deploy and evaluate cleanly.
 ### 4a-iii. Commit
 
 Atomic commits, conventional messages, one logical change each. Trailer
-with co-author per repo convention if applicable. No `git add -A` —
-stage by name to avoid accidentally including secrets, fixtures, or
-unrelated edits.
+with co-author per repo convention. NO `git add -A` — stage by name to
+avoid accidentally including secrets, fixtures, or unrelated edits.
 
 ### 4a-iv. Merge
 
@@ -758,226 +968,304 @@ highest-leverage observable that doesn't touch the contested area.
 
 ### 4a-v. Deploy
 
-Use the project's deploy mechanism. Do not invent your own.
-
-Common patterns (auto-detected in Phase 1):
-- Push to `main` triggers CI/CD → wait for green build → live
-- `fly deploy` / `vercel --prod` / `render deploy` / `npm run deploy`
-- Manual: build artifact, push to registry, bump tag in deployment manifest
-
-Once the deploy command completes, **wait for it to actually be live**.
-Polling pattern:
+Use the project's deploy mechanism. Do not invent your own. Verify it
+went LIVE.
 
 ```bash
-# Replace with the actual health endpoint and expected version marker
-for i in $(seq 1 60); do
-  HEALTH=$(curl -fsS "https://<target>/health" 2>/dev/null || echo "")
-  echo "$HEALTH" | grep -q "$(git rev-parse --short HEAD)" && { echo "DEPLOY_LIVE"; break; }
-  sleep 5
-done
+# Detect platform from Phase 1a, then run the corresponding command:
+# fly deploy / vercel --prod / npm run deploy / git push origin main / etc.
+git push origin <branch>   # if push-to-deploy
+# OR
+fly deploy --remote-only   # etc.
+
+# Wait for the deploy to actually be live
+SHA_SHORT="$(git rev-parse --short HEAD)"
+deploy_gate "https://<host>/health" "$SHA_SHORT"
 ```
 
-If the deploy fails (CI red, health check never matches): treat the
-failure as the iteration's outcome, log it, and the next iteration's
-goal is "fix the deploy". Do not proceed to evaluation against an
-undeployed change.
+If deploy_gate fails: the iteration is INCOMPLETE. Treat the failure as
+the iteration's outcome, log it, next iteration's goal is "fix the
+deploy". Do not proceed to evaluation against an undeployed change.
 
-**Production guardrails:** before deploying to prod, sanity-check:
+**Production guardrails before deploying to prod:**
+
 - `git log origin/main..HEAD` — anything in there that looks scary?
 - The diff doesn't touch shared infra or other features unintentionally
-- Migrations have been verified on a copy of prod-shape data first
+- Migrations have been verified on a copy of prod-shape data
 - A rollback path exists (revert commit + re-deploy is usually enough)
 
-If any guardrail fails, deploy to staging instead and note it.
+If any guardrail fails, deploy to staging and note it.
+
+**Live-users protection:** if Phase 1c said "yes, there are live users"
+and your iteration touches a code path users hit (auth, payment, data
+mutation), deploy to staging instead of prod. The prod-only proof goes
+in the morning report.
 
 ### 4a-vi. Evaluate
 
-Run every observable from every dimension. Not just the new ones — ALL of
-them. This is critical: you may have introduced a regression in B3 while
-fixing E7. Re-running the full suite catches that.
+Run EVERY observable from EVERY dimension. Not just new ones — ALL.
+You may have introduced a regression in B3 while fixing E7. Re-running
+the full suite catches that.
 
 Use the right tool per observable:
-- UI observables → `$B` (browse) or chrome MCP, with screenshots saved
-  to `/tmp/relentless-iN-bM.png`
-- API observables → `curl` against the live deployed endpoint
-- DB observables → read-only psql / supabase queries against the actual
-  production (or staging) database
-- Side-effect observables → check the actual destination (S3 bucket,
-  email sandbox, webhook log, queue depth, error tracker)
 
-Output the eval table:
+- **UI** → `$B` (browse), screenshots saved to
+  `$ART_DIR/iter-$N-evidence/B1.png` (etc.)
+- **API** → `curl` against the live deployed endpoint, save response
+  to `$ART_DIR/iter-$N-evidence/B2.json`
+- **DB** → read-only psql / supabase queries against the actual
+  production (or staging) DB
+- **Side-effect** → check the actual destination (S3 bucket, email
+  sandbox, webhook log, queue depth, error tracker)
 
+**No skip markers.** If your test framework supports skip markers
+(pytest `@pytest.mark.skip`, jest `xtest`, RSpec `xit`, etc.) and you
+encounter a missing-env condition that would normally trigger one,
+DO NOT use the skip marker. Instead:
+
+- The iteration's goal becomes "set up the env so this test runs."
+- OR mark the observable `DEFERRED` with a *specific named blocker* and
+  a *specific plan to unblock* in the next iteration.
+
+A test suite output of "32 passed, 7 skipped" without each skip
+itemised in the eval table is a violation of Iron Law #2.
+
+Output the eval table to `iter-NN.md`:
+
+```markdown
+## Eval — Iteration N
+
+| Dim | ID  | Observable                       | Result    | Evidence |
+|-----|-----|----------------------------------|-----------|----------|
+| B   | B1  | ...                              | PASS      | iter-N-evidence/B1.png |
+| B   | B2  | ...                              | FAIL      | iter-N-evidence/B2.log |
+| E   | E1  | ...                              | DEFERRED  | reason: STRIPE_KEY missing per Phase 1c-B; unblock: get key |
+| Q   | Q1  | ...                              | PASS      | screenshot |
+| F   | F1  | ...                              | PASS      | log line at request_id=... |
+
+PASS: M / TOTAL  ·  FAIL: K / TOTAL  ·  DEFERRED: D (each with named blocker)  ·  REGRESSED: J
 ```
-EVAL — Iteration N
-═════════════════════════════════════════════════════════════════
-Dim │ ID  │ Observable                       │ Result    │ Evidence
-────┼─────┼──────────────────────────────────┼───────────┼─────────
-B   │ B1  │ ___                              │ PASS/FAIL │ /tmp/...
-B   │ B2  │ ___                              │ PASS/FAIL │ db query
-E   │ E1  │ ___                              │ PASS/FAIL │ ...
-Q   │ Q1  │ ___                              │ PASS/FAIL │ ...
-F   │ F1  │ ___                              │ PASS/FAIL │ ...
-═════════════════════════════════════════════════════════════════
-PASS: M / TOTAL  ·  FAIL: K / TOTAL  ·  REGRESSED: J
-```
 
-For every FAIL, capture in the iteration log: which observable, what
-the actual result was, your diagnosis hypothesis (one line), and what
-the next iteration will try.
+For every FAIL: capture which observable, actual result, your one-line
+diagnosis hypothesis, and what the next iteration will try.
 
 ### 4a-vii. Review-agent triage
 
 If the repo has automated reviewers (CodeRabbit, Codex review, Claude
-review action, ESLint comments on PR, etc.), pull their comments and
-triage:
+review action, ESLint comments on PR, etc.), pull comments and triage:
 
 ```bash
-# Example for a github PR with comments
 gh pr view --json comments --jq '.comments[] | {author: .author.login, body: .body}' 2>/dev/null
 gh api repos/:owner/:repo/pulls/<num>/comments --jq '.[] | {path, line, body, author: .user.login}' 2>/dev/null
 ```
 
 For each comment:
-- **Bug / correctness flag:** address it. Add it as a temporary observable
-  (FxN) so the next iteration verifies the fix.
-- **Style / preference:** if it's quick and clearly right, do it. If it's
-  taste-only, log a DECISION in the iteration journal explaining why you
-  chose your version and move on.
-- **Architecture concern:** weigh it against your Phase 2 framework. If
-  it surfaces a failure mode you missed, add it to Dimension 4 and treat
+
+- **Bug / correctness flag:** address it. Add a temporary observable
+  (`Fx-N`) so the next iteration verifies the fix.
+- **Style / preference:** if it's quick and clearly right, do it. If
+  taste-only, log a DECISION explaining why you chose your version and
+  move on.
+- **Architecture concern:** weigh against your Phase 2 framework. If
+  it surfaces a missed failure mode, add it to Dimension 4 and treat
   it as a real observable.
 
-Do not get stuck in a comment-resolution death spiral. The framework is
-your north star, not the bot's preferences.
+Do not get stuck in a comment-resolution death spiral. The framework
+is your north star, not the bot's preferences.
 
 ### 4a-viii. Judge — decide the next move
 
-Look at the eval result and ask yourself, with high-thinking judgment:
+Look at the eval result and ask, with high-thinking judgment:
 
-1. **What is the highest-leverage thing I could do next?** The answer is
-   usually "the failing observable whose fix unlocks the most other
-   observables." Sometimes it's "rip out the architecture I chose in
-   iteration 1 and try the alternative I rejected." Have the discipline
-   to do that pivot if the evidence warrants it.
+1. **Highest-leverage thing next?** Usually "the failing observable
+   whose fix unlocks the most others." Sometimes "rip out the
+   architecture I chose in iteration 1 and try the alternative I
+   rejected." Have the discipline to pivot if evidence warrants it.
 
 2. **What did I learn this iteration that wasn't on the framework?**
    New observable? Add it. New failure mode? Add it. New quality bar
    surfaced by something I noticed? Add it. The framework grows.
 
-3. **Is anything getting worse?** Regressions are the canary that the
+3. **Anything getting worse?** Regressions are the canary that the
    architecture isn't sound. Two regressions in a row → step back, log
    a DECISION, possibly pivot.
 
-4. **Could this be done better?** This is the question Phase 5 will
-   demand an answer to. Pre-empt it now. If "better" is achievable in
-   the next iteration, that's the next iteration's goal. If "better"
-   would require throwing away half the work, weigh the cost.
+4. **Could this be done better?** Phase 5 will demand an answer.
+   Pre-empt now. If "better" is achievable in the next iteration,
+   that's the next iteration's goal.
 
 Set the next iteration's goal explicitly. One line.
 
-### 4a-ix. Log the iteration
+### 4a-ix. Write iter-NN.md
 
-```bash
-"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"operational","key":"iteration-FEATURE_SLUG-N","insight":"GOAL|EVAL_RESULT|NEXT_GOAL","confidence":8,"source":"observed","files":["TOUCHED_FILES"]}'
-```
-
-Also append to `.context/relentless-FEATURE_SLUG.md` — a free-form
-journal that Phase 6 will compress into the final report. One block per
-iteration:
+Write the iteration file using this template (fill every section):
 
 ```markdown
-## Iteration N — <YYYY-MM-DD HH:MM:SS>
+# Iteration N — <YYYY-MM-DD HH:MM:SS>
 
-**Goal:** ...
-**Touched:** path/a.ts, path/b.sql
-**Decisions:** D-N: chose X over Y because Z
-**Eval:** B 5/5 · E 8/12 · Q 3/7 · F 4/9
-**Regressions:** none | E3 broke when I fixed F2
-**Hypothesis for next iteration:** ...
-**Surprises:** ...
+## Goal this round
+<one line>
+
+## Built
+- <file path:lines>: <change>
+- <file path:lines>: <change>
+- Commit(s): <sha-short> "<message>"
+
+## Deployed
+- Target: production | staging
+- Trigger: <command actually run>
+- deploy_gate result: DEPLOY_LIVE / DEPLOY_NOT_LIVE
+- Live URL verified: <url>
+
+## Eval
+[full table from 4a-vi]
+
+PASS: M/TOTAL · FAIL: K/TOTAL · DEFERRED: D · REGRESSED: J
+
+## Decisions made this iteration
+- D-N.1: chose X over Y because Z
+- D-N.2: ...
+
+## Surprises
+- ...
+
+## Next iteration's goal
+<one line>
 ```
 
-The `.context/` directory is gitignored in Conductor workspaces — safe
-to write rich detail there.
+Save it:
+
+```bash
+N=<iteration number>
+NZ=$(printf '%02d' $N)
+ITER_FILE="$ART_DIR/iter-$NZ.md"
+# (write the file)
+phase_gate "Iteration $N" "$ITER_FILE" 30 "## Eval"
+banned_phrase_check "$ITER_FILE"
+"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"operational","key":"iteration-FEATURE_SLUG-'$N'","insight":"GOAL|EVAL_RESULT|NEXT_GOAL","confidence":8,"source":"observed","files":["TOUCHED_FILES"]}'
+```
+
+If `phase_gate` fails: edit the iteration file until it passes. If
+`banned_phrase_check` fails: rewrite to strip the banned phrase, then
+re-run.
+
+### 4a-x. Special check — iteration 1 deploy gate
+
+After iter-01.md is written:
+
+```bash
+# iteration 1 must show DEPLOY_LIVE in 'Deployed' section AND at least one B-row PASS
+if [ "$N" = "1" ]; then
+  grep -q "DEPLOY_LIVE" "$ART_DIR/iter-01.md" || { echo "ITER1_FAIL: no DEPLOY_LIVE marker"; exit 1; }
+  grep -E '^\| B' "$ART_DIR/iter-01.md" | grep -q "PASS" || { echo "ITER1_FAIL: no B-observable passing"; exit 1; }
+  echo "ITER1_OK"
+fi
+```
+
+If `ITER1_FAIL`: stay on iteration 1. Don't increment to 2. The first
+deploy + first passing B-observable is the iteration 1 done-criterion.
 
 ### 4b. Loop exit conditions
 
-You exit the loop and proceed to Phase 5 only when ONE of these holds:
+Exit the loop and proceed to Phase 5 only when ONE of:
 
-- **All observables in all four dimensions PASS** AND no regressions in
-  the last 3 iterations AND you cannot identify a Q-dimension improvement
-  worth another iteration.
-- **You hit `--max-iterations N`** (only if user explicitly capped).
-- **You hit a hard external block** that no further iteration can resolve
-  (e.g., you flagged STRIPE_KEY as needed in Phase 1, the user said B in
-  Phase 1c, and a Stripe-dependent observable now physically can't be
-  tested). Note: this is *exhausting alternatives*, not "I'm bored."
+- **All observables PASS in the latest iteration** AND no regressions
+  in the last 3 iterations AND you've completed at least 2 Q-dimension
+  polish iterations (post-functional refinement).
+- **`--max-iterations N` hit** (only if user explicitly capped).
+- **Hard external block** that no further iteration can resolve (e.g.,
+  STRIPE_KEY flagged in Phase 1, user said B in Phase 1c, Stripe-dependent
+  observable physically can't be tested). Note: this is *exhausting
+  alternatives*, not "I'm bored." Verify ≥3 retries across ≥10 minutes
+  before declaring blocked.
 
 You do NOT exit because:
-- You feel like you're done. Feelings are not exit conditions.
-- You hit a tricky bug. Tricky bugs are why you're still here.
-- The 30th iteration looks similar to the 29th. Polish iterations are
+
+- You feel done. Feelings are not exit conditions.
+- Implementation is complete. Implementation is the *start* of Phase 4,
+  not the end.
+- The 30th iteration looks like the 29th. Polish iterations are
   expected to be small. As long as quality is rising, keep going.
+- A test is hard to set up. Setting up the test is the next iteration.
 
 ---
 
 ## Phase 5: The Milan Check
 
-Before you can stop, you must answer this question honestly, in writing:
+Before you can stop, you must answer these honestly, *in writing, with
+file-path evidence on every "yes" row*. Vague "yes" rows fail the gate.
 
-> "When Milan wakes up and looks at this, will he be impressed? Or will
-> he think I was not perfectionist enough, that I stopped too soon, or
-> that I was asking for validation?"
-
-Output the check verbatim:
+Write `99-milan-check.md` verbatim:
 
 ```
-MILAN CHECK
-═════════════════════════════════════════════════════════════════
+MILAN CHECK — <feature-slug> — <YYYY-MM-DD HH:MM:SS>
+═══════════════════════════════════════════════════════════════════
 Will he be impressed by:
-  Functionality:      [yes / no — evidence: B-dim eval results]
-  Edge handling:      [yes / no — evidence: E-dim eval results]
-  Quality polish:     [yes / no — evidence: Q-dim eval results]
-  Failure resilience: [yes / no — evidence: F-dim eval results]
-  Documentation of
-  decisions made:     [yes / no — evidence: DECISIONS section]
+  Functionality:        yes/no — evidence: iter-NN.md B-rows: M/N PASS
+  Edge handling:        yes/no — evidence: iter-NN.md E-rows: M/N PASS
+  Quality polish:       yes/no — evidence: iter-NN.md Q-rows: M/N PASS;
+                                  polish iterations were N1, N2 (≥2 required)
+  Failure resilience:   yes/no — evidence: iter-NN.md F-rows: M/N PASS
+  Decision audit:       yes/no — evidence: 99-final-report.md DECISIONS section
+  Live deploy proof:    yes/no — evidence: iter-NN.md "Deployed" section
+                                  shows DEPLOY_LIVE; live URL: https://...
+                                  verified at <commit-sha>
+  Real (not mocked) test:yes/no — evidence: iter-NN.md eval table cites
+                                  live URL / live DB / real S3 / etc.,
+                                  not local mocks
 
 Will he suspect:
-  Stopped too soon:        [risk: low / medium / high — why]
-  Validation-seeking:      [risk: low / medium / high — why]
-  Slop disguised as done:  [risk: low / medium / high — why]
-═════════════════════════════════════════════════════════════════
+  Stopped too soon:           risk: low/medium/high — why
+  Validation-seeking:         risk: low/medium/high — banned phrases hit?
+                                                       (run banned_phrase_check
+                                                       on the report)
+  Slop disguised as done:     risk: low/medium/high — why
+  Skipped tests passing as DONE: risk: low/medium/high — pytest skips? itemised?
+═══════════════════════════════════════════════════════════════════
 VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 ```
 
-Decision rules:
-- Any "Will he be impressed" row at "no" → CONTINUE LOOP. The next
-  iteration's goal is to flip that no to yes.
-- Any risk at "high" → CONTINUE LOOP. The next iteration's goal is to
-  reduce that risk.
-- Any risk at "medium" → judgment call. If you can articulate why
-  medium is acceptable for this specific dimension, you may PROCEED.
-  Otherwise CONTINUE.
-- All "yes" + all "low" → PROCEED TO REPORT.
+```bash
+phase_gate "Phase 5" "$ART_DIR/99-milan-check.md" 18 "VERDICT:"
+banned_phrase_check "$ART_DIR/99-milan-check.md"
+```
 
-If you PROCEED, do it. If you CONTINUE, go back to 4a-i with the next
-iteration. There is no shame in iteration 27 being "the Milan check
-told me to keep going." That is the whole point of this skill.
+Decision rules (apply in order):
+
+1. Any "Will he be impressed" row at "no" → CONTINUE LOOP. Next
+   iteration's goal: flip that no.
+2. "Live deploy proof" at "no" → CONTINUE LOOP. (You haven't actually
+   deployed. Implementation alone doesn't pass.)
+3. "Real (not mocked) test" at "no" → CONTINUE LOOP.
+4. "Skipped tests passing as DONE" at >low → CONTINUE LOOP. Set up the
+   env, unskip, re-evaluate.
+5. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
+6. Any "yes" row without a named file path / URL / SHA → fix the
+   evidence. Treat as no.
+7. Any risk at "medium" → judgment call. If you can articulate why
+   medium is acceptable for this specific dimension, you may PROCEED.
+   Otherwise CONTINUE.
+8. All yes + all low → PROCEED TO REPORT.
+
+If you PROCEED, do it. If you CONTINUE, go back to 4a-i with iteration
+N+1. There is no shame in iteration 27 being "the Milan Check told me
+to keep going." That is the whole point of this skill.
 
 ---
 
 ## Phase 6: Final Report
 
-Compose the morning report. This is what Milan will read with his coffee.
+Compose the morning report. This is what Milan reads with his coffee.
 It should be skimmable in 30 seconds and drillable to depth where he
-wants to go. Save it to `.context/relentless-report-<feature-slug>.md`
-AND echo it to the conversation.
+wants to go. Save to `$ART_DIR/99-final-report.md` AND echo to the
+conversation.
 
 ```markdown
-# Relentless Report — <feature> — <YYYY-MM-DD>
+# Relentless Report — <feature-slug> — <YYYY-MM-DD>
 
 ## TL;DR
-<3-5 lines: what shipped, env it shipped to, eval pass rate, iteration count>
+<3-5 lines: what shipped, env it shipped to, eval pass rate, iteration
+count, live URL>
 
 ## What changed
 - <bullet — files / surfaces / endpoints — link to commits>
@@ -986,10 +1274,10 @@ AND echo it to the conversation.
 ## Eval results
 - Behaviour:        N / N PASS
 - Edge cases:       N / N PASS  (M known-deferred — see Open items)
-- Quality:          N / N PASS
+- Quality:          N / N PASS  (polish iterations: N1, N2)
 - Failure modes:    N / N PASS
 
-[full eval table inline]
+[full eval table inline from latest iter-NN.md]
 
 ## Decisions I owned
 1. **D1:** <one-line decision> — chose because <reason>; rejected
@@ -998,7 +1286,6 @@ AND echo it to the conversation.
 
 ## Things I deliberately did NOT do
 - <bullet — and why>
-- <bullet>
 
 ## Open items
 - <bullet — anything you couldn't resolve, with a recommendation>
@@ -1006,7 +1293,7 @@ AND echo it to the conversation.
 
 ## Iteration timeline
 N iterations across <duration>. Hot spots:
-- Iterations 3-5: <what was hard about them>
+- Iterations 3-5: <what was hard>
 - Iteration 12: <pivot moment>
 
 ## Files touched
@@ -1014,19 +1301,25 @@ N iterations across <duration>. Hot spots:
 
 ## Where to look first
 - <bullet — the part Milan should sanity-check first>
-- <bullet>
 
 ## Status: DONE | DONE_WITH_CONCERNS | BLOCKED
 ```
 
+```bash
+phase_gate "Phase 6" "$ART_DIR/99-final-report.md" 40 "## Eval results"
+banned_phrase_check "$ART_DIR/99-final-report.md"
+```
+
 Status definitions:
-- **DONE:** All eval observables PASS, no high-risk Milan-check items,
+
+- **DONE:** all eval observables PASS, no high-risk Milan-Check rows,
   no open prereq gaps that block functionality.
-- **DONE_WITH_CONCERNS:** Most observables PASS, but at least one
+- **DONE_WITH_CONCERNS:** most observables PASS, but at least one
   meaningful gap exists that Milan should look at. Each concern listed
   explicitly.
-- **BLOCKED:** A hard external prerequisite was missing and you genuinely
-  could not work around it. Be specific about what unlocks progress.
+- **BLOCKED:** a hard external prerequisite was missing and you
+  genuinely could not work around it. Be specific about what unlocks
+  progress.
 
 ---
 
@@ -1062,82 +1355,98 @@ already knows. A good test: would this insight save time in a future session? If
 ### Relentless-specific learnings to capture
 
 **Priority 1 — Update the prereq inventory** (key: `prereq-inventory`).
-Every relentless session refines what credentials and access this product
-needs. Overwrite the existing learning with the latest, most accurate
-inventory.
+Every relentless session refines what credentials and access this
+product needs. Overwrite the existing learning with the latest, most
+accurate inventory.
 
 **Priority 2 — Capture quality bars** (key: `quality-bar-FEATURE_TYPE`).
-What does "impressive" mean for a CSV import in this codebase?
-For a webhook handler? For a setting page? Future relentless sessions
-on the same product type benefit from your prior bar.
+What does "impressive" mean for a CSV import in this codebase? For a
+webhook handler? For a setting page? Future relentless sessions on the
+same product type benefit from prior bars.
 
-**Priority 3 — Log eval framework templates** (key: `eval-framework-FEATURE_TYPE`).
-The 4-dimension framework you wrote in Phase 2 is a starting template
-for any feature of the same type. Compress to pipe-delimited form and
-log it.
+**Priority 3 — Log eval framework templates** (key:
+`eval-framework-FEATURE_TYPE`). The 4-dimension framework is a starting
+template for any feature of the same type.
 
-**Priority 4 — Log failure modes that surprised you** (key: `failure-mode-NAME`,
-type: `pitfall`). If a F-dimension item bit you that you had not
-originally listed in Phase 2d, that's the highest-value learning of the
-night. Future agents on the same surface benefit.
+**Priority 4 — Log failure modes that surprised you** (key:
+`failure-mode-NAME`, type: `pitfall`). If a F-dimension item bit you
+that you had not originally listed in Phase 2d, that's the highest-value
+learning of the night.
+
+**Priority 5 — Log self-violations as pitfalls** (key:
+`relentless-self-violation-NAME`, type: `pitfall`). If you caught
+yourself wanting to ask "your call" or marking a test skipped, log it
+so the next session's agent sees the pattern. Especially if a *new*
+failure mode emerged that isn't yet in the table at the top of this
+SKILL.
 
 **Don't log:** specific bug fixes, specific commit hashes, specific
 iteration goals. Those go stale the moment the bug is fixed.
 
 ---
 
-## Important Rules
+## Important rules
 
-### Anti-validation-seeking rules
+### Anti-validation-seeking rules (Iron Law #3 detail)
+
 - **Never end an iteration with "should I continue?"** Continue if Phase
   5 says continue. Stop if Phase 5 says stop. There is no third option.
-- **Never ask which alternative to pick** in the middle of the loop.
-  Pick one, log a DECISION, ship it, evaluate, swap if the evidence
-  demands it.
+- **Never ask which alternative to pick** mid-loop. Pick one, log a
+  DECISION, ship it, evaluate, swap if evidence demands.
 - **Never frame a finding as a question.** "I noticed X — should I fix
-  it?" → just fix it, or log it under "Things I deliberately did NOT do."
+  it?" → just fix it, or log under "Things I deliberately did NOT do."
+- **Never end with "want me to /ship".** /ship is part of Phase 6 if
+  the deploy mechanism is push-to-merge. Otherwise the deploy already
+  happened in Phase 4. Either way, no question.
 
 ### Anti-slop rules
-- **No mocked evaluations.** A mock that passes does not count toward
-  the eval framework. Re-deploy and re-test against live.
-- **No silent skips.** Every observable is either PASS, FAIL, or
-  KNOWN_DEFERRED with explicit reasoning.
+
+- **No mocked evaluations.** A mock that passes does not count. Re-deploy
+  and re-test against live.
+- **No silent skips.** Every observable is PASS, FAIL, or DEFERRED with
+  explicit named blocker.
 - **No "good enough" without checking the framework.** Rerun every
   observable in every dimension before claiming done.
+- **No `@pytest.mark.skip` to dodge env setup.** Setting up the env IS
+  the iteration.
 
-### Safety rules (non-negotiable even in relentless mode)
+### Safety rules (non-negotiable)
+
 - **Never** `DROP TABLE`, `TRUNCATE`, mass `DELETE`, or destructive
   migrations against shared databases without explicit prior approval
-  in the Phase 1c batch.
-- **Never** force-push to `main` (or whatever the protected base branch
-  is). Force-push to your own feature branch is fine after rebases.
-- **Never** delete other users' data, deactivate other users, change
+  in Phase 1c.
+- **Never** force-push to `main` (or any protected base branch).
+  Force-push to your own feature branch is fine after rebases.
+- **Never** delete other users' data, deactivate other users, or change
   other users' permissions.
-- **Never** leak secrets into commits, logs, or the morning report.
-  Use env-var references (`$STRIPE_SECRET_KEY`), not values.
+- **Never** leak secrets into commits, logs, or the morning report. Use
+  env-var references (`$STRIPE_SECRET_KEY`), not values.
 - **Never** disable signing, skip pre-commit hooks (`--no-verify`), or
   bypass branch protection. If a hook fails, fix the underlying issue.
 - **If unsure about blast radius, deploy to staging instead and flag
   the prod-only test in the morning report.**
 
-### Cross-session rules
-- **`--resume` works only if a `.context/relentless-FEATURE_SLUG.md`
-  journal exists.** Read the last 5 iterations' journal entries, the
-  prereq learning, and the eval framework learning, then re-enter the
-  loop at iteration N+1 with the same goal.
-- **Do not start a new framework if one already exists for this
-  feature in learnings.** Load it, validate it's still relevant, evolve
-  it; don't rewrite from scratch.
+### Cross-session rules (--resume)
+
+- `--resume` works only if `~/.leadbay/projects/<slug>/relentless/<feature-slug>/`
+  exists. Read in order: `00-contract.md`, `01-prereqs.md`,
+  `02-eval-framework.md`, `03-plan.md`, the latest `iter-NN.md`. Re-enter
+  Phase 4 at iteration N+1 with the "Next iteration's goal" from
+  iter-NN.md.
+- **Do not start a new framework if one already exists.** Load it,
+  validate it's still relevant, evolve it; don't rewrite from scratch.
 
 ### When to escalate
-Escalate via STATUS: BLOCKED in the final report (do NOT mid-flight ping)
-when:
+
+Escalate via STATUS: BLOCKED in the final report (do NOT mid-flight
+ping) when:
+
 - A required external service is genuinely down for the duration of the
-  session (verify it's not just a transient blip — try 3+ times across
-  10+ minutes before declaring blocked).
-- A credential the user said they would provide in Phase 1c never arrived
-  AND the work cannot proceed around it.
+  session (verify ≥3 retries across ≥10 minutes before declaring
+  blocked).
+- A credential the user said they would provide in Phase 1c never
+  arrived AND the work cannot proceed around it.
 - The repo's branch protection or deploy infrastructure has a misconfig
-  that you do not have permission to fix and that no workaround unblocks.
+  you do not have permission to fix and no workaround unblocks.
 
 In all other cases, you keep going. Relentless means relentless.
