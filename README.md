@@ -28,6 +28,28 @@ want one shared learnings store:
 
 Each skill checks for updates on launch and notifies you.
 
+## Durable state — Conductor / worktree safety
+
+All Leadbay state lives under `$HOME/.leadbay/` so it's reachable from
+any Claude session in any workspace. Conductor uses git worktrees that
+get archived on workspace close — anything symlinked from
+`$HOME/.leadbay/` into a worktree is silently lost when that workspace
+is archived.
+
+Every `setup` invocation (including bare `--update`) self-heals:
+
+- Detects symlinks under `$HOME/.leadbay/` pointing into ephemeral
+  paths (Conductor workspaces, `/tmp`, `/var/folders`).
+- For dead symlinks: removes them. If it's the knowledge mirror, auto-
+  re-clones from the canonical URL so you don't lose access.
+- For live symlinks: verifies the worktree is **clean and pushed**, then
+  replaces the symlink with a real clone (or rsync of contents). Refuses
+  to proceed if there are uncommitted changes or unpushed commits — no
+  silent data loss.
+
+Never manually symlink `$HOME/.leadbay/anything` into a Conductor
+workspace path. The setup script will heal it on next run.
+
 ## One-liner (install or update)
 
 ```bash

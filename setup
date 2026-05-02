@@ -108,6 +108,124 @@ if [ "$GSTACK_INTEROP" = "true" ] && [ "$GSTACK_INTEROP_REMOVE" = "true" ]; then
   exit 0
 fi
 
+# ============================================================================
+# Durable state self-heal — runs on EVERY setup invocation.
+#
+# All leadbay state must live under $HOME/.leadbay/ and be readable from any
+# Claude session in any workspace. Conductor uses git worktrees that get
+# archived; if any path under $HOME/.leadbay/ symlinks into a worktree, the
+# state is silently lost on archive. This block detects and heals that.
+# ============================================================================
+mkdir -p "$LEADBAY_HOME" 2>/dev/null || {
+  echo "FATAL: cannot create $LEADBAY_HOME" >&2
+  echo "Fix: mkdir -p '$LEADBAY_HOME' && chmod u+rwx '$LEADBAY_HOME'" >&2
+  exit 1
+}
+if [ ! -w "$LEADBAY_HOME" ]; then
+  echo "FATAL: $LEADBAY_HOME is not writable" >&2
+  echo "Fix: chmod u+rwx '$LEADBAY_HOME'" >&2
+  exit 1
+fi
+
+ephemeral_target() {
+  # Returns 0 if the target path is in a known-ephemeral location.
+  case "$1" in
+    */conductor/workspaces/*) return 0 ;;
+    /tmp/*|/var/folders/*|/private/tmp/*|/private/var/folders/*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+heal_ephemeral_symlink() {
+  # Usage: heal_ephemeral_symlink <path-under-leadbay> <human-label>
+  # If <path> is a symlink into an ephemeral location, replace it with a
+  # real clone of the same git remote (or rsync of contents, if not a repo).
+  # Refuses to proceed if the target has uncommitted changes or unpushed
+  # commits — never silently destroys work.
+  local path="$1"
+  local label="$2"
+  [ -L "$path" ] || return 0
+  local target
+  target=$(readlink "$path") || return 0
+  case "$target" in /*) ;; *) target="$(dirname "$path")/$target" ;; esac
+  ephemeral_target "$target" || return 0
+
+  echo ""
+  echo "DURABLE-STATE-HEAL: $path -> $target is ephemeral (worktree/tmp)."
+  if [ ! -e "$target" ]; then
+    echo "  Target is gone (worktree archived?). Removing dead symlink."
+    rm "$path"
+    if [ "$path" = "$KNOWLEDGE_DIR" ] && [ -n "${KNOWLEDGE_REPO_URL:-}" ]; then
+      echo "  Auto-recloning knowledge mirror from $KNOWLEDGE_REPO_URL..."
+      git clone --depth 50 "$KNOWLEDGE_REPO_URL" "$path" 2>&1 | sed 's/^/    /' || {
+        echo "  Auto-reclone failed. Re-run: ~/.leadbay-skills/setup --with-knowledge" >&2
+        return 1
+      }
+      echo "  Healed: $label is now a real clone in \$HOME."
+    else
+      echo "  Re-run setup with the appropriate flag to recreate $label." >&2
+    fi
+    return 0
+  fi
+
+  if [ -d "$target/.git" ] || [ -f "$target/.git" ]; then
+    local dirty unpushed remote
+    dirty=$(cd "$target" && git status --porcelain 2>/dev/null || true)
+    if [ -n "$dirty" ]; then
+      echo "  ABORT: $target has uncommitted changes. Commit/stash, then re-run setup." >&2
+      cd "$target" && git status --short >&2
+      return 1
+    fi
+    unpushed=$(cd "$target" && git log --branches --not --remotes --oneline 2>/dev/null || true)
+    if [ -n "$unpushed" ]; then
+      echo "  ABORT: $target has unpushed commits. Push them, then re-run setup." >&2
+      echo "$unpushed" >&2
+      return 1
+    fi
+    remote=$(cd "$target" && git remote get-url origin 2>/dev/null || true)
+    if [ -z "$remote" ]; then
+      echo "  ABORT: $target has no 'origin' remote. Cannot heal automatically." >&2
+      return 1
+    fi
+    echo "  Clean + pushed. Replacing symlink with a real clone of $remote..."
+    rm "$path"
+    git clone --depth 50 "$remote" "$path" 2>&1 | sed 's/^/    /' || {
+      echo "  Clone failed. Re-creating symlink so state is at least readable." >&2
+      ln -sf "$target" "$path"
+      return 1
+    }
+    echo "  Healed: $label is now a real clone in \$HOME and survives worktree archives."
+  else
+    # Not a git repo — rsync contents into a real dir.
+    echo "  $target is not a git repo. Copying contents into \$HOME (idempotent rsync)..."
+    local tmp_dir="${path}.heal-$$"
+    rsync -a --delete "$target/" "$tmp_dir/" 2>&1 | sed 's/^/    /' || {
+      rm -rf "$tmp_dir"
+      echo "  rsync failed. Leaving symlink in place." >&2
+      return 1
+    }
+    rm "$path"
+    mv "$tmp_dir" "$path"
+    echo "  Healed: $label is now a real directory in \$HOME."
+  fi
+}
+
+# Heal any ephemeral symlinks at known sensitive paths.
+heal_ephemeral_symlink "$KNOWLEDGE_DIR" "knowledge mirror"
+# Catch any other top-level $HOME/.leadbay/ symlinks pointing into worktrees
+# (slug-cache, projects, future additions).
+if [ -d "$LEADBAY_HOME" ]; then
+  for entry in "$LEADBAY_HOME"/*; do
+    [ -L "$entry" ] || continue
+    [ "$entry" = "$KNOWLEDGE_DIR" ] && continue  # already handled
+    target=$(readlink "$entry") || continue
+    case "$target" in /*) ;; *) target="$LEADBAY_HOME/$target" ;; esac
+    if ephemeral_target "$target"; then
+      heal_ephemeral_symlink "$entry" "$(basename "$entry")"
+    fi
+  done
+fi
+
 # --- --update ---
 if [ "$DO_UPDATE" = "true" ] && [ -d "$SKILLS_HOME/.git" ]; then
   echo "Updating leadbay-skills..."
