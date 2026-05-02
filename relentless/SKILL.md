@@ -404,10 +404,21 @@ The gate CLI exposes five subcommands. Every later phase uses them:
 Exit code 0 means the gate passed; non-zero means refuse to advance.
 Run `lb-relentless-gate help` for full docs.
 
-If the artifact spine cannot be created (no write access to
-`$HOME/.leadbay`), fall back to `.context/relentless/<feature-slug>/`
-and proceed — but flag this in the final report so Milan knows resume
-mode won't work cross-workspace.
+**Where state lives — and why `.context/` is NOT a fallback.** The
+artifact spine MUST live in `$HOME/.leadbay/projects/<slug>/relentless/`.
+Do not write cross-session state to `.context/` in a repo or worktree:
+
+- Conductor workspaces are git worktrees. Archiving a workspace removes
+  the whole working tree, including `.context/`. Anything there is
+  ephemeral.
+- Claude reads `~/.claude/projects/.../memory/` and `$HOME/.leadbay/`
+  the same way from every workspace. Repo-relative paths do not.
+- Therefore `--resume` requires `$HOME/.leadbay/...`, period.
+
+If `$HOME/.leadbay` is not writable (rare — read-only home, container
+without volume mount), this is a hard failure. STOP, escalate via
+`STATUS: BLOCKED`, do not silently degrade to a repo path. Tell the
+user what failed and what to fix (`mkdir -p $HOME/.leadbay && chmod u+rwx $HOME/.leadbay`).
 
 ### 0b. Echo the contract block
 
