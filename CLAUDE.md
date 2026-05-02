@@ -26,6 +26,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 | `/knowledge-question` | Flag an open question into `questions/` |
 | `/learnings-from-pr` | Pre-PR knowledge capture — invoke AFTER implementation, BEFORE `git push` |
 | `/diagnose` | Deep diagnostic root cause analysis (no code changes) |
+| `/relentless` | Overnight autonomous build-deploy-eval-iterate loop on a live system |
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence retro |
 
@@ -40,6 +41,8 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 - "weekly retro", "what did we ship" → `/org-retro`
 - "sales retro", "user activity" → `/sales-retro`
 - "diagnose this", "root cause" → `/diagnose`
+- "relentless mode", "overnight", "iterate until perfect", "I'll be away — keep going",
+  "make it bulletproof", "don't stop until it's great" → `/relentless`
 
 ### Standing instructions (always-on, after install)
 

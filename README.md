@@ -51,6 +51,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/knowledge-explore` | Map a NEW workflow into the wiki via live tour (browser-based, NOT source-only) |
 | `/knowledge-question` | Flag an open question into the questions/ folder |
 | `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
+| `/relentless` | Overnight perfectionist loop: deploys live, evals 4-dim, iterates until done |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
 

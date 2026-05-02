@@ -70,12 +70,11 @@ If `~/.leadbay-skills` exists, the following team skills are available:
 | Command | What it does |
 |---------|-------------|
 | `/knowledge-find` | Pre-task knowledge brief (auto-fired by hook) |
-| `/knowledge-capture` | Post-task journal write (auto-fired by hook) |
-| `/knowledge-explore` | Bootstrap a new product surface |
+| `/knowledge-explore` | Map a NEW workflow into the wiki via live tour |
 | `/knowledge-question` | Flag an open question |
-| `/knowledge-sync` | Push local journal to leadbay/knowledge |
-| `/knowledge-dream` | Manual consolidator preview |
+| `/learnings-from-pr` | Pre-PR knowledge capture (invoke before `git push`) |
 | `/diagnose` | Deep diagnostic root cause analysis |
+| `/relentless` | Overnight autonomous build-deploy-eval-iterate loop |
 | `/org-retro` | Weekly org-wide engineering retro |
 | `/sales-retro` | Weekly sales intelligence retro |
 
@@ -84,8 +83,8 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 Before any non-trivial coding task, your FIRST action is /knowledge-find with the
 user's request as input. Only proceed once you've read the brief.
 
-After a non-trivial task completes, invoke /knowledge-capture with a one-paragraph
-summary of what was learned.
+Before pushing or opening a PR, invoke /learnings-from-pr to capture durable
+knowledge from the work just completed.
 
 If you encounter a dilemma you can't resolve from the brief, invoke /knowledge-question
 rather than guessing.
