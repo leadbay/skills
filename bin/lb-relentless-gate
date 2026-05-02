@@ -27,9 +27,14 @@
 #                                        every iter-NN.md (number, goal,
 #                                        Q TOTAL, Δ, milan verdict, fixes)
 #   iteration-count ART_DIR [MIN]      — count iter-NN.md files; fail if
-#                                        below MIN (default 15 in v5;
-#                                        was 10 in v4). Per-criterion
-#                                        exploration needs room.
+#                                        below MIN. v6: NO LONGER auto-called
+#                                        by the per-iter or final exit
+#                                        check — kept for diagnostic /
+#                                        explicit use. The other gates
+#                                        (q-saturated, attempts-exhausted,
+#                                        second-opinions-consistent)
+#                                        organically prevent early exit
+#                                        without needing a hardcoded count.
 #   attempts-exhausted ART_DIR [WIN] [MIN_FAILS]
 #                                      — gradient-descent stagnation check.
 #                                        Last WIN iter-NN.md files must
@@ -49,17 +54,17 @@
 #                                        file. Verdict must be CLEAN or
 #                                        EXTERNAL_ONLY.
 #   second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]
-#                                      — v5 strengthening of single
-#                                        second-opinion. Requires ≥
-#                                        MIN_OPINIONS files matching
-#                                        99-second-opinion-NN.md, all
-#                                        CLEAN/EXTERNAL_ONLY, with at
+#                                      — Requires ≥MIN_OPINIONS files
+#                                        matching 99-second-opinion-NN.md,
+#                                        all CLEAN/EXTERNAL_ONLY, with at
 #                                        least MIN_GAP iterations between
 #                                        first and last. Two independent
 #                                        reviewers across time agreeing
 #                                        nothing's fixable >> one CLEAN.
-#                                        Defaults: MIN_OPINIONS=2,
-#                                        MIN_GAP=5.
+#                                        v6 defaults: MIN_OPINIONS=2,
+#                                        MIN_GAP=3 (was 5 — too prescriptive
+#                                        for tiny tasks; 3 still ensures
+#                                        real change between reviews).
 #
 # Exit codes:
 #   0 — gate passed
@@ -154,9 +159,12 @@ Subcommands:
       Always exits 0; emits "_no iterations found_" if empty.
 
   iteration-count ART_DIR [MIN]
-      Count iter-NN.md files; fail if below MIN (default 15 in v5).
-      Hard floor. Per-criterion exploration needs room: ~1 baseline
-      + ~3 binary floor + ~10 push iterations on the bottom-N.
+      Count iter-NN.md files; fail if below MIN (default 5).
+      v6: NO LONGER auto-called by the per-iter or final exit
+      check — kept for diagnostic / explicit use only. The other
+      gates (q-saturated, attempts-exhausted,
+      second-opinions-consistent) organically prevent early exit
+      because they require a window of iterations to be honest.
       Stdout: "ITERATIONS=N MIN=M". Exit 1 if N < M.
 
   attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]
@@ -584,7 +592,7 @@ case "$cmd" in
     ;;
 
   iteration-count)
-    art_dir="${1:-}"; min="${2:-15}"
+    art_dir="${1:-}"; min="${2:-5}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
       echo "Usage: lb-relentless-gate iteration-count ART_DIR [MIN]" >&2
       exit 2
@@ -592,8 +600,8 @@ case "$cmd" in
     n=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | wc -l | tr -d ' ')
     echo "ITERATIONS=$n MIN=$min"
     if [ "$n" -lt "$min" ]; then
-      echo "ITERATION_FLOOR_NOT_MET — only $n iterations, need ≥$min before PROCEED is allowed" >&2
-      echo "  → v5 hard floor. Per-criterion exploration needs room — typically 1 baseline + 3 binary-floor + 10 push attempts." >&2
+      echo "ITERATION_FLOOR_NOT_MET — only $n iterations, need ≥$min" >&2
+      echo "  → v6: this gate is diagnostic-only; the other gates (q-saturated, attempts-exhausted, second-opinions-consistent) are the real backstop." >&2
       exit 1
     fi
     echo "ITERATION_FLOOR_MET"
@@ -678,7 +686,7 @@ case "$cmd" in
     ;;
 
   second-opinions-consistent)
-    art_dir="${1:-}"; min_op="${2:-2}"; min_gap="${3:-5}"
+    art_dir="${1:-}"; min_op="${2:-2}"; min_gap="${3:-3}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
       echo "Usage: lb-relentless-gate second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]" >&2
       exit 2

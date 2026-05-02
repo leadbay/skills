@@ -2,31 +2,35 @@
 ---
 name: relentless
 description: |
-  Long-horizon overnight perfectionist mode (v5). The Milan Check
+  Long-horizon overnight perfectionist mode (v6). The Milan Check
   passes IF AND ONLY IF any further improvement is actually
-  impossible — not "scores look high enough", not "I tried for a few
-  iterations", not "I can name 5 follow-ups but they're deferred".
-  Real impossibility means: every recent iteration's attempts
-  plateaued, AND multiple independent fresh-context reviewers across
-  time agree there's nothing fixable left. Mechanically enforced:
-  (a) hard iteration floor of 15; (b) `attempts-exhausted` gate
-  requires ALL 5 of the last 5 iterations to have plateaued or
-  regressed (was 3-of-5 in v4 — too lax: 2 IMPROVED meant gradient
-  was alive but the agent exited anyway); (c) `second-opinions-
-  consistent` gate requires ≥2 fresh-context Agent subagents called
-  ≥5 iterations apart, both returning Verdict CLEAN or EXTERNAL_ONLY.
-  The second subagent receives the first's findings + verifies each
-  was addressed before adding new ones. The agent runs an
-  *optimisation journey* against MISSION-derived qualitative criteria
-  scored 0–100 by judgment looking at live output. Plan + self-review
-  before each build (DRY/race/coupling/blast-radius). Loud iteration
-  numbers + journey table at the end. Built for "I'm leaving for the
-  night, ship something I'd be proud of by morning" sessions — the
-  agent owns its judgment calls instead of asking for validation.
+  impossible — but the *work itself* tells you when that's true,
+  not a hardcoded iteration count. v5 had a hardcoded floor of 15
+  iterations; v6 drops it because (a) we don't know in advance how
+  many iterations any given task needs, and (b) the other v5 gates
+  (q-saturated, attempts-exhausted, second-opinions-consistent) are
+  work-based and organically prevent early exit by requiring a
+  window of iterations to pass honestly. A tiny task may converge in
+  ~7 iterations; a complex one may need 80+. The gates scale with
+  the task. Mechanically enforced exit conditions: (a)
+  `attempts-exhausted` — ALL 5 of the last 5 iterations must have
+  Q-target outcome NO_MOVEMENT or REGRESSED (one IMPROVED means
+  gradient is alive, keep going); (b) `q-saturated` — Q TOTAL range
+  ≤ N_CRITERIA across the last 5 iterations; (c) `second-opinions-
+  consistent` — ≥2 fresh-context Agent subagents, called ≥3
+  iterations apart, both Verdict CLEAN or EXTERNAL_ONLY, with the
+  second subagent verifying each prior finding was addressed before
+  adding new ones. The agent runs an *optimisation journey* against
+  MISSION-derived qualitative criteria scored 0–100 by judgment
+  looking at live output. Plan + self-review before each build
+  (DRY/race/coupling/blast-radius). Loud iteration numbers + journey
+  table at the end. Built for "I'm leaving for the night, ship
+  something I'd be proud of by morning" sessions — the agent owns
+  its judgment calls instead of asking for validation.
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 5.0.0
+version: 6.0.0
 allowed-tools:
   - Bash
   - Read
@@ -195,7 +199,7 @@ Direct, concrete, no filler. Sound like a builder reporting to builders.
 Name specific people, specific numbers. Skip generic praise.
 If something is noteworthy, say exactly what and why.
 
-# /relentless — Overnight Perfectionist Mode (v5)
+# /relentless — Overnight Perfectionist Mode (v6)
 
 You are about to enter **Relentless mode**. Milan is leaving the keyboard.
 He will not answer questions, hand you credentials mid-flight, or
@@ -226,40 +230,63 @@ direction, until you converge.
 > The Milan Check passes IF AND ONLY IF any further improvement is
 > actually impossible. "Impossible" is operationalised as: **every
 > attempt across the last 5 iterations plateaued or regressed** AND
-> **two independent fresh-context reviewers, called at separate points
-> in the run, both agree there's nothing fixable left**. Anything less
-> means you stop iterating while improvement is still possible — which
-> is the opposite of relentless.
+> **two independent fresh-context reviewers, called at separate
+> points in the run, both agree there's nothing fixable left**.
+> Anything less means you stop iterating while improvement is still
+> possible — which is the opposite of relentless.
 
-Re-read that. The v3/v4 of this skill failed on weaker formulations:
-v3 used an absolute Mission-alignment threshold (agents self-scored
-above it and stopped); v4 required 3-of-5 plateaued attempts (left
-2 of the 5 having improved — gradient still alive). v5 closes both:
+Re-read that. The previous failure modes:
 
-- **Iteration floor: 15.** Below 15 iterations, the gate
-  auto-rewrites any "PROCEED TO REPORT" verdict to "CONTINUE LOOP".
-  Per-criterion exploration needs room: ~1 baseline + ~3 binary-floor
-  + ~10 push attempts on the bottom-N. Below 15, you cannot have
-  proven "no further improvement is possible" — the work to prove it
-  hasn't physically been done yet.
-- **Attempts-exhausted gate (5-of-5).** Each iteration's plan must
-  declare a `## Targeted Q-criterion` and `## Projected score`. Each
-  iteration's eval must record `## Q-target outcome: IMPROVED |
-  NO_MOVEMENT | REGRESSED`. PROCEED requires **all 5 of the last 5**
-  iterations to be NO_MOVEMENT or REGRESSED. If even one of the last
-  5 IMPROVED, gradient is still alive — that improvement proves
-  there was room. Keep going.
-- **Second-opinions consistent (≥2, ≥5 iterations apart).** When
-  you think you're ready to PROCEED, spawn a fresh-context Agent
+- v3 used an absolute Mission-alignment threshold (agents self-scored
+  above it and stopped at 4 iterations).
+- v4 required only 3-of-5 plateaued attempts (left 2 of 5 having
+  IMPROVED — gradient still alive but the agent exited).
+- v5 added a hardcoded iteration floor of 15. **But hardcoded counts
+  are prescriptive about something we can't know in advance.** A
+  tiny task might honestly converge in 8 iterations; a complex one
+  may need 80+. v6 drops the hardcoded floor.
+
+**Why no hardcoded floor in v6:** the other v5 gates are work-based
+and organically prevent early exit because they require a *window
+of iterations* to pass honestly:
+
+- `q-saturated` needs a window of 5 iterations to detect plateau →
+  can't pass at iteration 4.
+- `attempts-exhausted 5-of-5` needs 5 iterations with NO_MOVEMENT
+  outcomes → can't pass at iteration 4.
+- `second-opinions-consistent` needs ≥2 opinions ≥3 iterations apart
+  → can't pass before iteration ~5–7.
+
+So the natural floor that emerges is ~6–8 iterations for the smallest
+honest /relentless task, scaling up organically with task complexity.
+For a 30-criterion deep project, the same gates require 30+
+iterations because the gradient won't flatten until the work is
+genuinely done. **The work tells you when you're done; we don't.**
+
+The exit gates:
+
+- **Attempts-exhausted (5-of-5).** Each iteration's plan declares a
+  `## Targeted Q-criterion` + `## Projected score`. Each iteration's
+  eval records `## Q-target outcome: IMPROVED | NO_MOVEMENT |
+  REGRESSED`. PROCEED requires **all 5 of the last 5** to be
+  NO_MOVEMENT or REGRESSED. If even one IMPROVED, gradient is alive.
+- **Second-opinions consistent (≥2, ≥3 iterations apart).** When you
+  think you're ready to PROCEED, spawn a fresh-context Agent
   (Phase 4a-xiv) that sees only `02a-mission.md`, `02b-criteria.md`,
   and the latest `iter-NN.md`. Save output to
-  `99-second-opinion-NN.md` (NN = iteration when called). The
-  `second-opinions-consistent` gate requires ≥2 such files, both
-  Verdict CLEAN or EXTERNAL_ONLY, with ≥5 iterations between earliest
-  and latest. The second subagent receives the first's findings and
+  `99-second-opinion-NN.md` (NN = iteration when called). Required:
+  ≥2 such files, both Verdict CLEAN or EXTERNAL_ONLY, ≥3 iterations
+  apart. The second subagent receives the first's findings and
   verifies each was addressed before adding new ones. **Two
-  independent reviewers across time agreeing >> one CLEAN** — catches
-  the case where a single subagent was lucky or cursory.
+  independent reviewers across time agreeing >> one CLEAN.**
+
+Empirical observation (not requirement): a good /relentless run
+typically lands in the **50–60+ iteration** range, because reaching
+honest plateau across 12+ Q-criteria, while adding new criteria
+discovered mid-run, takes that long. But this is a description of
+what we've seen, not a prescription. **If your task genuinely
+plateaus at iteration 9 and two fresh reviewers agree, that is an
+honest exit.**
 
 The thing that drives gradient descent is the **qualitative
 criteria**. They are derived from the **mission**, not from a generic
@@ -271,14 +298,12 @@ how you tell whether the system is actually *smart*. The
 deterministic B/E/F dimensions are the floor; Q is the ceiling you
 spend the night pushing up.
 
-The empirical signal of a good run is **50–60+ iterations**. The
-hard floor is 15. Anywhere between, the agent must demonstrate that
-ALL of the last 5 attempts plateaued AND that two consecutive
-fresh-context reviewers (called ≥5 iterations apart) both returned
-CLEAN/EXTERNAL_ONLY. If you catch yourself wanting to PROCEED at
-iteration 5 or 8 or 14, the gate WILL mechanically force you back to
-CONTINUE — that is by design. Don't fight it; channel that impulse
-into the next iteration's goal.
+No hardcoded iteration count exists. If the work-based gates pass
+honestly at iteration 9, you exit. If they don't pass until iteration
+80, you keep going. If you catch yourself wanting to PROCEED while
+the gates are saying CONTINUE, the gates WILL mechanically force you
+back — that is by design. Don't fight it; channel that impulse into
+the next iteration's goal.
 
 You will:
 
@@ -318,17 +343,18 @@ You will:
      comparing actual vs projected → **run the Milan Check** at end
      of EVERY iteration (`milan-check-iter-NN.md`).
    - **GRADIENT-DESCENT CHECK (4a-xiii)** — when the verdict is
-     PROCEED, the gate runs `iteration-count` (≥15) +
-     `attempts-exhausted` (last 5 ALL plateaued/regressed) +
-     `q-saturated` (range ≤12). Any failure auto-rewrites verdict
-     to CONTINUE LOOP.
+     PROCEED, the gate runs `attempts-exhausted` (last 5 ALL
+     plateaued/regressed) + `q-saturated` (range ≤12). Any failure
+     auto-rewrites verdict to CONTINUE LOOP. No hardcoded iteration
+     count — these gates organically require a window of iterations
+     to be honest.
    - **SECOND OPINION (4a-xiv)** — when verdict is PROCEED AND
      gradient-descent check passes, spawn a fresh-context Agent
      subagent and save output as `99-second-opinion-NN.md` (NN =
      current iteration). The `second-opinions-consistent` gate
-     requires ≥2 such files, both CLEAN/EXTERNAL_ONLY, ≥5 iterations
+     requires ≥2 such files, both CLEAN/EXTERNAL_ONLY, ≥3 iterations
      apart. So the FIRST PROCEED attempt always fails this gate
-     (only 1 opinion), forcing 5+ more iterations during which the
+     (only 1 opinion), forcing 3+ more iterations during which the
      agent works on the second-opinion's findings. Then a second
      subagent (which receives the first's findings) is spawned. Only
      when both are clean does the loop exit.
@@ -382,6 +408,7 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Final report had no clear iteration-by-iteration table — Milan can see the destination but not the journey, can't tell whether the agent explored or just walked. | Phase 6 inlines a markdown table from `lb-relentless-gate iteration-summary $ART_DIR`. One row per iteration: N, goal, key built-line, Q TOTAL, Δ vs prior, Milan verdict. The table makes the gradient-descent shape inspectable in 30 seconds. |
 | Even with v3's mission-bar gate (Mission alignment ≥75), agents stopped at 4 iterations. Reason: when the agent self-scores AND the gate uses an absolute threshold, the agent converges to "score high enough to satisfy the threshold." Same problem as Goodhart's law — any score that becomes a target stops being a useful measure. The agent reported "Mission alignment 84/100, all gates green" while explicitly listing 5 fixable open items in the same report. | v4 makes exit conditions **mechanical and process-based, not score-based**: (1) hard iteration floor of 10 — the gate auto-rewrites PROCEED to CONTINUE below it, period; (2) `attempts-exhausted` gate — each iteration's plan declares a Q-target + projected score, each iteration's eval records IMPROVED/NO_MOVEMENT/REGRESSED, PROCEED requires ≥3 of last 5 to be NO_MOVEMENT/REGRESSED (proving the agent tried and the score didn't move, vs the agent stopped trying); (3) fresh-context second-opinion subagent — when PROCEED is being considered, a subagent with no conversation history reviews mission + criteria + latest iter and names 5 things still wrong, with `Verdict: CLEAN | EXTERNAL_ONLY | CONTINUE_LOOP_REQUIRED`. The independent reviewer is the antidote to the agent's self-justification. |
 | v4 still allowed PROCEED while improvement was possible: 3-of-5 plateau leaves 2 of the last 5 having IMPROVED (= room to improve still exists), and one CLEAN second-opinion might be a single subagent being lucky/cursory. The user's clarification: "Pass IF AND ONLY IF any further improvement is actually impossible." | v5 tightens the bar: (1) iteration floor raised to 15; (2) `attempts-exhausted` requires ALL 5 of last 5 to be NO_MOVEMENT/REGRESSED (was 3-of-5) — if even one IMPROVED, gradient is alive; (3) NEW `second-opinions-consistent` gate requires ≥2 second-opinion files (`99-second-opinion-NN.md`), both CLEAN/EXTERNAL_ONLY, with ≥5 iterations between them. The second subagent receives the first's findings + verifies each was addressed before adding new ones. Two independent reviewers across time agreeing nothing's fixable is the operational definition of "further improvement is actually impossible." |
+| v5's hardcoded `iteration-count: 15` floor was prescriptive about something we can't know in advance. A tiny task might honestly converge in ~8 iterations; a complex one may need 80+. Imposing a fixed minimum either wastes iterations on small tasks (degrading quality with make-work) or under-specifies for big ones. The user's clarification: "we might be overprescriptive about the minimal number of iterations for things we have no clue how many iterations they will take." | v6 drops the auto-call to `iteration-count` from the exit gates. The other gates are work-based and organically require a window of iterations to pass honestly: `q-saturated` needs 5 iters of plateau, `attempts-exhausted 5-of-5` needs 5 iters of NO_MOVEMENT outcomes, `second-opinions-consistent` needs ≥2 opinions ≥3 iters apart. Together they impose a natural floor of ~6–8 iterations for the smallest honest task, scaling organically up to 80+ for complex ones. The work tells you when you're done; we don't. The `iteration-count` subcommand is kept for diagnostic use only. |
 
 ---
 
@@ -426,27 +453,33 @@ These are non-negotiable. Violating any voids the contract.
    impossible.** Not "scores look high enough." Not "I tried for a
    few iterations." Not "I can name 5 follow-ups but they're
    deferred." If you can name a fixable improvement, the work IS
-   improvable, and you continue. The operationalisation:
-   (a) you have completed ≥15 iterations,
-   (b) ALL 5 of the last 5 iterations declared a Q-target, projected
+   improvable, and you continue. The operationalisation is *work-
+   based*, not *count-based* — there is no hardcoded iteration
+   minimum; the work tells you when it's done:
+   (a) ALL 5 of the last 5 iterations declared a Q-target, projected
        a score, executed honestly, and the score did NOT move
        (NO_MOVEMENT or REGRESSED) — even one IMPROVED in the window
        means improvement IS still possible,
-   (c) ≥2 fresh-context Agent subagents, called ≥5 iterations apart,
+   (b) Q TOTAL across the last 5 iterations has plateaued (range
+       ≤ N_CRITERIA on the 0–100 scale),
+   (c) ≥2 fresh-context Agent subagents, called ≥3 iterations apart,
        both returned Verdict CLEAN or EXTERNAL_ONLY. The second
        subagent receives the first's findings and verifies each was
        addressed before adding new ones.
    These conditions are mechanically enforced by
-   `lb-relentless-gate iteration-count`, `attempts-exhausted` (5-of-5),
-   and `second-opinions-consistent` (≥2, ≥5 apart). The gates
-   auto-rewrite any PROCEED verdict to CONTINUE LOOP when any of
-   them fail. **Do not try to self-justify around them. Do not
-   attempt to score creatively to satisfy them. Treat the gates as
-   physics — if they say CONTINUE, you continue.** If you find
-   yourself thinking "but I genuinely cannot improve criterion X
-   further" — say so in the next iteration's plan and try a different
-   approach; if that also fails, that's another NO_MOVEMENT toward
-   exhaustion, which is precisely what proves impossibility.
+   `attempts-exhausted` (5-of-5), `q-saturated`, and
+   `second-opinions-consistent` (≥2, ≥3 apart). The gates auto-rewrite
+   any PROCEED verdict to CONTINUE LOOP when any of them fail. The
+   gates **organically require a window of iterations to be honest**
+   — that's the natural floor (~6–8 iterations for the smallest
+   plausible task; 50+ for typical /relentless work). **Do not try
+   to self-justify around them. Do not attempt to score creatively
+   to satisfy them. Treat the gates as physics — if they say
+   CONTINUE, you continue.** If you find yourself thinking "but I
+   genuinely cannot improve criterion X further" — say so in the
+   next iteration's plan and try a different approach; if that also
+   fails, that's another NO_MOVEMENT toward exhaustion, which is
+   precisely what proves impossibility.
 
 ---
 
@@ -1861,14 +1894,16 @@ if grep -qE '^VERDICT:[[:space:]]*PROCEED' "$MILAN_FILE"; then
     blocked="$blocked mission-bar-met"
   fi
 
-  # v5: hard iteration floor of 15 (was 10 in v4)
-  if ! "$_LB_BIN/lb-relentless-gate" iteration-count "$ART_DIR" 15; then
-    blocked="$blocked iteration-floor-15"
-  fi
+  # v6: NO hardcoded iteration floor. The work-based gates below
+  # organically require a window of iterations to pass honestly:
+  # q-saturated needs 5 iters of plateau, attempts-exhausted 5-of-5
+  # needs 5 iters with NO_MOVEMENT outcomes, second-opinions-consistent
+  # (called in 4a-xiv) needs 2 opinions ≥3 iters apart. Together
+  # they form a natural floor (~6-8 iters for the smallest honest
+  # task) without prescribing a number we can't know in advance.
 
-  # v5: gradient-descent stagnation must be DEMONSTRATED across ALL
-  # 5 of the last 5 iterations (was 3-of-5 in v4). If even one of
-  # the last 5 IMPROVED, gradient is alive.
+  # Demonstrated stagnation: ALL 5 of the last 5 must be NO_MOVEMENT
+  # or REGRESSED. If even one IMPROVED, gradient is alive.
   if ! "$_LB_BIN/lb-relentless-gate" attempts-exhausted "$ART_DIR" 5 5; then
     blocked="$blocked attempts-not-exhausted"
   fi
@@ -1924,7 +1959,7 @@ AND 4a-xiii (gradient-descent check) passed. The first call is
 typically around iteration 15–18 (the iteration floor + a few). If
 the first returns CONTINUE_LOOP_REQUIRED, work through its findings;
 the next PROCEED attempt will spawn another subagent. Once you have
-TWO files both CLEAN/EXTERNAL_ONLY with ≥5 iterations between them,
+TWO files both CLEAN/EXTERNAL_ONLY with ≥3 iterations between them,
 the gate clears.
 
 **How to spawn the subagent.** Use the Agent tool with
@@ -2073,7 +2108,7 @@ SO_FILE="$ART_DIR/99-second-opinion-$NZ.md"
 "$_LB_BIN/lb-relentless-gate" second-opinion-clean "$ART_DIR" "$SO_FILE"
 SO_OK=$?
 
-# Second check: across-the-run consistency (≥2 files, ≥5 iters apart)
+# Second check: across-the-run consistency (≥2 files, ≥3 iters apart)
 "$_LB_BIN/lb-relentless-gate" second-opinions-consistent "$ART_DIR"
 CONS_OK=$?
 
@@ -2091,8 +2126,8 @@ the findings.
 
 **If first opinion verdict is CLEAN/EXTERNAL_ONLY but it's the only
 opinion file** (gate `second-opinions-consistent` will fail):
-continue iterating for ≥5 more iterations — these continue your
-gradient-descent on the lowest-Q criteria. At iter (first+5+),
+continue iterating for ≥3 more iterations — these continue your
+gradient-descent on the lowest-Q criteria. At iter (first+3+),
 spawn the second subagent with the chained prompt. If both clean,
 the loop exits.
 
@@ -2115,7 +2150,7 @@ Three failure modes to specifically avoid:
   reads ALL files matching `99-second-opinion-NN.md` (including the
   CONTINUE_LOOP_REQUIRED one) — you can't delete it to hide it.
 - **Spawning two subagents back-to-back to satisfy `second-opinions-
-  consistent`.** The `MIN_GAP=5` parameter prevents this — files
+  consistent`.** The `MIN_GAP=3` parameter prevents this — files
   spawned at iter-15 and iter-16 fail the gap check. The gap exists
   to ensure real work happened between opinions.
 
@@ -2127,43 +2162,43 @@ latest `milan-check-iter-NN.md` verdict is `PROCEED TO REPORT` AND
 ALL of these hold (all are mechanically enforced — the gates
 auto-rewrite PROCEED to CONTINUE if any fails):
 
-1. **Iteration floor: ≥15.** Hard. No exceptions. Per-criterion
-   exploration physically requires this many iterations to be done
-   honestly. Enforced by `iteration-count`.
-2. **Demonstrated plateau (attempts-exhausted, 5-of-5):** ALL 5 of
+1. **Demonstrated plateau (attempts-exhausted, 5-of-5):** ALL 5 of
    the last 5 iterations must have declared a Q-target, projected a
    score, executed honestly, and the score did NOT move (NO_MOVEMENT
    or REGRESSED). If even one IMPROVED, gradient is alive. Enforced
    by `attempts-exhausted`.
-3. **Q saturation:** the range of Q TOTAL across the last 5
+2. **Q saturation:** the range of Q TOTAL across the last 5
    iterations is ≤ N_CRITERIA (defaults to 12 on the 0–100 scale).
    Enforced by `q-saturated`.
-4. **Mission alignment ≥ 75/100 + Smart-human row populated** —
+3. **Mission alignment ≥ 75/100 + Smart-human row populated** —
    enforced by `mission-bar-met`. (Necessary but not sufficient.)
-5. **Two consistent fresh-context second-opinions:** ≥2 files
+4. **Two consistent fresh-context second-opinions:** ≥2 files
    `99-second-opinion-NN.md`, both Verdict CLEAN or EXTERNAL_ONLY,
-   ≥5 iterations apart, and (for the chained second one) the
+   ≥3 iterations apart, and (for the chained second one) the
    subagent verified each prior finding was addressed. Enforced by
    `second-opinions-consistent`.
-6. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
+5. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
    named blocker), no regressions in last 3 iterations.
-7. **No blind eye:** the per-iteration Milan Check has a substantive
+6. **No blind eye:** the per-iteration Milan Check has a substantive
    "considered but didn't" entry on every row, and the latest "no
    blind eye" row enumerates 2–3 things you actively searched for to
    improve and judged genuinely acceptable to leave.
 
-**The four-iterations test.** If you find yourself considering exit
-at iteration 2, 4, 7, 10, or 14 — the gates will mechanically force
-you back to CONTINUE. That's the design. Don't try to satisfy the
-gates creatively (e.g., padding plans with NO_MOVEMENT outcomes you
-didn't actually attempt, or back-to-back-spawning subagents to
-satisfy the consistency check). The point of v5 is that **you can
-only exit when further improvement is actually impossible** — and
-that requires real time, real attempts, and two independent
-reviewers across separate iterations agreeing. Empirically this
-lands in the 50–60+ range. Below 15 is impossible by design; below
-20 is suspicious; below 50 may be honest if the feature is small AND
-every gate cleared on its own merits.
+**No hardcoded iteration count.** The gates above are *work-based*;
+they organically require a window of iterations to pass honestly
+(`q-saturated` and `attempts-exhausted` need 5; `second-opinions-
+consistent` needs ≥2 opinions ≥3 iterations apart, so ≥5 iterations
+total). That's the natural floor — typically 6–8 iterations for the
+smallest honest task. For complex work the gates won't pass until
+the gradient genuinely flattens, which empirically takes 50–60+
+iterations.
+
+**Don't try to satisfy the gates creatively** (padding plans with
+NO_MOVEMENT outcomes you didn't actually attempt, or back-to-back-
+spawning subagents). The MIN_GAP=3 on opinions and the
+`attempts-exhausted` outcome reading from real eval data make
+shortcutting expensive in attention. The honest path is to keep
+iterating until the gates genuinely pass.
 
 OR ONE of these hard exits:
 
@@ -2388,11 +2423,12 @@ VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 "$_LB_BIN/lb-relentless-gate" milan-rows-justified "$ART_DIR/99-milan-check.md"
 "$_LB_BIN/lb-relentless-gate" mission-bar-met "$ART_DIR/99-milan-check.md"
 "$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5
-# v5 mechanical gates (operationalise "if and only if any further
-# improvement is actually impossible"):
-"$_LB_BIN/lb-relentless-gate" iteration-count "$ART_DIR" 15
+# v6 mechanical gates (operationalise "if and only if any further
+# improvement is actually impossible" — purely work-based, no hardcoded
+# iteration count; the gates organically require a window of iterations
+# to pass honestly):
 "$_LB_BIN/lb-relentless-gate" attempts-exhausted "$ART_DIR" 5 5
-"$_LB_BIN/lb-relentless-gate" second-opinions-consistent "$ART_DIR" 2 5
+"$_LB_BIN/lb-relentless-gate" second-opinions-consistent "$ART_DIR" 2 3
 ```
 
 If you reached Phase 5 honestly via 4a-xii → 4a-xiii → 4a-xiv, all of
