@@ -10,7 +10,8 @@
 #   banned FILE
 #   deploy URL SHA_SHORT
 #   iter1-ok ITER01_FILE
-#   counts FILE              — print B/E/Q/F observable counts
+#   counts FILE                        — print B/E/Q/F observable counts
+#   q-saturated ART_DIR [WIN] [DELTA]  — Q TOTAL moving-avg plateau check
 #
 # Exit codes:
 #   0 — gate passed
@@ -48,6 +49,13 @@ Subcommands:
       Print B/E/Q/F observable counts. Used by Phase 2 to enforce
       minimums (B≥5, E≥8, Q≥5, F≥5). Stdout: "B=N E=N Q=N F=N TOTAL=N".
       Exit 1 if any minimum is unmet.
+
+  q-saturated ART_DIR [WINDOW] [MAX_DELTA]
+      Read Q TOTAL from the last WINDOW iter-NN.md files in ART_DIR
+      (default WINDOW=5). Compute the moving-average delta. Exit 0 if
+      ≤ MAX_DELTA (default 0.5) — i.e., Q has plateaued. Exit 1 if
+      still climbing (more iterations to do) or window is too small.
+      Each iter-NN.md must contain a "Q TOTAL (sum of scores): X" line.
 
   help
       This message.
@@ -181,6 +189,55 @@ case "$cmd" in
       exit 1
     fi
     echo "EVAL_FRAMEWORK_OK"
+    ;;
+
+  q-saturated)
+    art_dir="${1:-}"; window="${2:-5}"; max_delta="${3:-0.5}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate q-saturated ART_DIR [WINDOW] [MAX_DELTA]" >&2
+      echo "  (ART_DIR must exist and contain iter-NN.md files)" >&2
+      exit 2
+    fi
+    iters=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | sort | tail -n "$window")
+    iter_count=$(echo "$iters" | grep -c .)
+    if [ "$iter_count" -lt "$window" ]; then
+      echo "Q_NOT_SATURATED: only $iter_count iterations (need ≥$window for saturation check)" >&2
+      exit 1
+    fi
+    totals=""
+    for f in $iters; do
+      t=$(grep -E '^Q TOTAL.*:' "$f" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
+      if [ -z "$t" ]; then
+        echo "Q_NOT_SATURATED: $f missing 'Q TOTAL (sum of scores): X' line" >&2
+        exit 1
+      fi
+      totals="$totals $t"
+    done
+    # Compute |last - first| / window-1, plus min/max range, via awk for floats
+    delta=$(echo "$totals" | awk -v w="$window" -v md="$max_delta" '
+      {
+        for (i=1; i<=NF; i++) {
+          v=$i; sum+=v
+          if (NR==1 && i==1) { mn=v; mx=v }
+          else { if (v<mn) mn=v; if (v>mx) mx=v }
+        }
+        avg=sum/NF
+        rng=mx-mn
+        printf "%s|%.2f|%.2f|%.2f|%.2f\n", (rng <= md ? "OK" : "STILL_MOVING"), rng, mn, mx, avg
+      }')
+    status=$(echo "$delta" | cut -d'|' -f1)
+    rng=$(echo "$delta" | cut -d'|' -f2)
+    mn=$(echo "$delta" | cut -d'|' -f3)
+    mx=$(echo "$delta" | cut -d'|' -f4)
+    avg=$(echo "$delta" | cut -d'|' -f5)
+    if [ "$status" = "OK" ]; then
+      echo "Q_SATURATED: window=$window range=$rng (≤ $max_delta) min=$mn max=$mx avg=$avg"
+      exit 0
+    else
+      echo "Q_NOT_SATURATED: window=$window range=$rng (> $max_delta) min=$mn max=$mx avg=$avg" >&2
+      echo "  → Q is still climbing/oscillating; more iterations needed." >&2
+      exit 1
+    fi
     ;;
 
   help|--help|-h|"")

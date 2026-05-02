@@ -204,19 +204,40 @@ not give validation. He requires that you own your choices.
 
 ## TL;DR for the agent
 
+You are running an **optimisation journey**, not a checklist. The goal is
+not "all tests pass" — it is "the qualitative experience of using this
+feature reaches a saturation point where further iterations don't move
+the score." Good relentless runs go 30–80 iterations and end at a
+quality plateau, not at "implementation done."
+
 You will:
 
-1. **Phase 0** — boot, lock the contract, set up the artifact dir, define `phase_gate`.
-2. **Phase 1** — inventory prereqs, ONE batched ask, then no more questions about prereqs.
-3. **Phase 2** — write the 4-dimension eval framework to a FILE, with binary observables, with minimum counts enforced by `phase_gate`.
-4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask.
-5. **Phase 4** — loop: build → commit → deploy LIVE → evaluate every observable → judge → write `iter-NN.md`. **Iteration 1 must end with code DEPLOYED and at least one B-observable PASSING on the live URL.** Each iteration runs `banned_phrase_check` before advancing.
-6. **Phase 5** — write the Milan Check. Each "yes" must cite a named file path. Vague answers fail the gate.
-7. **Phase 6** — write the final report.
+1. **Phase 0** — boot, lock the contract, set up the artifact dir.
+2. **Phase 1** — inventory prereqs, ONE batched ask. **Default deploy
+   target is PRODUCTION when the project has no live users yet** — that
+   is the normal path, not the exception. If the user has provided
+   secrets, you USE them.
+3. **Phase 2** — write the 4-dimension eval framework. B/E/F are binary
+   observables. **Q is scored 0–10 per aspect with a written rubric for
+   what each score means.** Minimum counts enforced.
+4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask. Iteration
+   budget: 30+ iterations for any non-trivial feature. Polish iterations
+   are most of the run, not the tail.
+5. **Phase 4** — loop: build → commit → deploy LIVE → run all binary
+   observables → **score every Q-aspect and track the delta vs prior
+   iteration** → judge → write `iter-NN.md`. **Iteration 1 must end
+   with code DEPLOYED and at least one B-observable PASSING on the
+   live URL.**
+6. **Phase 5** — Milan Check. Verdict requires (a) all binary
+   observables PASS, (b) Q-dimension *saturated* — moving average of Q
+   total score across the last 5 iterations changed by ≤ 0.5, (c) at
+   least one iteration where you tried a Q-improvement and it didn't
+   move the score (proof you've explored the design space).
+7. **Phase 6** — write the final report including the Q-score curve.
 
 You stop **only** when the Milan Check verdict is `PROCEED TO REPORT`.
-Not when "implementation feels done." Not when "tests pass." Not when "I
-think we have a good place to stop."
+Not when "implementation feels done." Not when "tests pass." Not when
+"the obvious polish is done." Saturation is the exit, not completion.
 
 ---
 
@@ -232,8 +253,11 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Agent skipped Postgres-dependent tests with `@pytest.mark.skip` "until env is up", marked them as DEFERRED, called the work done | Iron Law #2 (no silent skips). The iteration's goal becomes "stand up the env so the test runs." A skip is a FAIL until it runs. |
 | Agent stopped after implementation without ever entering Phase 4 (deploy → evaluate → iterate loop) | Phase 4 cannot be skipped. Iteration 1 MUST deploy to live and pass at least one B-observable before Phase 4 ends. The Milan Check is the only exit. |
 | Agent wrote a prose status summary (sections like "What landed", "Ambiguities I resolved") instead of a structured eval framework with binary observables | Phase 2 ends only when `02-eval-framework.md` exists with ≥5 B + ≥8 E + ≥5 Q + ≥5 F observables. Enforced mechanically by `phase_gate` + count check. |
-| Agent stopped at "implementation complete" without doing any quality polish iterations | Phase 5 explicitly checks "Did you do at least 2 polish iterations?" — if no, CONTINUE LOOP. |
+| Agent stopped at "implementation complete" without doing any quality polish iterations | Phase 5 requires Q-dimension *saturation* (moving-average score plateau across 5 iterations), not a single "polish done" claim. Typical run: 30–80 iterations, most of them polish. |
 | Agent flagged uncertainties as "call out if any are wrong" — soft validation-seeking disguised as transparency | Uncertainties go in DECISIONS with the choice you made and why. Not "let me know if X is wrong." |
+| Agent satisfied itself after 1–2 iterations because all binary tests passed | Binary tests passing is a Phase 4 *floor*, not a stop condition. Q-scores don't saturate in 2 iterations on a feature that matters. If your Q moving-average is still rising, you're not done. |
+| Agent designed Q-aspects as binary PASS/FAIL ("error message is clear") instead of scored ("error message clarity 7/10, would be 9 if it named the offending field") | Q-aspects MUST be 0–10 scored with a rubric defining each band. Binary Q-aspects can't show iteration-over-iteration improvement and short-circuit the optimisation journey. |
+| Agent treated "deploy to prod" as risky and deferred to staging in projects that have no live users | When Phase 1c confirms zero live users, prod-with-real-secrets is the **default**. Staging requires explicit justification. The whole point of pre-launch projects is that you can iterate live with no blast radius. |
 
 ---
 
@@ -558,7 +582,14 @@ real-shape values, that is a strong signal the user wants you to USE
 them. Do NOT mark these UNCERTAIN. Mark them HAVE and confirm in the
 single batched ask.
 
-### 1c. ONE batched ask
+### 1c. ONE batched ask — and the prod-by-default rule
+
+**The deploy-target rule (read carefully — agents have gotten this
+wrong):** if the project has no live users yet, deploying repeatedly
+to PRODUCTION with real secrets is the default and the whole point of
+relentless mode. You cannot iterate qualitative experience against a
+system you haven't actually shipped. Staging is for projects that
+already serve users; pre-launch projects skip the staging dance.
 
 If everything is `HAVE`, write `01-prereqs.md` with status `COMPLETE`
 and skip the AskUserQuestion. Otherwise, format ONE
@@ -566,22 +597,26 @@ and skip the AskUserQuestion. Otherwise, format ONE
 The body must include:
 
 1. Each `MISSING` credential and its purpose
-2. The deploy-target decision: "Are there live users on prod RIGHT NOW?
-   If no, default deploy target is PROD with real secrets. If yes,
-   default is staging."
+2. **Live-users confirmation:** "I see no signals of live traffic
+   (e.g., no users table, no recent prod logs, no prod dashboard
+   activity). Confirming this project has no live users yet, so my
+   default is to deploy to PRODUCTION with real secrets every
+   iteration. If wrong, say so."
 3. Any ambiguous secrets file: "I see `dolly-env.txt` in the repo with
    real-shape values. Confirming I should `cp dolly-env.txt .env` and
    use these for live deploy."
 
-Recommendation must be explicit:
+Recommendation must be explicit and biased toward live-prod by default
+on pre-launch projects:
 
 ```
-RECOMMENDATION: Choose A — proceed with PROD deploy using <secrets-file>,
-no live users yet. Defer <missing-cred-X> with the workaround
-<plan>.
+RECOMMENDATION: Choose A — deploy to PROD using <secrets-file> every
+iteration. No live users → no blast radius. This is the *normal* path
+for relentless on pre-launch projects, not the risky one.
 
 A) [user provides text response with each item answered]
-B) [the safer / more conservative interpretation]
+B) [the safer / more conservative interpretation — only if there are
+   live users or other reason to avoid prod]
 C) Cancel relentless mode
 ```
 
@@ -713,42 +748,86 @@ E2: ...
 ...
 ```
 
-### 2c. Dimension 3 — Expected Qualities (Q)
+### 2c. Dimension 3 — Expected Qualities (Q) — SCORED 0–10
 
-What "impressive" looks like. For each *aspect*, the impressive version
-and the sloppy version. Then commit to delivering the impressive one.
+This is the heart of the optimisation journey. Q-aspects are NOT
+binary. Every Q-aspect is a 0–10 score, with a written rubric defining
+what each band feels like to a human using the feature. You will score
+EVERY Q-aspect EVERY iteration and watch the curve. Iteration N+1's
+goal is to move at least one Q-score up.
 
-Aspects (adapt to feature type):
+**Why scored, not binary.** A binary "error messages are clear: PASS"
+short-circuits the journey — the agent claims done after one acceptable
+attempt. A 0–10 score with rubric — "right now they're 6/10: they say
+what failed but not what to fix; would be 9/10 if they named the
+offending field and proposed a recovery action" — gives the agent
+something concrete to push against for the next 20 iterations.
 
-- **Latency** — impressive: <100ms p95 with skeleton state. Sloppy:
-  3s blocking spinner.
-- **Error messages** — impressive: specific, actionable, points at the
-  fix. Sloppy: "Something went wrong."
-- **Empty states** — impressive: useful prompt with next action.
-  Sloppy: blank screen.
-- **Loading states** — impressive: optimistic update, layout-stable.
-  Sloppy: layout shift, double-render flicker.
-- **Edge case behaviour visible to user** — impressive: gracefully
-  surfaced, recoverable. Sloppy: silent failure, lost work.
-- **Copy / microcopy** — impressive: clear, consistent voice, no
-  jargon. Sloppy: developer-speak in the UI.
-- **Visual hierarchy** — impressive: eye knows where to go first.
-  Sloppy: every element competing.
-- **Accessibility** — impressive: keyboard-navigable, ARIA-correct,
-  contrast-checked. Sloppy: mouse-only, missing labels.
-- **Observability** — impressive: structured logs at decision points,
-  request IDs threaded. Sloppy: print statements, no correlation IDs.
-- **API contract** — impressive: typed, versioned, documented, sensible
-  defaults, paginated where appropriate. Sloppy: untyped JSON, breaking
-  change with no version bump.
+**Format per aspect:** name, current score (after iteration N), and a
+rubric. The rubric is the most important part — it's what makes the
+score reproducible across iterations and not just vibes.
 
 ```
-## DIMENSION 3: EXPECTED QUALITIES
-
-Q1: <aspect> — impressive: <X>; sloppy: <Y>
-Q2: ...
-...
+Q1: Error message quality
+    Score (iter N): _/10
+    Rubric:
+      0 — generic "Something went wrong"; no info to act on
+      3 — error names the failure but not the cause
+      5 — names cause; user has to guess the fix
+      7 — names cause AND points at a fix; specific to this user's input
+      9 — also offers a one-click recovery action
+     10 — error never shows because the input was guarded earlier with
+          a guiding inline hint that prevented it
+    Probe: trigger the error live, screenshot, judge against rubric
 ```
+
+Aspects (adapt to feature type — pick the ~5–10 that matter most):
+
+- **Latency** — perceived speed. 0=multi-second blocking; 5=<300ms but
+  layout-shift on load; 8=<150ms with skeleton; 10=<80ms p95, optimistic
+  UI, cached round-trips.
+- **Error messages** — see template above.
+- **Empty states** — 0=blank screen; 5=text-only "no items"; 8=
+  illustration + 1 next-action; 10=guides user through their first
+  successful state.
+- **Loading states** — 0=full-page spinner; 5=spinner-with-disabled-
+  buttons; 8=skeleton-shaped; 10=optimistic + content-aware skeleton.
+- **Copy / microcopy** — 0=developer jargon; 5=clear; 8=in voice and
+  consistent across the surface; 10=anticipates the user's next thought.
+- **Visual hierarchy** — 0=competing weights; 5=one obvious primary;
+  8=primary + clear secondary path; 10=eye finds primary in <1 second.
+- **Accessibility** — 0=mouse-only, no labels; 5=keyboard works but
+  awkward; 8=ARIA correct, focus rings, contrast >4.5; 10=screen-reader
+  ergonomics, motion-reduce honoured, error states announced.
+- **Observability** — 0=no logs; 5=print statements; 8=structured logs
+  at boundaries with request IDs; 10=traces, metrics, dashboards, alerts
+  on the new surface.
+- **Resilience to flaky input** — 0=crashes; 5=catches errors silently;
+  8=surfaces gracefully; 10=auto-retries transient failures, preserves
+  user input through the retry.
+- **API contract** — 0=untyped, breaking; 5=typed; 8=typed + versioned
+  + documented; 10=also paginated, idempotent, with sensible defaults.
+- **Delight / craft** — the things that make a thoughtful user say "wow,
+  someone cared about this." Animation timing, copy specificity, the
+  clever touch that signals attention. 0=absent; 10=multiple moments.
+
+```
+## DIMENSION 3: EXPECTED QUALITIES (scored 0–10)
+
+Q1: <aspect>
+    Rubric: 0=...; 3=...; 5=...; 7=...; 9=...; 10=...
+    Probe: <how you measure live each iteration>
+
+Q2: <aspect>
+    Rubric: ...
+    Probe: ...
+
+... (target 5–10 aspects — each meaningful, each pushable)
+```
+
+The Phase 4 eval will record each Q-score AND the delta vs the prior
+iteration. The Milan Check requires the moving average to plateau, not
+hit a floor.
 
 ### 2d. Dimension 4 — Failure Modes (F)
 
@@ -898,20 +977,30 @@ Open observables: [count from prior iteration's eval]
 
 ### 4a-ii. Build
 
-Make the next slice of progress. Slice for max info-per-change:
+Make the next slice of progress. Slice for max info-per-change. The
+shape of a typical relentless run (assuming non-trivial feature):
 
 - **Iteration 1:** vertical slice exercising the most uncertain part of
   the architecture end-to-end, even if half-baked. Find what's hard
   before committing to a direction. End with a deploy and ≥1 B-pass.
-- **Iterations 2-5:** fill in happy-path observables (Dimension 1), one
-  or two per iteration, until B1...BN all pass.
-- **Iterations 6-12:** harden against edges (Dimension 2) and failure
+- **Iterations 2-8:** fill in happy-path observables (Dimension 1) and
+  hit the binary floor: every B passes, no regressions.
+- **Iterations 8-15:** harden against edges (Dimension 2) and failure
   modes (Dimension 4). Pick the highest-leverage open observable.
-- **Iterations 13+:** quality polish (Dimension 3). The user-perceived
-  experience is where most "good enough" projects stop. You don't.
+- **Iterations 15-60+:** quality polish (Dimension 3) — the bulk of
+  the run. Each iteration picks the lowest-scoring Q-aspect and tries
+  to push it up one rubric band. Some attempts will fail; that's
+  expected and counts as the "exploration proof" the Milan Check
+  demands. Saturation typically arrives in the 30–80 range.
 
 Don't spread changes across 30 files in one iteration. Slice such that
-each iteration is small enough to deploy and evaluate cleanly.
+each iteration is small enough to deploy, score, and learn from.
+
+**Picking the next Q-target:** read `iter-(N-1).md`, find the Q-aspect
+with the lowest score whose rubric you have a concrete idea for
+moving. Set that as iteration N's goal. If multiple Q-aspects are
+tied at the bottom, pick the one whose rubric step you have the
+clearest plan for.
 
 ### 4a-iii. Commit
 
@@ -1003,21 +1092,41 @@ DO NOT use the skip marker. Instead:
 A test suite output of "32 passed, 7 skipped" without each skip
 itemised in the eval table is a violation of Iron Law #2.
 
-Output the eval table to `iter-NN.md`:
+Output the eval table to `iter-NN.md`. Binary rows (B/E/F) are
+PASS/FAIL/DEFERRED. Q rows are scored 0–10 with the delta vs the prior
+iteration:
 
 ```markdown
 ## Eval — Iteration N
+
+### Binary observables (B / E / F)
 
 | Dim | ID  | Observable                       | Result    | Evidence |
 |-----|-----|----------------------------------|-----------|----------|
 | B   | B1  | ...                              | PASS      | iter-N-evidence/B1.png |
 | B   | B2  | ...                              | FAIL      | iter-N-evidence/B2.log |
 | E   | E1  | ...                              | DEFERRED  | reason: STRIPE_KEY missing per Phase 1c-B; unblock: get key |
-| Q   | Q1  | ...                              | PASS      | screenshot |
 | F   | F1  | ...                              | PASS      | log line at request_id=... |
 
-PASS: M / TOTAL  ·  FAIL: K / TOTAL  ·  DEFERRED: D (each with named blocker)  ·  REGRESSED: J
+Binary: PASS K/N · FAIL J/N · DEFERRED D/N (each with named blocker)
+
+### Quality scores (Q) — 0–10 against the Phase 2c rubrics
+
+| ID  | Aspect                | Score (iter N) | Δ vs N-1 | Evidence | Notes — what would push it higher |
+|-----|-----------------------|----------------|----------|----------|------------------------------------|
+| Q1  | Error message quality | 7              | +2       | iter-N-evidence/Q1-trigger.png | name the offending field; offer recovery |
+| Q2  | Empty state           | 5              | 0        | iter-N-evidence/Q2-empty.png   | add illustration; suggest next action |
+| Q3  | Latency               | 8              | +1       | iter-N-evidence/Q3-trace.json  | cache the second fetch |
+| ... | ...                   | ...            | ...      | ...      | ...                                  |
+
+Q TOTAL (sum of scores): SUM_N (Δ vs N-1: ±X)
+Q AVG: AVG_N
+Q MOVING_AVG (last 5 iters incl. this): MA_N
 ```
+
+Saving the score history matters: the Milan Check reads the last 5
+iterations' Q TOTAL to detect saturation. Always include the row even
+on iterations where Q didn't change ("Δ 0" is data).
 
 For every FAIL: capture which observable, actual result, your one-line
 diagnosis hypothesis, and what the next iteration will try.
@@ -1136,28 +1245,43 @@ fi
 If `ITER1_FAIL`: stay on iteration 1. Don't increment to 2. The first
 deploy + first passing B-observable is the iteration 1 done-criterion.
 
-### 4b. Loop exit conditions
+### 4b. Loop exit conditions — saturation, not completion
 
-Exit the loop and proceed to Phase 5 only when ONE of:
+Exit the loop and proceed to Phase 5 only when ALL of these hold:
 
-- **All observables PASS in the latest iteration** AND no regressions
-  in the last 3 iterations AND you've completed at least 2 Q-dimension
-  polish iterations (post-functional refinement).
-- **`--max-iterations N` hit** (only if user explicitly capped).
-- **Hard external block** that no further iteration can resolve (e.g.,
+1. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
+   named blocker), no regressions in last 3 iterations.
+2. **Q saturation:** the moving average of Q TOTAL across the last 5
+   iterations changed by ≤ 0.5 — i.e., the optimisation has plateaued.
+   Compute via `lb-relentless-gate q-saturated` (see below).
+3. **Exploration proof:** at least one iteration in the run where you
+   tried a Q-improvement and it *didn't* move the score. This proves
+   you've explored the design space, not just picked low-hanging fruit.
+4. **Iteration count:** typically 30+ iterations for a non-trivial
+   feature. Runs of 60–80 are normal for surfaces that need polish.
+   If you're considering exit at iteration <20, double-check Q
+   saturation is real and not just lazy scoring.
+
+OR ONE of these hard exits:
+
+- `--max-iterations N` hit (only if user explicitly capped).
+- Hard external block that no further iteration can resolve (e.g.,
   STRIPE_KEY flagged in Phase 1, user said B in Phase 1c, Stripe-dependent
-  observable physically can't be tested). Note: this is *exhausting
-  alternatives*, not "I'm bored." Verify ≥3 retries across ≥10 minutes
-  before declaring blocked.
+  observable physically can't be tested). Verify ≥3 retries across ≥10
+  minutes before declaring blocked.
 
 You do NOT exit because:
 
 - You feel done. Feelings are not exit conditions.
-- Implementation is complete. Implementation is the *start* of Phase 4,
-  not the end.
+- Implementation is complete. Implementation is the *start* of Phase 4.
+- All B-tests pass. B is the floor, not the ceiling.
 - The 30th iteration looks like the 29th. Polish iterations are
-  expected to be small. As long as quality is rising, keep going.
+  expected to be small. The exit signal is the Q-curve plateauing,
+  not the changes shrinking.
 - A test is hard to set up. Setting up the test is the next iteration.
+- You can't think of what to improve next. That's a Phase 4a-viii
+  failure, not an exit condition. Re-read the Q rubrics; the gap
+  between "current score" and "10" is your iteration backlog.
 
 ---
 
@@ -1174,49 +1298,69 @@ MILAN CHECK — <feature-slug> — <YYYY-MM-DD HH:MM:SS>
 Will he be impressed by:
   Functionality:        yes/no — evidence: iter-NN.md B-rows: M/N PASS
   Edge handling:        yes/no — evidence: iter-NN.md E-rows: M/N PASS
-  Quality polish:       yes/no — evidence: iter-NN.md Q-rows: M/N PASS;
-                                  polish iterations were N1, N2 (≥2 required)
   Failure resilience:   yes/no — evidence: iter-NN.md F-rows: M/N PASS
-  Decision audit:       yes/no — evidence: 99-final-report.md DECISIONS section
+  Quality saturation:   yes/no — evidence: Q TOTAL trajectory across
+                                  iters N-4..N is [a, b, c, d, e],
+                                  moving avg delta ≤ 0.5 (saturated)
+  Q score curve:        yes/no — Q AVG started at X.X (iter 1) and
+                                  ended at Y.Y (iter N); inflection
+                                  points at iters [...]
+  Decision audit:       yes/no — evidence: 99-final-report.md DECISIONS
   Live deploy proof:    yes/no — evidence: iter-NN.md "Deployed" section
                                   shows DEPLOY_LIVE; live URL: https://...
                                   verified at <commit-sha>
   Real (not mocked) test:yes/no — evidence: iter-NN.md eval table cites
                                   live URL / live DB / real S3 / etc.,
                                   not local mocks
+  Exploration proof:    yes/no — evidence: at iter X, attempted
+                                  Q-improvement <description> and it
+                                  did NOT move score (proof we explored)
 
 Will he suspect:
   Stopped too soon:           risk: low/medium/high — why
+  Q saturation faked:         risk: low/medium/high — did we score
+                                                       lazily to plateau?
   Validation-seeking:         risk: low/medium/high — banned phrases hit?
-                                                       (run banned_phrase_check
-                                                       on the report)
   Slop disguised as done:     risk: low/medium/high — why
   Skipped tests passing as DONE: risk: low/medium/high — pytest skips? itemised?
+  Iteration count too low:    risk: low/medium/high — N iterations vs
+                                                       feature complexity
 ═══════════════════════════════════════════════════════════════════
 VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 ```
 
 ```bash
-"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 18 "VERDICT:"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 22 "VERDICT:"
 "$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/99-milan-check.md"
+"$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5 0.5
 ```
 
 Decision rules (apply in order):
 
 1. Any "Will he be impressed" row at "no" → CONTINUE LOOP. Next
    iteration's goal: flip that no.
-2. "Live deploy proof" at "no" → CONTINUE LOOP. (You haven't actually
-   deployed. Implementation alone doesn't pass.)
+2. "Live deploy proof" at "no" → CONTINUE LOOP. Implementation alone
+   doesn't pass.
 3. "Real (not mocked) test" at "no" → CONTINUE LOOP.
-4. "Skipped tests passing as DONE" at >low → CONTINUE LOOP. Set up the
+4. "Quality saturation" at "no" → CONTINUE LOOP. The Q moving-avg is
+   still moving; you have more polish runway.
+5. "Exploration proof" at "no" → CONTINUE LOOP. Try a Q-improvement
+   that might not work. The point is to map the design space, not just
+   walk monotonic.
+6. "Iteration count too low" at high → CONTINUE LOOP. Most non-trivial
+   relentless runs need 30+ iterations. <20 is suspicious unless the
+   feature is genuinely tiny.
+7. "Skipped tests passing as DONE" at >low → CONTINUE LOOP. Set up the
    env, unskip, re-evaluate.
-5. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
-6. Any "yes" row without a named file path / URL / SHA → fix the
-   evidence. Treat as no.
-7. Any risk at "medium" → judgment call. If you can articulate why
-   medium is acceptable for this specific dimension, you may PROCEED.
-   Otherwise CONTINUE.
-8. All yes + all low → PROCEED TO REPORT.
+8. "Q saturation faked" at >low → CONTINUE LOOP. Re-score honestly
+   against the Phase 2c rubrics; if a score is at 8 because "well, it
+   looks fine" rather than against the rubric band, fix it.
+9. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
+10. Any "yes" row without a named file path / URL / SHA / score-curve
+    citation → fix the evidence. Treat as no.
+11. Any risk at "medium" → judgment call. Articulate why medium is
+    acceptable, or CONTINUE.
+12. All yes + all low + `q-saturated` returned 0 → PROCEED TO REPORT.
 
 If you PROCEED, do it. If you CONTINUE, go back to 4a-i with iteration
 N+1. There is no shame in iteration 27 being "the Milan Check told me
