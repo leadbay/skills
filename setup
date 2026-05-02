@@ -229,8 +229,18 @@ fi
 # --- --update ---
 if [ "$DO_UPDATE" = "true" ] && [ -d "$SKILLS_HOME/.git" ]; then
   echo "Updating leadbay-skills..."
+  _OLD_SHA=$(cd "$SKILLS_HOME" && git rev-parse HEAD 2>/dev/null || echo "")
   (cd "$SKILLS_HOME" && git pull --rebase origin main)
+  _NEW_SHA=$(cd "$SKILLS_HOME" && git rev-parse HEAD 2>/dev/null || echo "")
   echo "Updated to v$(cat "$SKILLS_HOME/VERSION")"
+  # If the script itself changed during the pull, re-exec so the user gets
+  # the new logic (heal, hooks, etc.) in this same invocation rather than
+  # having to run setup twice. The second pass will pull again, find nothing
+  # new, and not re-exec again. Loop guard via $LB_REEXEC for paranoia.
+  if [ -n "$_OLD_SHA" ] && [ -n "$_NEW_SHA" ] && [ "$_OLD_SHA" != "$_NEW_SHA" ] && [ -z "${LB_REEXEC:-}" ]; then
+    echo "(setup script updated — re-execing with new code)"
+    LB_REEXEC=1 exec "$SKILLS_HOME/setup" "$@"
+  fi
 fi
 
 # --- ensure CLAUDE_SKILLS exists, link skills ---
