@@ -1,0 +1,197 @@
+#!/usr/bin/env bash
+# lb-relentless-gate — phase gate enforcement for the /relentless skill.
+#
+# Bash functions defined inside the skill body don't survive across
+# Claude Code's stateless Bash tool calls. This wrapper exposes the gate
+# logic as a CLI so each call can invoke it as one command.
+#
+# Subcommands:
+#   phase NAME FILE [MIN_LINES] [REQUIRED_PATTERN]
+#   banned FILE
+#   deploy URL SHA_SHORT
+#   iter1-ok ITER01_FILE
+#   counts FILE              — print B/E/Q/F observable counts
+#
+# Exit codes:
+#   0 — gate passed
+#   1 — gate failed (gate logic)
+#   2 — bad usage
+
+set -euo pipefail
+
+cmd="${1:-help}"
+[ $# -gt 0 ] && shift
+
+usage() {
+  cat <<EOF
+Usage: lb-relentless-gate <subcommand> [args...]
+
+Subcommands:
+  phase NAME FILE [MIN_LINES] [REQUIRED_PATTERN]
+      Refuse to advance unless FILE exists, has ≥ MIN_LINES lines, and
+      contains REQUIRED_PATTERN (literal grep, not regex).
+      MIN_LINES defaults to 1; REQUIRED_PATTERN defaults to none.
+
+  banned FILE
+      Fail if FILE contains validation-seeking phrases that violate
+      Iron Law #3 (e.g., "your call", "want me to", "let me know").
+
+  deploy URL SHA_SHORT
+      Poll URL for the deployed commit SHA marker. Returns DEPLOY_LIVE
+      on first match within 5 minutes (60×5s); else DEPLOY_NOT_LIVE.
+
+  iter1-ok ITER01_FILE
+      Refuse iteration 2 unless iter-01.md shows DEPLOY_LIVE AND at
+      least one B-row PASS (the iteration-1 done-criterion).
+
+  counts FILE
+      Print B/E/Q/F observable counts. Used by Phase 2 to enforce
+      minimums (B≥5, E≥8, Q≥5, F≥5). Stdout: "B=N E=N Q=N F=N TOTAL=N".
+      Exit 1 if any minimum is unmet.
+
+  help
+      This message.
+EOF
+}
+
+case "$cmd" in
+  phase)
+    name="${1:-}"; file="${2:-}"; min_lines="${3:-1}"; extra="${4:-}"
+    if [ -z "$name" ] || [ -z "$file" ]; then
+      echo "Usage: lb-relentless-gate phase NAME FILE [MIN_LINES] [REQUIRED_PATTERN]" >&2
+      exit 2
+    fi
+    if [ ! -f "$file" ]; then
+      echo "PHASE_GATE_FAIL: $name — file not found: $file" >&2
+      exit 1
+    fi
+    lc=$(wc -l < "$file" | tr -d ' ')
+    if [ "$lc" -lt "$min_lines" ]; then
+      echo "PHASE_GATE_FAIL: $name — $file has $lc lines, need ≥$min_lines" >&2
+      exit 1
+    fi
+    if [ -n "$extra" ] && ! grep -q -- "$extra" "$file"; then
+      echo "PHASE_GATE_FAIL: $name — $file missing required pattern: $extra" >&2
+      exit 1
+    fi
+    echo "PHASE_GATE_PASS: $name — $file ($lc lines)"
+    ;;
+
+  banned)
+    file="${1:-}"
+    if [ -z "$file" ]; then
+      echo "Usage: lb-relentless-gate banned FILE" >&2
+      exit 2
+    fi
+    if [ ! -f "$file" ]; then
+      echo "BANNED_PHRASE_CHECK_SKIP: $file does not exist" >&2
+      exit 0
+    fi
+    # Use literal -F patterns via -e flags so apostrophes don't need escaping.
+    # Case-insensitive (-i), line-numbered when reporting.
+    if grep -i -F -q \
+         -e "your call" \
+         -e "want me to" \
+         -e "hold for review" \
+         -e "i didn't want to" \
+         -e "i don't want to" \
+         -e "if you're ok with" \
+         -e "let me know" \
+         -e "would you like me to" \
+         -e "is this approach ok" \
+         -e "if that's fine" \
+         -e "if you'd prefer" \
+         -e "feel free to" \
+         -e "call out if any are wrong" \
+         -- "$file" 2>/dev/null; then
+      echo "BANNED_PHRASE_DETECTED in $file:" >&2
+      grep -i -F -n \
+         -e "your call" \
+         -e "want me to" \
+         -e "hold for review" \
+         -e "i didn't want to" \
+         -e "i don't want to" \
+         -e "if you're ok with" \
+         -e "let me know" \
+         -e "would you like me to" \
+         -e "is this approach ok" \
+         -e "if that's fine" \
+         -e "if you'd prefer" \
+         -e "feel free to" \
+         -e "call out if any are wrong" \
+         -- "$file" >&2
+      exit 1
+    fi
+    echo "BANNED_PHRASE_CHECK_PASS: $file"
+    ;;
+
+  deploy)
+    url="${1:-}"; sha="${2:-}"
+    if [ -z "$url" ] || [ -z "$sha" ]; then
+      echo "Usage: lb-relentless-gate deploy URL SHA_SHORT" >&2
+      exit 2
+    fi
+    for i in $(seq 1 60); do
+      body=$(curl -fsS "$url" 2>/dev/null || echo "")
+      if echo "$body" | grep -q -- "$sha"; then
+        echo "DEPLOY_LIVE: $url matches $sha"
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "DEPLOY_NOT_LIVE: $url did not surface $sha within 5 minutes" >&2
+    exit 1
+    ;;
+
+  iter1-ok)
+    file="${1:-}"
+    if [ -z "$file" ]; then
+      echo "Usage: lb-relentless-gate iter1-ok ITER01_FILE" >&2
+      exit 2
+    fi
+    if [ ! -f "$file" ]; then
+      echo "ITER1_FAIL: $file does not exist" >&2
+      exit 1
+    fi
+    if ! grep -q "DEPLOY_LIVE" "$file"; then
+      echo "ITER1_FAIL: no DEPLOY_LIVE marker in $file" >&2
+      exit 1
+    fi
+    if ! grep -E '^\| B' "$file" | grep -q "PASS"; then
+      echo "ITER1_FAIL: no B-observable PASS in $file" >&2
+      exit 1
+    fi
+    echo "ITER1_OK"
+    ;;
+
+  counts)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate counts FILE (file required and must exist)" >&2
+      exit 2
+    fi
+    B=$(grep -cE '^B[0-9]+:' "$file" || true)
+    E=$(grep -cE '^E[0-9]+:' "$file" || true)
+    Q=$(grep -cE '^Q[0-9]+:' "$file" || true)
+    F=$(grep -cE '^F[0-9]+:' "$file" || true)
+    TOTAL=$((B + E + Q + F))
+    echo "B=$B E=$E Q=$Q F=$F TOTAL=$TOTAL"
+    if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$Q" -lt 5 ] || [ "$F" -lt 5 ]; then
+      echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 Q≥5 F≥5" >&2
+      exit 1
+    fi
+    echo "EVAL_FRAMEWORK_OK"
+    ;;
+
+  help|--help|-h|"")
+    usage
+    [ "$cmd" = "help" ] || [ "$cmd" = "--help" ] || [ "$cmd" = "-h" ] && exit 0
+    exit 2
+    ;;
+
+  *)
+    echo "Unknown subcommand: $cmd" >&2
+    usage >&2
+    exit 2
+    ;;
+esac

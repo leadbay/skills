@@ -370,10 +370,13 @@ When the user types `/relentless`, run this skill.
 
 ## Phase 0: Boot — Set up the artifact spine and lock the contract
 
-### 0a. Set up the artifact spine and define gate functions
+### 0a. Set up the artifact spine
 
-Run this block verbatim. It defines the directory layout, `phase_gate`,
-and `banned_phrase_check`. Every later phase uses these.
+Each phase will write a file under `$ART_DIR` and a CLI gate
+(`lb-relentless-gate`) will refuse to advance unless the artifact meets
+the threshold. The wrapper exists because Bash tool calls in Claude
+Code are stateless — shell functions defined in one call don't survive
+to the next, but a binary on `$_LB_BIN` does.
 
 ```bash
 LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
@@ -382,60 +385,29 @@ ART_BASE="$LEADBAY_HOME/projects/$SLUG_KEBAB/relentless"
 mkdir -p "$ART_BASE"
 # FEATURE_SLUG and ART_DIR are finalised in 0c.
 
-phase_gate() {
-  # Usage: phase_gate "Phase X" /path/to/file.md MIN_LINES "REQUIRED_PATTERN"
-  local name="$1"; local file="$2"; local min_lines="${3:-1}"; local extra="${4:-}"
-  if [ ! -f "$file" ]; then
-    echo "PHASE_GATE_FAIL: $name — file not found: $file" >&2
-    return 1
-  fi
-  local lc; lc=$(wc -l < "$file" | tr -d ' ')
-  if [ "$lc" -lt "$min_lines" ]; then
-    echo "PHASE_GATE_FAIL: $name — $file has $lc lines, need ≥$min_lines" >&2
-    return 1
-  fi
-  if [ -n "$extra" ] && ! grep -q "$extra" "$file"; then
-    echo "PHASE_GATE_FAIL: $name — $file missing required pattern: $extra" >&2
-    return 1
-  fi
-  echo "PHASE_GATE_PASS: $name — $file ($lc lines)"
-  return 0
-}
-
-banned_phrase_check() {
-  # Usage: banned_phrase_check /path/to/file
-  local file="$1"
-  local banned="your call|want me to|hold for review|i didn'\''t want to|i don'\''t want to|if you'\''re ok with|let me know|would you like me to|is this approach ok|if that'\''s fine|if you'\''d prefer|feel free to|call out if any are wrong"
-  if grep -E -i -q "$banned" "$file" 2>/dev/null; then
-    echo "BANNED_PHRASE_DETECTED in $file:" >&2
-    grep -E -i -n "$banned" "$file" >&2
-    return 1
-  fi
-  echo "BANNED_PHRASE_CHECK_PASS: $file"
-  return 0
-}
-
-# Optional: a gate that verifies the deploy is actually live.
-# Caller passes the URL and expected commit SHA marker.
-deploy_gate() {
-  local url="$1"; local sha_short="$2"
-  for i in $(seq 1 60); do
-    local body
-    body=$(curl -fsS "$url" 2>/dev/null || echo "")
-    if echo "$body" | grep -q "$sha_short"; then
-      echo "DEPLOY_LIVE: $url matches commit $sha_short"
-      return 0
-    fi
-    sleep 5
-  done
-  echo "DEPLOY_NOT_LIVE: $url did not surface commit $sha_short within 5min" >&2
-  return 1
-}
+# Sanity-check the gate wrapper is on $_LB_BIN
+"$_LB_BIN/lb-relentless-gate" help >/dev/null 2>&1 \
+  && echo "GATE_AVAILABLE" \
+  || echo "GATE_MISSING — run: ~/.leadbay-skills/setup --update"
 ```
 
-If the artifact spine cannot be created (no write access to `$HOME/.leadbay`),
-fall back to `.context/relentless/<feature-slug>/` and proceed — but flag
-this in the final report so Milan knows resume mode won't work cross-workspace.
+The gate CLI exposes five subcommands. Every later phase uses them:
+
+```
+"$_LB_BIN/lb-relentless-gate" phase NAME FILE [MIN_LINES] [REQUIRED_PATTERN]
+"$_LB_BIN/lb-relentless-gate" banned FILE
+"$_LB_BIN/lb-relentless-gate" deploy URL SHA_SHORT
+"$_LB_BIN/lb-relentless-gate" iter1-ok ITER01_FILE
+"$_LB_BIN/lb-relentless-gate" counts EVAL_FRAMEWORK_FILE
+```
+
+Exit code 0 means the gate passed; non-zero means refuse to advance.
+Run `lb-relentless-gate help` for full docs.
+
+If the artifact spine cannot be created (no write access to
+`$HOME/.leadbay`), fall back to `.context/relentless/<feature-slug>/`
+and proceed — but flag this in the final report so Milan knows resume
+mode won't work cross-workspace.
 
 ### 0b. Echo the contract block
 
@@ -486,7 +458,7 @@ Banned phrases enforced.
 First iteration must end with LIVE deploy + ≥1 B-observable PASSING.
 EOF
 
-phase_gate "Phase 0" "$ART_DIR/00-contract.md" 5 "Iron Laws acknowledged"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 0" "$ART_DIR/00-contract.md" 5 "Iron Laws acknowledged"
 ```
 
 If `phase_gate` fails: fix the file and re-run. Do not proceed.
@@ -607,8 +579,8 @@ row showing final `HAVE` / `MISSING` / `DEFERRED` status and the user's
 verbatim answer to deploy-target + secrets-file questions.
 
 ```bash
-phase_gate "Phase 1" "$ART_DIR/01-prereqs.md" 25 "Live-users state"
-banned_phrase_check "$ART_DIR/01-prereqs.md"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 1" "$ART_DIR/01-prereqs.md" 25 "Live-users state"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/01-prereqs.md"
 ```
 
 ### 1d. **Crucial: actually USE the secrets**
@@ -805,19 +777,9 @@ F2: ...
 ### 2e. Lock the framework — count-enforced phase gate
 
 ```bash
-phase_gate "Phase 2" "$ART_DIR/02-eval-framework.md" 60 "## DIMENSION 4"
-B=$(grep -cE '^B[0-9]+:' "$ART_DIR/02-eval-framework.md")
-E=$(grep -cE '^E[0-9]+:' "$ART_DIR/02-eval-framework.md")
-Q=$(grep -cE '^Q[0-9]+:' "$ART_DIR/02-eval-framework.md")
-F=$(grep -cE '^F[0-9]+:' "$ART_DIR/02-eval-framework.md")
-echo "Counts: B=$B E=$E Q=$Q F=$F (total $((B+E+Q+F)))"
-if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$Q" -lt 5 ] || [ "$F" -lt 5 ]; then
-  echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 Q≥5 F≥5. Add observables."
-  # do not proceed
-else
-  echo "EVAL_FRAMEWORK_LOCKED — B:$B E:$E Q:$Q F:$F"
-fi
-banned_phrase_check "$ART_DIR/02-eval-framework.md"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 2" "$ART_DIR/02-eval-framework.md" 60 "## DIMENSION 4"
+"$_LB_BIN/lb-relentless-gate" counts "$ART_DIR/02-eval-framework.md"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/02-eval-framework.md"
 ```
 
 If `EVAL_FRAMEWORK_TOO_THIN`: append more observables and re-run. Phase
@@ -865,8 +827,8 @@ C) Cancel — abort relentless mode
 If A: proceed to Phase 4. If B: rewrite plan, re-show. If C: stop.
 
 ```bash
-phase_gate "Phase 3" "$ART_DIR/03-plan.md" 15 "Approach:"
-banned_phrase_check "$ART_DIR/03-plan.md"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 3" "$ART_DIR/03-plan.md" 15 "Approach:"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/03-plan.md"
 "$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"plan-FEATURE_SLUG","insight":"COMPACT_PLAN","confidence":9,"source":"user-stated","files":[]}'
 ```
 
@@ -889,11 +851,11 @@ Each iteration is:
 │  4a-ii.   BUILD — implement next slice                          │
 │  4a-iii.  COMMIT — atomic, conventional message                 │
 │  4a-iv.   MERGE — rebase / resolve conflicts                    │
-│  4a-v.    DEPLOY — push to LIVE; verify with deploy_gate        │
+│  4a-v.    DEPLOY — push to LIVE; verify with `gate deploy`       │
 │  4a-vi.   EVALUATE — run EVERY observable across all 4 dims     │
 │  4a-vii.  REVIEW-AGENT triage — bot/CI comments                 │
 │  4a-viii. JUDGE — score iteration; set next goal                │
-│  4a-ix.   WRITE iter-NN.md — full template; phase_gate          │
+│  4a-ix.   WRITE iter-NN.md — full template; gate phase + banned │
 │  4a-x.    BANNED-PHRASE check — refuse to advance if hit        │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -980,10 +942,10 @@ fly deploy --remote-only   # etc.
 
 # Wait for the deploy to actually be live
 SHA_SHORT="$(git rev-parse --short HEAD)"
-deploy_gate "https://<host>/health" "$SHA_SHORT"
+"$_LB_BIN/lb-relentless-gate" deploy "https://<host>/health" "$SHA_SHORT"
 ```
 
-If deploy_gate fails: the iteration is INCOMPLETE. Treat the failure as
+If the deploy gate fails: the iteration is INCOMPLETE. Treat the failure as
 the iteration's outcome, log it, next iteration's goal is "fix the
 deploy". Do not proceed to evaluation against an undeployed change.
 
@@ -1114,7 +1076,7 @@ Write the iteration file using this template (fill every section):
 ## Deployed
 - Target: production | staging
 - Trigger: <command actually run>
-- deploy_gate result: DEPLOY_LIVE / DEPLOY_NOT_LIVE
+- deploy gate result: DEPLOY_LIVE / DEPLOY_NOT_LIVE
 - Live URL verified: <url>
 
 ## Eval
@@ -1140,8 +1102,8 @@ N=<iteration number>
 NZ=$(printf '%02d' $N)
 ITER_FILE="$ART_DIR/iter-$NZ.md"
 # (write the file)
-phase_gate "Iteration $N" "$ITER_FILE" 30 "## Eval"
-banned_phrase_check "$ITER_FILE"
+"$_LB_BIN/lb-relentless-gate" phase "Iteration $N" "$ITER_FILE" 30 "## Eval"
+"$_LB_BIN/lb-relentless-gate" banned "$ITER_FILE"
 "$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"operational","key":"iteration-FEATURE_SLUG-'$N'","insight":"GOAL|EVAL_RESULT|NEXT_GOAL","confidence":8,"source":"observed","files":["TOUCHED_FILES"]}'
 ```
 
@@ -1156,9 +1118,7 @@ After iter-01.md is written:
 ```bash
 # iteration 1 must show DEPLOY_LIVE in 'Deployed' section AND at least one B-row PASS
 if [ "$N" = "1" ]; then
-  grep -q "DEPLOY_LIVE" "$ART_DIR/iter-01.md" || { echo "ITER1_FAIL: no DEPLOY_LIVE marker"; exit 1; }
-  grep -E '^\| B' "$ART_DIR/iter-01.md" | grep -q "PASS" || { echo "ITER1_FAIL: no B-observable passing"; exit 1; }
-  echo "ITER1_OK"
+  "$_LB_BIN/lb-relentless-gate" iter1-ok "$ART_DIR/iter-01.md"
 fi
 ```
 
@@ -1226,8 +1186,8 @@ VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 ```
 
 ```bash
-phase_gate "Phase 5" "$ART_DIR/99-milan-check.md" 18 "VERDICT:"
-banned_phrase_check "$ART_DIR/99-milan-check.md"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 18 "VERDICT:"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/99-milan-check.md"
 ```
 
 Decision rules (apply in order):
@@ -1306,8 +1266,8 @@ N iterations across <duration>. Hot spots:
 ```
 
 ```bash
-phase_gate "Phase 6" "$ART_DIR/99-final-report.md" 40 "## Eval results"
-banned_phrase_check "$ART_DIR/99-final-report.md"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 6" "$ART_DIR/99-final-report.md" 40 "## Eval results"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/99-final-report.md"
 ```
 
 Status definitions:
