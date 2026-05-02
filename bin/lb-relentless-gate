@@ -26,6 +26,24 @@
 #   iteration-summary ART_DIR          — emit a markdown table summarising
 #                                        every iter-NN.md (number, goal,
 #                                        Q TOTAL, Δ, milan verdict, fixes)
+#   iteration-count ART_DIR [MIN]      — count iter-NN.md files; fail if
+#                                        below MIN (default 10). v4 hard
+#                                        floor — agents settled at 4
+#                                        without it.
+#   attempts-exhausted ART_DIR [WIN] [MIN_FAILS]
+#                                      — gradient-descent stagnation check.
+#                                        Last WIN iter-NN.md files must
+#                                        contain '## Q-target outcome:
+#                                        NO_MOVEMENT|REGRESSED' for ≥
+#                                        MIN_FAILS of them. Proves the
+#                                        agent tried and the score actually
+#                                        didn't move (vs the agent stopped
+#                                        trying and called the plateau).
+#                                        Defaults: WIN=5, MIN_FAILS=3.
+#   second-opinion-clean ART_DIR       — 99-second-opinion.md must exist
+#                                        with a Verdict line of CLEAN or
+#                                        EXTERNAL_ONLY. Spawned by Phase
+#                                        4a-xiv before PROCEED is allowed.
 #
 # Exit codes:
 #   0 — gate passed
@@ -118,6 +136,29 @@ Subcommands:
       Milan verdict. Used by Phase 6 to inline a journey table into
       the morning report so Milan can see the gradient-descent shape.
       Always exits 0; emits "_no iterations found_" if empty.
+
+  iteration-count ART_DIR [MIN]
+      Count iter-NN.md files; fail if below MIN (default 10).
+      The v4 hard floor. Without it, agents settled at 4 iterations
+      because every other gate could be self-justified around.
+      Stdout: "ITERATIONS=N MIN=M". Exit 1 if N < M.
+
+  attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]
+      Gradient-descent stagnation check. Reads the last WINDOW
+      iter-NN.md files. Counts how many contain a
+      '## Q-target outcome:' line whose value is NO_MOVEMENT or
+      REGRESSED. Exit 0 if count ≥ MIN_FAILS — i.e., the agent
+      genuinely tried and the score didn't move. Exit 1 otherwise:
+      either too few attempts to know, or every attempt succeeded
+      (which means there's still gradient to descend).
+      Defaults: WINDOW=5, MIN_FAILS=3.
+
+  second-opinion-clean ART_DIR
+      99-second-opinion.md must exist (created by Phase 4a-xiv when
+      the agent considers PROCEED — fresh-context Agent subagent
+      reviews mission + criteria + latest iter, names what's still
+      wrong). The file must have a 'Verdict:' line whose value is
+      CLEAN or EXTERNAL_ONLY. CONTINUE_LOOP_REQUIRED → fail.
 
   help
       This message.
@@ -297,7 +338,9 @@ case "$cmd" in
       exit 2
     fi
     missing=""
-    for section in "## What I want to improve" "## In which way" "## Why this way" "## Alternatives considered" "## What can go wrong" "## Self-review"; do
+    # v4 adds: Targeted Q-criterion, Current score, Projected score
+    # — mandatory for the attempts-exhausted gate to work.
+    for section in "## Targeted Q-criterion" "## Current score" "## Projected score" "## What I want to improve" "## In which way" "## Why this way" "## Alternatives considered" "## What can go wrong" "## Self-review"; do
       if ! grep -qF -- "$section" "$file"; then
         missing="$missing\n  - $section"
       fi
@@ -510,6 +553,97 @@ case "$cmd" in
       echo "  → Q is still climbing/oscillating; more iterations needed." >&2
       exit 1
     fi
+    ;;
+
+  iteration-count)
+    art_dir="${1:-}"; min="${2:-10}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate iteration-count ART_DIR [MIN]" >&2
+      exit 2
+    fi
+    n=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | wc -l | tr -d ' ')
+    echo "ITERATIONS=$n MIN=$min"
+    if [ "$n" -lt "$min" ]; then
+      echo "ITERATION_FLOOR_NOT_MET — only $n iterations, need ≥$min before PROCEED is allowed" >&2
+      echo "  → v4 hard floor. Empirically, runs that exit below this floor are 'implementation done, declared victory' — not relentless." >&2
+      exit 1
+    fi
+    echo "ITERATION_FLOOR_MET"
+    ;;
+
+  attempts-exhausted)
+    art_dir="${1:-}"; window="${2:-5}"; min_fails="${3:-3}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]" >&2
+      exit 2
+    fi
+    iters=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | sort | tail -n "$window" || true)
+    iter_count=$(echo "$iters" | grep -c . || true)
+    if [ "$iter_count" -lt "$window" ]; then
+      echo "ATTEMPTS_NOT_EXHAUSTED: only $iter_count iterations (need ≥$window in window)" >&2
+      exit 1
+    fi
+    fails=0
+    targeted=0
+    for f in $iters; do
+      outcome=$(grep -E '^## Q-target outcome:' "$f" 2>/dev/null | head -1 | sed -E 's/^## Q-target outcome:[[:space:]]*//' | tr -d ' \r' || true)
+      case "$outcome" in
+        NO_MOVEMENT|REGRESSED) fails=$((fails + 1)); targeted=$((targeted + 1)) ;;
+        IMPROVED) targeted=$((targeted + 1)) ;;
+        NOT_TARGETED|"") : ;;
+      esac
+    done
+    echo "ATTEMPTS: window=$window targeted=$targeted plateau-or-regress=$fails min_fails=$min_fails"
+    if [ "$targeted" -lt "$window" ]; then
+      echo "ATTEMPTS_NOT_EXHAUSTED: only $targeted of $window iterations declared a Q-target outcome" >&2
+      echo "  → Each iteration must end iter-NN.md with a '## Q-target outcome: IMPROVED|NO_MOVEMENT|REGRESSED' line." >&2
+      exit 1
+    fi
+    if [ "$fails" -lt "$min_fails" ]; then
+      echo "ATTEMPTS_NOT_EXHAUSTED: only $fails of $window iterations plateaued/regressed (need ≥$min_fails)" >&2
+      echo "  → If every attempt is succeeding, there is still gradient to descend. Keep going." >&2
+      exit 1
+    fi
+    echo "ATTEMPTS_EXHAUSTED: agent tried $window and ≥$min_fails of those did not move the score"
+    ;;
+
+  second-opinion-clean)
+    art_dir="${1:-}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate second-opinion-clean ART_DIR" >&2
+      exit 2
+    fi
+    file="$art_dir/99-second-opinion.md"
+    if [ ! -f "$file" ]; then
+      echo "SECOND_OPINION_MISSING: $file does not exist" >&2
+      echo "  → Before PROCEED, spawn a fresh-context Agent (Phase 4a-xiv) to review mission + criteria + latest iter; save findings + Verdict to $file." >&2
+      exit 1
+    fi
+    verdict=$(grep -E '^[[:space:]]*Verdict:[[:space:]]*' "$file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*Verdict:[[:space:]]*//' | awk '{print $1}' || true)
+    case "$verdict" in
+      CLEAN|EXTERNAL_ONLY)
+        # also require ≥3 numbered findings exist in the file (proves the subagent actually engaged, didn't return empty)
+        findings=$(grep -cE '^[0-9]+\.[[:space:]]+' "$file" 2>/dev/null || true)
+        if [ "$findings" -lt 3 ]; then
+          echo "SECOND_OPINION_THIN: $file Verdict=$verdict but only $findings numbered findings (need ≥3 to prove the subagent engaged)" >&2
+          exit 1
+        fi
+        echo "SECOND_OPINION_CLEAN: Verdict=$verdict findings=$findings"
+        ;;
+      CONTINUE_LOOP_REQUIRED)
+        echo "SECOND_OPINION_REQUIRES_CONTINUE: $file says CONTINUE_LOOP_REQUIRED" >&2
+        echo "  → The fresh reviewer found substantive gaps. Address them in next iteration(s); do not PROCEED." >&2
+        exit 1
+        ;;
+      "")
+        echo "SECOND_OPINION_NO_VERDICT: $file missing 'Verdict: CLEAN|EXTERNAL_ONLY|CONTINUE_LOOP_REQUIRED' line" >&2
+        exit 1
+        ;;
+      *)
+        echo "SECOND_OPINION_BAD_VERDICT: '$verdict' (expected CLEAN|EXTERNAL_ONLY|CONTINUE_LOOP_REQUIRED)" >&2
+        exit 1
+        ;;
+    esac
     ;;
 
   help|--help|-h|"")

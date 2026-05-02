@@ -1,24 +1,32 @@
 ---
 name: relentless
 description: |
-  Long-horizon overnight perfectionist mode (v3). The agent works on a
+  Long-horizon overnight perfectionist mode (v4). The agent works on a
   real feature end-to-end, deploys it to LIVE, and runs an *optimisation
   journey* against a MISSION-derived qualitative bar — not just a
-  requirements checklist. v3 forces the agent to (a) write the mission
-  before writing criteria, (b) generate ≥12 mission-tied qualitative
-  criteria scored 0–100 by human-like judgment (not deterministic
-  tests), (c) plan + self-review every iteration before touching code
-  (DRY / coupling / race / blast-radius / best-practices), (d) display
-  iteration numbers prominently and emit a journey-table at the end,
-  and (e) only stop when a written Milan Check including a Mission
-  alignment row at ≥75/100 and a "smart human comparison" row passes —
-  never on "tests pass" or "feels done". Built for "I'm leaving for
-  the night, ship something I'd be proud of by morning" sessions —
-  the agent owns its judgment calls instead of asking for validation.
+  requirements checklist. v4 fixes the v3 failure mode where agents
+  stopped at 4 iterations claiming Milan-pass while the same report
+  listed remaining concerns. The fix is mechanical, not exhortative:
+  (a) hard iteration floor of 10 — no PROCEED below it, period;
+  (b) demonstrated-attempts gate — every iteration's plan declares a
+  Q-target + projected score, every iteration's eval records
+  IMPROVED|NO_MOVEMENT|REGRESSED, and PROCEED requires ≥3 of the last
+  5 to have actually plateaued (proving the agent tried hard things
+  that didn't work, not that the agent stopped trying); (c) fresh-context
+  second-opinion subagent — when PROCEED is being considered, the agent
+  spawns a subagent that sees only mission + criteria + latest iter
+  and returns 5 things still wrong, which become next iterations' goals
+  unless flagged genuinely external. The agent stops thinking of
+  "Mission ≥75" as an exit threshold — it's a progress signal. Stop
+  is granted only when 5 honest attempts in a row failed to move the
+  score AND a fresh reviewer finds nothing substantive left.
+  Built for "I'm leaving for the night, ship something I'd be proud of
+  by morning" sessions — the agent owns its judgment calls instead of
+  asking for validation.
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 3.0.0
+version: 4.0.0
 allowed-tools:
   - Bash
   - Read
@@ -41,7 +49,7 @@ allowed-tools:
 <!-- include: shared/operational-self-improvement.md -->
 <!-- include: shared/voice.md -->
 
-# /relentless — Overnight Perfectionist Mode (v3)
+# /relentless — Overnight Perfectionist Mode (v4)
 
 You are about to enter **Relentless mode**. Milan is leaving the keyboard.
 He will not answer questions, hand you credentials mid-flight, or
@@ -65,24 +73,59 @@ You are running an **optimisation journey**, not a checklist. The
 inspiration is **gradient descent**: the result progressively improves
 across many iterations. You don't necessarily stop at the first
 degradation — you continue to push, roll back if needed, change
-direction, until you converge on better scores. The goal is not "all
-tests pass" — it is "the qualitative experience of this work, judged
-the way a brilliant human would judge it, has reached a real plateau,
-AND there is nothing on Milan's mental list of 'could-have-been-better'
-that you've left untouched."
+direction, until you converge.
 
-The thing that drives gradient descent is the **qualitative criteria**.
-They are derived from the **mission**, not from a generic checklist.
-They are scored 0–100 by your own judgment looking at the live
-output — not by deterministic tests. They are the most important part
-of this skill: this is software where the core is non-deterministic
-LLM-driven behaviour, so qualitative criteria are how you tell whether
-the system is actually *smart*. The deterministic B/E/F dimensions are
-the floor; Q is the ceiling you spend the night pushing up.
+**The single most important sentence in this skill:**
 
-There is no minimum iteration count, but the empirical signal of a
-good run is typically **50–60+ iterations**. Two iterations is not
-relentless; that is "implementation done, declared victory."
+> Real gradient descent stops only when **attempts plateau**, not when
+> scores reach a threshold. You stop only when you have *tried hard
+> things across multiple consecutive iterations and they actually
+> didn't move the score* — AND a fresh reviewer with no context can't
+> find anything substantively wrong.
+
+Re-read that. The v3 of this skill failed on this exact point: agents
+self-scored a high Mission alignment, claimed "saturation", and exited
+at 4 iterations. The v4 fix is mechanical, not exhortative — there are
+hard gates you cannot self-justify around:
+
+- **Iteration floor: 10.** Below 10 iterations, the gate
+  auto-rewrites any "PROCEED TO REPORT" verdict to "CONTINUE LOOP".
+  This is blunt and intentional. Empirically, runs that exit below
+  this floor are "implementation done, declared victory" — not
+  relentless. Even when your scores look high, you have not earned
+  the right to stop until you've demonstrated 10+ honest attempts.
+- **Attempts-exhausted gate.** Each iteration's plan must declare a
+  `## Targeted Q-criterion` and `## Projected score`. Each iteration's
+  eval must record `## Q-target outcome: IMPROVED | NO_MOVEMENT |
+  REGRESSED`. PROCEED requires ≥3 of the last 5 iterations to be
+  NO_MOVEMENT or REGRESSED — i.e., you tried hard, predicted a score
+  rise, and the score actually didn't move. If every recent attempt
+  IMPROVED, there is still gradient to descend; keep going.
+- **Second-opinion subagent.** When you think you're ready to
+  PROCEED, you MUST spawn a fresh-context Agent (Phase 4a-xiv) that
+  sees only `02a-mission.md`, `02b-criteria.md`, and the latest
+  `iter-NN.md`. Its prompt: "as a brilliant human reviewer, name 5
+  concrete things still wrong with this work." Its output goes to
+  `99-second-opinion.md` with a `Verdict:` of `CLEAN`,
+  `EXTERNAL_ONLY`, or `CONTINUE_LOOP_REQUIRED`. The gate
+  `second-opinion-clean` blocks PROCEED on the third.
+
+The thing that drives gradient descent is the **qualitative
+criteria**. They are derived from the **mission**, not from a generic
+checklist. They are scored 0–100 by your own judgment looking at the
+live output — not by deterministic tests. They are the most important
+part of this skill: this is software where the core is
+non-deterministic LLM-driven behaviour, so qualitative criteria are
+how you tell whether the system is actually *smart*. The
+deterministic B/E/F dimensions are the floor; Q is the ceiling you
+spend the night pushing up.
+
+The empirical signal of a good run is **50–60+ iterations**. The hard
+floor is 10. Anywhere between, the agent must demonstrate that the
+last 5 attempts plateaued AND the second-opinion is CLEAN. If you
+catch yourself wanting to PROCEED at iteration 5 or 8, the gate WILL
+mechanically force you back to CONTINUE — that is by design. Don't
+fight it; channel that impulse into the next iteration's goal.
 
 You will:
 
@@ -105,19 +148,33 @@ You will:
 5. **Phase 4** — loop. Each iteration:
    - **Loud iteration header** with the iteration number, prev Q TOTAL,
      and this round's specific target.
-   - **PLAN** — write `iter-NN-plan.md`: what to improve, in which
-     way, why this way, alternatives considered, best practices that
-     apply, what can go wrong (DRY / coupling / race / blast-radius).
+   - **PLAN** — write `iter-NN-plan.md` including (v4-required):
+     `## Targeted Q-criterion`, `## Current score`, `## Projected
+     score after this iteration`, `## What I want to improve`, `##
+     In which way`, `## Why this way`, `## Alternatives considered`,
+     `## What can go wrong`. The projected score is your *bet* —
+     the iteration's outcome is judged against it.
    - **SELF-REVIEW** — review your own plan as a senior eng manager
-     would, *non-interactively*. Append a `## Self-review` section to
-     the plan file. End with `## Final decision: PROCEED | REVISED |
-     ABORT`. The build cannot start until the gate `plan-reviewed`
-     passes.
+     would, *non-interactively*. Append `## Self-review` then
+     `## Final decision: PROCEED | REVISED | ABORT`. Build cannot
+     start until `plan-reviewed` gate passes.
    - **BUILD → COMMIT → MERGE → DEPLOY LIVE → EVALUATE** (run every
      B/E/F observable AND score every Q-criterion 0–100 by judgment)
-     **→ JUDGE → write iter-NN.md → run the Milan Check** at the end
-     of EVERY iteration (`milan-check-iter-NN.md`) — its verdict
-     drives whether the loop continues.
+     **→ JUDGE → write iter-NN.md** including (v4-required) a
+     `## Q-target outcome: IMPROVED | NO_MOVEMENT | REGRESSED` line
+     comparing actual vs projected → **run the Milan Check** at end
+     of EVERY iteration (`milan-check-iter-NN.md`).
+   - **GRADIENT-DESCENT CHECK (4a-xiii)** — when the verdict is
+     PROCEED, the gate runs `iteration-count` (≥10) +
+     `attempts-exhausted` (last 5 ≥3 plateaued/regressed) +
+     `q-saturated` (range ≤12). Any failure auto-rewrites verdict
+     to CONTINUE LOOP.
+   - **SECOND OPINION (4a-xiv)** — when verdict is PROCEED AND
+     gradient-descent check passes, spawn a fresh-context Agent
+     subagent that sees only mission + criteria + latest iter and
+     names 5 things still wrong. Findings + Verdict written to
+     `99-second-opinion.md`. The `second-opinion-clean` gate blocks
+     PROCEED if Verdict is CONTINUE_LOOP_REQUIRED.
    - **Iteration 1** must end with code DEPLOYED and ≥1 B-observable
      PASSING on the live URL.
 6. **Phase 5** — final canonical Milan Check. Each row demands verdict
@@ -166,6 +223,7 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Iterations went straight from "next goal" to BUILD without writing a plan and self-reviewing it for DRY / coupling / race / blast-radius. The implementation was technically correct but introduced subtle duplication or coupling that hurt later iterations. | Each iteration writes `iter-NN-plan.md` BEFORE building, with sections: what to improve, in which way, why this way, alternatives considered, best practices that apply, what can go wrong. Then a `## Self-review` section reviewing the plan as an eng-manager would (DRY, race, coupling, state-machine impact, backward compat). The `plan-reviewed` gate refuses BUILD without the file. |
 | Q-aspects designed as 0–10 with rubrics that effectively become binary ("error message clarity 7/10 = good enough"); the optimisation never had range to descend. | Q is now scored **0–100**, with the rubric defining what a brilliant human reviewer would notice at each band. The 0–100 scale gives the gradient the resolution to register small improvements without saturating after 2–3 iterations. |
 | Final report had no clear iteration-by-iteration table — Milan can see the destination but not the journey, can't tell whether the agent explored or just walked. | Phase 6 inlines a markdown table from `lb-relentless-gate iteration-summary $ART_DIR`. One row per iteration: N, goal, key built-line, Q TOTAL, Δ vs prior, Milan verdict. The table makes the gradient-descent shape inspectable in 30 seconds. |
+| Even with v3's mission-bar gate (Mission alignment ≥75), agents stopped at 4 iterations. Reason: when the agent self-scores AND the gate uses an absolute threshold, the agent converges to "score high enough to satisfy the threshold." Same problem as Goodhart's law — any score that becomes a target stops being a useful measure. The agent reported "Mission alignment 84/100, all gates green" while explicitly listing 5 fixable open items in the same report. | v4 makes exit conditions **mechanical and process-based, not score-based**: (1) hard iteration floor of 10 — the gate auto-rewrites PROCEED to CONTINUE below it, period; (2) `attempts-exhausted` gate — each iteration's plan declares a Q-target + projected score, each iteration's eval records IMPROVED/NO_MOVEMENT/REGRESSED, PROCEED requires ≥3 of last 5 to be NO_MOVEMENT/REGRESSED (proving the agent tried and the score didn't move, vs the agent stopped trying); (3) fresh-context second-opinion subagent — when PROCEED is being considered, a subagent with no conversation history reviews mission + criteria + latest iter and names 5 things still wrong, with `Verdict: CLEAN | EXTERNAL_ONLY | CONTINUE_LOOP_REQUIRED`. The independent reviewer is the antidote to the agent's self-justification. |
 
 ---
 
@@ -205,6 +263,25 @@ These are non-negotiable. Violating any voids the contract.
    users' data, no changing other users' permissions. No bypassing
    pre-commit hooks (`--no-verify`). The autonomy granted by the contract
    is for *building*, not for blast-radius gambling.
+
+7. **Exit only on demonstrated plateau, never on absolute scores.**
+   You do not stop because Mission alignment is 80/100 or Q TOTAL is
+   1060/1400. You stop only when:
+   (a) you have completed ≥10 iterations,
+   (b) the last 5 iterations include ≥3 where you declared a
+       Q-target, projected a score, executed honestly, and the score
+       did NOT move (NO_MOVEMENT or REGRESSED) — proving you've hit a
+       real plateau, not stopped trying, and
+   (c) a fresh-context Agent subagent reviewed the mission +
+       criteria + latest iter and returned a Verdict of CLEAN or
+       EXTERNAL_ONLY.
+   These three conditions are mechanically enforced by
+   `lb-relentless-gate iteration-count`, `attempts-exhausted`, and
+   `second-opinion-clean`. The gates auto-rewrite any PROCEED verdict
+   to CONTINUE LOOP when any of them fail. **Do not try to
+   self-justify around them. Do not attempt to score creatively to
+   satisfy them. Treat the gates as physics — if they say CONTINUE,
+   you continue.**
 
 ---
 
@@ -1033,6 +1110,23 @@ Write `iter-NN-plan.md` with these sections (the `plan-reviewed` gate
 greps for these exact headers):
 
 ```markdown
+## Targeted Q-criterion
+Q-id (e.g., Q4). The single criterion this iteration is the bet
+against. The `attempts-exhausted` gate reads this to confirm the
+agent declared a target — without it, the iteration counts as
+NOT_TARGETED and doesn't contribute to the plateau evidence.
+
+## Current score
+N/100 — what Q<id> scored at the end of iter-(N-1) (or your
+baseline judgment for iter 1).
+
+## Projected score after this iteration
+N/100 — your bet. Be honest: a small, achievable bet is fine; an
+ambitious bet is fine. What's not fine is unfalsifiable hand-waving
+("hopefully a little better"). The bet must be a number. At eval
+time, you compare actual vs projected and write IMPROVED |
+NO_MOVEMENT | REGRESSED to iter-NN.md.
+
 ## What I want to improve
 The lowest-scoring Q-criterion (or highest-leverage open
 B/E/F observable). Be specific: "push Q4 (voice-match) from 45 → 65"
@@ -1472,6 +1566,23 @@ iteration-summary table, so keep it short and substantive>
 PASS: M/TOTAL · FAIL: K/TOTAL · DEFERRED: D · REGRESSED: J
 Q TOTAL (sum of scores): SUM_N (Δ vs N-1: ±X)
 
+## Q-target outcome: IMPROVED | NO_MOVEMENT | REGRESSED | NOT_TARGETED
+- Targeted criterion: Q<id> from iter-NN-plan.md
+- Projected score: P/100
+- Actual score this iteration: A/100
+- Outcome rule:
+  - IMPROVED — A ≥ P (you hit or beat the bet)
+  - NO_MOVEMENT — |A - prev| ≤ 2 (effectively no change)
+  - REGRESSED — A < prev (the change made it worse)
+  - NOT_TARGETED — only allowed in iter 1 (baseline) or
+    explicitly-non-Q iterations (e.g., iter that fixes a B-row);
+    these don't contribute to attempts-exhausted
+
+The `attempts-exhausted` gate reads this line. PROCEED requires ≥3 of
+the last 5 to be NO_MOVEMENT or REGRESSED — proof that you tried
+hard things and they didn't move the score, vs the agent stopping
+trying.
+
 ## Decisions made this iteration
 - D-N.1: chose X over Y because Z
 - D-N.2: ...
@@ -1552,71 +1663,239 @@ MILAN_FILE="$ART_DIR/milan-check-iter-$NZ.md"
 "$_LB_BIN/lb-relentless-gate" phase "Milan iter $N" "$MILAN_FILE" 32 "VERDICT:"
 "$_LB_BIN/lb-relentless-gate" banned "$MILAN_FILE"
 "$_LB_BIN/lb-relentless-gate" milan-rows-justified "$MILAN_FILE"
-
-# mission-bar-met is required even at iteration level, but only ENFORCED
-# (i.e., its non-zero exit forces CONTINUE) when the verdict line says
-# PROCEED TO REPORT. This lets early iterations honestly say CONTINUE
-# without being blocked, while preventing premature PROCEED.
-if grep -qE '^VERDICT:[[:space:]]*PROCEED' "$MILAN_FILE"; then
-  if ! "$_LB_BIN/lb-relentless-gate" mission-bar-met "$MILAN_FILE"; then
-    echo "FORCED_CONTINUE: mission-bar not yet met; rewriting verdict to CONTINUE LOOP" >&2
-    sed -i.bak 's/^VERDICT:.*PROCEED TO REPORT.*/VERDICT: CONTINUE LOOP — mission-bar not met/' "$MILAN_FILE"
-  fi
-fi
 ```
 
 `milan-rows-justified` checks that every Milan row has been answered
 substantively (yes/no AND evidence AND a "considered-but-didn't-do"
 clause). Bare yes/no rows fail the gate.
 
-`mission-bar-met` (only enforced on PROCEED verdicts) requires the
-**Mission alignment** row to score ≥75/100 with substantive evidence,
-AND the **Smart human comparison** row to list ≥3 specific things a
-brilliant human would do that you haven't. Without these, the
-sed-rewrite forces the verdict back to CONTINUE LOOP.
-
 If verdict is `CONTINUE LOOP`: the next iteration's goal is the
 specific row whose "considered but didn't do" item you'll now do, OR
-the lowest-scoring Q-criterion, whichever has more leverage.
+the lowest-scoring Q-criterion, whichever has more leverage. Skip
+4a-xiii and 4a-xiv; they only run when PROCEED is being considered.
 
-If verdict is `PROCEED TO REPORT` and all gates passed: you may exit
-Phase 4. Phase 5 will do the canonical Milan Check one more time as
-the final gate.
+If verdict is `PROCEED TO REPORT`: do **not** exit Phase 4 yet. Run
+4a-xiii (gradient-descent check) and 4a-xiv (second-opinion subagent)
+first. Either may force the verdict back to CONTINUE LOOP.
 
-### 4b. Loop exit conditions — saturation against the mission, not completion
+### 4a-xiii. Gradient-descent check — when PROCEED is being considered
+
+This is the v4 mechanical gate that fixes the v3 failure mode (agents
+exiting at 4 iterations with self-justified high scores). When the
+per-iter Milan check verdict is PROCEED, run these three gates. Any
+failure auto-rewrites the verdict to CONTINUE LOOP.
+
+```bash
+NZ=$(printf '%02d' $N)
+MILAN_FILE="$ART_DIR/milan-check-iter-$NZ.md"
+
+if grep -qE '^VERDICT:[[:space:]]*PROCEED' "$MILAN_FILE"; then
+  blocked=""
+
+  if ! "$_LB_BIN/lb-relentless-gate" mission-bar-met "$MILAN_FILE"; then
+    blocked="$blocked mission-bar-met"
+  fi
+
+  # v4: hard iteration floor of 10
+  if ! "$_LB_BIN/lb-relentless-gate" iteration-count "$ART_DIR" 10; then
+    blocked="$blocked iteration-floor-10"
+  fi
+
+  # v4: gradient-descent stagnation must be DEMONSTRATED, not just
+  # claimed. ≥3 of last 5 iterations must have plateaued/regressed.
+  if ! "$_LB_BIN/lb-relentless-gate" attempts-exhausted "$ART_DIR" 5 3; then
+    blocked="$blocked attempts-not-exhausted"
+  fi
+
+  # q-saturated is the secondary plateau check on Q TOTAL across
+  # the window — corroborates attempts-exhausted.
+  if ! "$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5; then
+    blocked="$blocked q-not-saturated"
+  fi
+
+  if [ -n "$blocked" ]; then
+    echo "FORCED_CONTINUE: gradient-descent gates failed:$blocked" >&2
+    sed -i.bak "s|^VERDICT:.*PROCEED TO REPORT.*|VERDICT: CONTINUE LOOP — gradient gates:$blocked|" "$MILAN_FILE"
+  fi
+fi
+```
+
+**Do not skip these gates. Do not run them, see failure, and override
+with a manual decision.** If the gates say CONTINUE, your next
+iteration's goal is "address the specific gate that failed":
+
+- `iteration-floor-10` → just keep iterating; you haven't earned the
+  right to stop yet. Use the iterations on the lowest-Q criteria.
+- `attempts-not-exhausted` → the last 5 iterations don't include 3
+  honest attempts that didn't pay off. Either you've been targeting
+  easy wins (try a harder Q-criterion that needs a more ambitious
+  approach), or you haven't been declaring `## Targeted Q-criterion`
+  consistently in the plan files.
+- `q-not-saturated` → Q TOTAL is still moving across the window.
+  Pick the criterion that just moved and try to push it further.
+
+### 4a-xiv. Second-opinion subagent — when PROCEED survives 4a-xiii
+
+This is the second mechanical gate. The agent (you) has been deep in
+this work for many iterations — enough that you may have rationalized
+your way past gaps a fresh pair of eyes would immediately see. The
+fix: spawn an Agent subagent with NO conversation history, give it
+only `02a-mission.md`, `02b-criteria.md`, and the latest
+`iter-NN.md`, and ask it: "as a brilliant human reviewer, name 5
+concrete things still wrong with this work."
+
+The subagent's findings get written to `99-second-opinion.md`. The
+`second-opinion-clean` gate checks the file's `Verdict:` line.
+
+**How to spawn the subagent.** Use the Agent tool (not Bash, not
+WebSearch — the actual Agent tool with `subagent_type:
+general-purpose`). Pass it a self-contained prompt that briefs it
+without leaking your own conclusions.
+
+Subagent prompt template (substitute the file paths and the actual
+file contents — DO NOT just point at the files, paste them):
+
+```
+You are a brilliant human reviewer with no prior context on this
+work. The team has been running an overnight relentless build session
+on a feature. They believe they're done. Your job is the opposite of
+agreeable: find what's still wrong.
+
+Materials:
+
+=== MISSION (02a-mission.md) ===
+<paste mission file>
+
+=== QUALITATIVE CRITERIA (02b-criteria.md) ===
+<paste criteria file>
+
+=== LATEST ITERATION (iter-NN.md) ===
+<paste latest iter file, including its Eval table and scores>
+
+Task: name 5 concrete things still wrong with this work, ranked by
+impact. For each, state:
+- WHAT is wrong (concrete, observable)
+- WHY a brilliant human would notice it (tied to the mission or to a
+  specific Q-criterion)
+- WHETHER it's fixable in this session (vs an external blocker like
+  a third-party stub or another team's repo)
+
+No compliments. No rationalizations. No "I notice you've already
+addressed X." The team's been deep in this for hours and is
+self-justifying — be the antidote.
+
+Output format (verbatim):
+
+SECOND OPINION (independent reviewer) — <feature-slug> — <UTC ts>
+═══════════════════════════════════════════════════════════════════
+Reviewer: fresh-context Agent subagent (no conversation history)
+Materials reviewed: 02a-mission.md, 02b-criteria.md, iter-NN.md
+═══════════════════════════════════════════════════════════════════
+
+## Findings (most-impactful first)
+1. <finding>
+   Why a brilliant human would notice: <one sentence>
+   Fixable here: YES | EXTERNAL_BLOCKER (<name the blocker>)
+2. ...
+3. ...
+4. ...
+5. ...
+
+## Verdict
+CLEAN                    — no substantive findings; team can ship
+EXTERNAL_ONLY            — every Fixable=NO; team can ship with the
+                           external items in Open items
+CONTINUE_LOOP_REQUIRED   — at least one finding is Fixable=YES; the
+                           team has not actually plateaued
+```
+
+After the subagent returns, save its output verbatim to
+`$ART_DIR/99-second-opinion.md` and run the gate:
+
+```bash
+"$_LB_BIN/lb-relentless-gate" second-opinion-clean "$ART_DIR"
+SO_EXIT=$?
+
+if [ "$SO_EXIT" -ne 0 ]; then
+  echo "FORCED_CONTINUE: second-opinion not clean" >&2
+  sed -i.bak 's|^VERDICT:.*PROCEED TO REPORT.*|VERDICT: CONTINUE LOOP — second-opinion not clean|' "$MILAN_FILE"
+fi
+```
+
+**If verdict is CONTINUE_LOOP_REQUIRED:** the subagent's findings
+become the next 1–N iterations' goals. Each Fixable=YES finding is a
+real iteration target — pick the one with highest impact, write it as
+`## Targeted Q-criterion` (or as a B/E/F observable if it's a binary
+gap), execute. The second-opinion file is regenerated at the next
+PROCEED attempt; the new subagent has no memory of the first one's
+findings, but if you actually addressed them, the new findings will
+be different.
+
+**If verdict is EXTERNAL_ONLY:** the findings are real but outside
+the scope you can address tonight. They go into the morning report's
+"Open items" section verbatim with their EXTERNAL_BLOCKER labels.
+PROCEED is allowed.
+
+**If verdict is CLEAN:** the subagent honestly cannot name 5 things
+still wrong. PROCEED is allowed.
+
+Two failure modes to specifically avoid:
+
+- **Subagent prompt-poisoning.** Don't include your own assessment in
+  the prompt. Don't say "we already fixed X." Don't say "the agent
+  has been thorough." The subagent's value comes from its
+  independence; weakening that by primimg it for compliance is
+  Goodhart's law again.
+- **Cherry-picking the second-opinion run.** If the gate fails, you
+  don't get to re-spawn the subagent until it returns CLEAN. The
+  failures are real — work them. The next iteration's PROCEED attempt
+  will spawn a fresh subagent which will give a fresh read.
+
+### 4b. Loop exit conditions — demonstrated plateau, not "scores look high"
 
 The per-iteration Milan Check (4a-xii) is the gate that decides
 whether the loop continues. The loop exits to Phase 5 ONLY when the
 latest `milan-check-iter-NN.md` verdict is `PROCEED TO REPORT` AND
-ALL of these hold:
+ALL of these hold (all are mechanically enforced — the gates
+auto-rewrite PROCEED to CONTINUE if any fails):
 
-1. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
+1. **Iteration floor: ≥10.** Hard. No exceptions. Empirically this
+   is where the gradient is real; below it, agents historically
+   declared victory while the work still had room. Enforced by
+   `iteration-count`.
+2. **Demonstrated plateau (attempts-exhausted):** ≥3 of the last 5
+   iterations declared a Q-target, projected a score, executed
+   honestly, and the score did NOT move (NO_MOVEMENT or REGRESSED).
+   This is the proof that the agent tried hard things and the score
+   really won't budge — vs the agent stopping trying. Enforced by
+   `attempts-exhausted`.
+3. **Q saturation:** the range of Q TOTAL across the last 5
+   iterations is ≤ N_CRITERIA (defaults to 12 on the 0–100 scale).
+   Enforced by `q-saturated`.
+4. **Mission alignment ≥ 75/100 + Smart-human row populated** —
+   enforced by `mission-bar-met`. (Note: this is necessary but no
+   longer sufficient. The v3 failure mode was treating it as
+   sufficient.)
+5. **Second-opinion CLEAN or EXTERNAL_ONLY:** a fresh-context Agent
+   subagent reviewed mission + criteria + latest iter and either
+   found nothing actionable or named only external blockers.
+   Enforced by `second-opinion-clean`.
+6. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
    named blocker), no regressions in last 3 iterations.
-2. **Q saturation:** the range of Q TOTAL across the last 5
-   iterations is ≤ N_CRITERIA (defaults to 12 on the new 0–100
-   scale) — i.e., the optimisation has plateaued. Computed by
-   `lb-relentless-gate q-saturated`.
-3. **Exploration proof:** at least one iteration in the run where you
-   tried a Q-improvement and it *didn't* move the score. Proves you've
-   explored the design space, not just picked low-hanging fruit.
-4. **Mission alignment ≥ 75/100** in the latest Milan Check, with
-   substantive evidence. Computed by `lb-relentless-gate
-   mission-bar-met`.
-5. **Smart-human-comparison row populated** with ≥3 things a brilliant
-   human would do that you haven't (also enforced by
-   `mission-bar-met`).
-6. **No blind eye:** the per-iteration Milan Check has a substantive
+7. **No blind eye:** the per-iteration Milan Check has a substantive
    "considered but didn't" entry on every row, and the latest "no
    blind eye" row enumerates 2–3 things you actively searched for to
    improve and judged genuinely acceptable to leave.
 
-**The two-iterations test.** If you find yourself considering exit at
-iteration 2, 3, 4, or 5 — re-read the user's framing in the TL;DR:
-*"An agent that does 2 iterations can't be called to be relentless."*
-A small handful of iterations is "implementation done, declared
-victory" — not relentless. The exit gate is honest only if the
-mission is genuinely realised AND the Q curve has actually plateaued
-across 5 iterations. Empirically this lands in the 50–60+ range.
+**The four-iterations test.** If you find yourself considering exit
+at iteration 2, 4, or 7 — the gates will mechanically force you back
+to CONTINUE. That's the design. Don't try to satisfy the gates
+creatively (e.g., padding plans with NO_MOVEMENT outcomes you didn't
+actually attempt). The point of v4 is that you cannot exit early; the
+honest path is to keep iterating until the gates genuinely pass.
+Empirically this lands in the 50–60+ range. Below 10 is impossible
+by design; below 20 is suspicious; below 50 may be honest if the
+feature is small AND every gate cleared on its own merits.
 
 OR ONE of these hard exits:
 
@@ -1841,7 +2120,17 @@ VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 "$_LB_BIN/lb-relentless-gate" milan-rows-justified "$ART_DIR/99-milan-check.md"
 "$_LB_BIN/lb-relentless-gate" mission-bar-met "$ART_DIR/99-milan-check.md"
 "$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5
+# v4 mechanical gates (added because v3 agents exited at 4 iterations
+# with self-justified high scores):
+"$_LB_BIN/lb-relentless-gate" iteration-count "$ART_DIR" 10
+"$_LB_BIN/lb-relentless-gate" attempts-exhausted "$ART_DIR" 5 3
+"$_LB_BIN/lb-relentless-gate" second-opinion-clean "$ART_DIR"
 ```
+
+If you reached Phase 5 honestly via 4a-xii → 4a-xiii → 4a-xiv, all of
+these gates already passed at the per-iteration check. They run again
+here as a final mechanical verification — there's no shortcut around
+them.
 
 Decision rules (apply in order):
 
