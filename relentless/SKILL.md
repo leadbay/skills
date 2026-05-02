@@ -204,11 +204,13 @@ not give validation. He requires that you own your choices.
 
 ## TL;DR for the agent
 
-You are running an **optimisation journey**, not a checklist. The goal is
-not "all tests pass" — it is "the qualitative experience of using this
-feature reaches a saturation point where further iterations don't move
-the score." Good relentless runs go 30–80 iterations and end at a
-quality plateau, not at "implementation done."
+You are running an **optimisation journey**, not a checklist. The goal
+is not "all tests pass" — it is "the qualitative experience of using
+this feature reaches a saturation point where further iterations don't
+move the score, AND there is nothing on Milan's mental list of
+'could-have-been-better' that you've left untouched." There is no
+minimum iteration count, but the empirical signal of a good run is
+typically 50–60+ iterations.
 
 You will:
 
@@ -220,19 +222,24 @@ You will:
 3. **Phase 2** — write the 4-dimension eval framework. B/E/F are binary
    observables. **Q is scored 0–10 per aspect with a written rubric for
    what each score means.** Minimum counts enforced.
-4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask. Iteration
-   budget: 30+ iterations for any non-trivial feature. Polish iterations
-   are most of the run, not the tail.
+4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask. Polish
+   iterations are most of the run, not the tail.
 5. **Phase 4** — loop: build → commit → deploy LIVE → run all binary
    observables → **score every Q-aspect and track the delta vs prior
-   iteration** → judge → write `iter-NN.md`. **Iteration 1 must end
+   iteration** → judge → write `iter-NN.md` → **run the Milan Check at
+   the end of EVERY iteration** (`milan-check-iter-NN.md`) — its
+   verdict drives whether the loop continues. **Iteration 1 must end
    with code DEPLOYED and at least one B-observable PASSING on the
    live URL.**
-6. **Phase 5** — Milan Check. Verdict requires (a) all binary
-   observables PASS, (b) Q-dimension *saturated* — moving average of Q
-   total score across the last 5 iterations changed by ≤ 0.5, (c) at
-   least one iteration where you tried a Q-improvement and it didn't
-   move the score (proof you've explored the design space).
+6. **Phase 5** — final canonical Milan Check. Each row demands verdict
+   + named evidence + a "considered but didn't do" entry. Silence on
+   "considered but didn't" counts as a blind-eye violation. Verdict
+   requires (a) all binary observables PASS, (b) Q-dimension
+   *saturated* — moving avg of Q TOTAL across last 5 iterations
+   changed by ≤ 0.5, (c) exploration proof — at least one iteration
+   where a Q-improvement attempt didn't move the score, (d) no blind
+   eye — actively-searched-for improvements are listed and judged
+   acceptable to leave.
 7. **Phase 6** — write the final report including the Q-score curve.
 
 You stop **only** when the Milan Check verdict is `PROCEED TO REPORT`.
@@ -258,6 +265,8 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Agent satisfied itself after 1–2 iterations because all binary tests passed | Binary tests passing is a Phase 4 *floor*, not a stop condition. Q-scores don't saturate in 2 iterations on a feature that matters. If your Q moving-average is still rising, you're not done. |
 | Agent designed Q-aspects as binary PASS/FAIL ("error message is clear") instead of scored ("error message clarity 7/10, would be 9 if it named the offending field") | Q-aspects MUST be 0–10 scored with a rubric defining each band. Binary Q-aspects can't show iteration-over-iteration improvement and short-circuit the optimisation journey. |
 | Agent treated "deploy to prod" as risky and deferred to staging in projects that have no live users | When Phase 1c confirms zero live users, prod-with-real-secrets is the **default**. Staging requires explicit justification. The whole point of pre-launch projects is that you can iterate live with no blast radius. |
+| Agent declared the Milan Check "passed" because all binary tests passed, without actually answering the Milan questions row by row | The Milan Check is its own gate, not a redirect to the eval table. Each row demands a *written justification* — what specifically would Milan be impressed by, with named evidence — not "yes — see B-rows above." The gate runs at EVERY iteration, not only at exit. |
+| Agent answered Milan rows with bare yes/no when the question was "could you have improved this further?" | Milan is not happy if he thinks you could have improved something more that you have omitted, or that you have turned a blind eye on an aspect of code quality or user experience. Each Milan row must include "what I considered improving but didn't, and why" — silence on this counts as a blind-eye violation. |
 
 ---
 
@@ -946,9 +955,17 @@ Each iteration is:
 │  4a-vii.  REVIEW-AGENT triage — bot/CI comments                 │
 │  4a-viii. JUDGE — score iteration; set next goal                │
 │  4a-ix.   WRITE iter-NN.md — full template; gate phase + banned │
-│  4a-x.    BANNED-PHRASE check — refuse to advance if hit        │
+│  4a-x.    PER-ITERATION MILAN CHECK — fill the rows, save       │
+│           milan-check-iter-NN.md, decide CONTINUE/PROCEED       │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+The Milan Check runs at the **end of every iteration**, not only at
+exit. It is the gate that decides whether the loop continues or you
+move to Phase 5 (final report). Most iterations early in the run will
+trivially CONTINUE (binary floor not met, or Q still climbing); the
+exercise of filling the rows still matters because it shapes the next
+iteration's goal.
 
 ### 4a-1. Iteration 1 is special
 
@@ -1231,8 +1248,9 @@ If `phase_gate` fails: edit the iteration file until it passes. If
 `banned_phrase_check` fails: rewrite to strip the banned phrase, then
 re-run.
 
-### 4a-x. Special check — iteration 1 deploy gate
+### 4a-x. Per-iteration Milan Check + iteration 1 deploy gate
 
+#### Iteration 1 deploy gate
 After iter-01.md is written:
 
 ```bash
@@ -1242,25 +1260,78 @@ if [ "$N" = "1" ]; then
 fi
 ```
 
-If `ITER1_FAIL`: stay on iteration 1. Don't increment to 2. The first
-deploy + first passing B-observable is the iteration 1 done-criterion.
+If `ITER1_FAIL`: stay on iteration 1. Don't increment to 2.
+
+#### Per-iteration Milan Check (every iteration, not just at exit)
+
+At the end of EVERY iteration, write
+`$ART_DIR/milan-check-iter-NN.md` with the full Milan Check format
+(see Phase 5 for the canonical block). The verdict (`CONTINUE LOOP` or
+`PROCEED TO REPORT`) drives whether you write iter-(N+1).md or move
+to Phase 5.
+
+Why every iteration: the Milan Check is the place where you confront
+"could I have improved this further? did I turn a blind eye to
+something?" Doing this once at the end is too late — you'll have
+stopped iterating before that question forces another loop. Doing it
+every iteration shapes the next iteration's goal.
+
+**Hard rule on per-row answers.** Each row of the Milan Check requires
+THREE things, not just yes/no:
+
+1. **Verdict** — `yes` or `no`.
+2. **Evidence** — a named file path, live URL, commit SHA, or
+   score-curve citation. "See B-rows above" is NOT evidence; cite the
+   specific iter-NN.md and the specific row.
+3. **What I considered but didn't do** — at least one concrete
+   improvement you thought about for this row but rejected, with the
+   reason. Silence here counts as a blind-eye violation. If you
+   genuinely cannot think of anything you considered, that's a signal
+   you haven't engaged with the row — re-read the rubric and try
+   again.
+
+Then run the per-iteration gate:
+
+```bash
+"$_LB_BIN/lb-relentless-gate" phase "Milan iter $N" \
+  "$ART_DIR/milan-check-iter-$(printf '%02d' $N).md" 28 "VERDICT:"
+"$_LB_BIN/lb-relentless-gate" banned \
+  "$ART_DIR/milan-check-iter-$(printf '%02d' $N).md"
+"$_LB_BIN/lb-relentless-gate" milan-rows-justified \
+  "$ART_DIR/milan-check-iter-$(printf '%02d' $N).md"
+```
+
+`milan-rows-justified` checks that every Milan row has been answered
+substantively (yes/no AND evidence AND a "considered-but-didn't-do"
+clause). Bare yes/no rows fail the gate.
+
+If verdict is `CONTINUE LOOP`: the next iteration's goal is the
+specific row whose "considered but didn't do" item you'll now do, OR
+the lowest-scoring Q-aspect, whichever has more leverage.
+
+If verdict is `PROCEED TO REPORT`: you may exit Phase 4. Phase 5 will
+do the canonical Milan Check one more time as the final gate (it
+reads the latest milan-check-iter-NN.md plus the score curve).
 
 ### 4b. Loop exit conditions — saturation, not completion
 
-Exit the loop and proceed to Phase 5 only when ALL of these hold:
+The per-iteration Milan Check (4a-x) is the gate that decides whether
+the loop continues. The loop exits to Phase 5 ONLY when the latest
+`milan-check-iter-NN.md` verdict is `PROCEED TO REPORT` AND ALL of
+these hold:
 
 1. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
    named blocker), no regressions in last 3 iterations.
 2. **Q saturation:** the moving average of Q TOTAL across the last 5
    iterations changed by ≤ 0.5 — i.e., the optimisation has plateaued.
-   Compute via `lb-relentless-gate q-saturated` (see below).
+   Computed by `lb-relentless-gate q-saturated`.
 3. **Exploration proof:** at least one iteration in the run where you
-   tried a Q-improvement and it *didn't* move the score. This proves
-   you've explored the design space, not just picked low-hanging fruit.
-4. **Iteration count:** typically 30+ iterations for a non-trivial
-   feature. Runs of 60–80 are normal for surfaces that need polish.
-   If you're considering exit at iteration <20, double-check Q
-   saturation is real and not just lazy scoring.
+   tried a Q-improvement and it *didn't* move the score. Proves you've
+   explored the design space, not just picked low-hanging fruit.
+4. **No blind eye:** the per-iteration Milan Check has a substantive
+   "considered but didn't" entry on every row, and the latest
+   "no blind eye" row enumerates 2–3 things you actively searched for
+   to improve and judged genuinely acceptable to leave.
 
 OR ONE of these hard exits:
 
@@ -1269,6 +1340,15 @@ OR ONE of these hard exits:
   STRIPE_KEY flagged in Phase 1, user said B in Phase 1c, Stripe-dependent
   observable physically can't be tested). Verify ≥3 retries across ≥10
   minutes before declaring blocked.
+
+**On iteration count:** there is no minimum imposed — different
+features need different runways. But the *empirical signal of a good
+relentless run is 50–60+ iterations*. If you're considering exit
+much earlier, treat it as a prompt to re-examine: is the Q plateau
+real, or did you stop pushing? Is the "considered but didn't" list on
+the latest Milan Check honestly hard to extend? Short runs are fine
+when the work is genuinely small; suspicious when the work is
+non-trivial.
 
 You do NOT exit because:
 
@@ -1285,53 +1365,133 @@ You do NOT exit because:
 
 ---
 
-## Phase 5: The Milan Check
+## Phase 5: The Milan Check (final)
 
-Before you can stop, you must answer these honestly, *in writing, with
-file-path evidence on every "yes" row*. Vague "yes" rows fail the gate.
+The Milan Check has already run at the end of every iteration in
+Phase 4 (see 4a-x). Phase 5 is the final, canonical pass: read the
+latest `milan-check-iter-NN.md`, evolve it into `99-milan-check.md`
+with the full picture across the run, and decide.
+
+**The framing — internalise this before answering any row:**
+
+> Milan will not be happy if he thinks you could have improved
+> something more that you have omitted, or that you have turned a
+> blind eye on an aspect of code quality or user experience.
+
+That's the bar. Answering the rows requires actively searching for
+the things you didn't do — not just defending the things you did.
+
+Each row demands THREE parts, not just yes/no:
+
+1. **Verdict** — `yes` or `no`.
+2. **Evidence** — a named file path / live URL / commit SHA /
+   score-curve citation. "See B-rows above" is NOT evidence.
+3. **What I considered but didn't do** — at least one concrete
+   improvement you thought about for this row, with the reason you
+   rejected it. Silence is a blind-eye violation; saying "nothing,
+   it's perfect" is also a blind-eye violation. If you cannot find
+   one thing you considered, you haven't engaged with the row.
 
 Write `99-milan-check.md` verbatim:
 
 ```
-MILAN CHECK — <feature-slug> — <YYYY-MM-DD HH:MM:SS>
+MILAN CHECK (final) — <feature-slug> — <YYYY-MM-DD HH:MM:SS>
 ═══════════════════════════════════════════════════════════════════
+Framing: Milan will not be happy if he thinks you could have improved
+something more that you have omitted, or that you have turned a blind
+eye on an aspect of code quality or user experience. Each row below
+must include verdict + evidence + considered-but-didn't-do.
+
 Will he be impressed by:
-  Functionality:        yes/no — evidence: iter-NN.md B-rows: M/N PASS
-  Edge handling:        yes/no — evidence: iter-NN.md E-rows: M/N PASS
-  Failure resilience:   yes/no — evidence: iter-NN.md F-rows: M/N PASS
-  Quality saturation:   yes/no — evidence: Q TOTAL trajectory across
-                                  iters N-4..N is [a, b, c, d, e],
-                                  moving avg delta ≤ 0.5 (saturated)
-  Q score curve:        yes/no — Q AVG started at X.X (iter 1) and
-                                  ended at Y.Y (iter N); inflection
-                                  points at iters [...]
-  Decision audit:       yes/no — evidence: 99-final-report.md DECISIONS
-  Live deploy proof:    yes/no — evidence: iter-NN.md "Deployed" section
-                                  shows DEPLOY_LIVE; live URL: https://...
-                                  verified at <commit-sha>
-  Real (not mocked) test:yes/no — evidence: iter-NN.md eval table cites
-                                  live URL / live DB / real S3 / etc.,
-                                  not local mocks
-  Exploration proof:    yes/no — evidence: at iter X, attempted
-                                  Q-improvement <description> and it
-                                  did NOT move score (proof we explored)
+
+  Functionality
+    Verdict:                 yes/no
+    Evidence:                iter-NN.md B-rows: M/N PASS at <URL>
+    Considered but didn't:   <one concrete extension you thought about
+                             and rejected, with the reason>
+
+  Edge handling
+    Verdict:                 yes/no
+    Evidence:                iter-NN.md E-rows: M/N PASS
+    Considered but didn't:   <one concrete edge case you thought
+                             about adding and rejected, with reason>
+
+  Failure resilience
+    Verdict:                 yes/no
+    Evidence:                iter-NN.md F-rows: M/N PASS
+    Considered but didn't:   <one concrete failure mode you thought
+                             about hardening and rejected, with reason>
+
+  Quality saturation
+    Verdict:                 yes/no
+    Evidence:                Q TOTAL trajectory across iters N-4..N is
+                             [a, b, c, d, e]; moving-avg range ≤ 0.5
+    Considered but didn't:   <one concrete Q-aspect you didn't attempt
+                             to push higher, with reason>
+
+  Q score curve
+    Verdict:                 yes/no
+    Evidence:                Q AVG iter 1 = X.X → iter N = Y.Y;
+                             biggest gain: iter A→A+1 (Q+Z); plateau
+                             starts iter B
+    Considered but didn't:   <a Q-aspect that's still <8 — why
+                             stopping there is acceptable>
+
+  Decision audit
+    Verdict:                 yes/no
+    Evidence:                99-final-report.md DECISIONS section, K
+                             entries
+    Considered but didn't:   <a decision you made implicitly without
+                             documenting — and why it didn't merit
+                             a DECISIONS entry>
+
+  Live deploy proof
+    Verdict:                 yes/no
+    Evidence:                iter-NN.md Deployed section shows
+                             DEPLOY_LIVE; live URL <X>; commit SHA <Y>
+    Considered but didn't:   <e.g., didn't run a load test against
+                             prod; reason>
+
+  Real (not mocked) test
+    Verdict:                 yes/no
+    Evidence:                iter-NN.md eval table cites live URL /
+                             live DB / real S3 (not local mocks)
+    Considered but didn't:   <e.g., didn't test against real third-
+                             party sandbox X; reason>
+
+  Exploration proof
+    Verdict:                 yes/no
+    Evidence:                at iter X, attempted Q-improvement
+                             <description>; score did NOT move
+                             (proof we explored, not just walked)
+    Considered but didn't:   <a more radical alternative architecture
+                             you considered and rejected; reason>
+
+  No blind eye
+    Verdict:                 yes/no
+    Evidence:                <list 2–3 things you actively looked for
+                             that could be improved and why each is
+                             genuinely acceptable to leave>
+    Considered but didn't:   N/A — this row IS the considered-list
 
 Will he suspect:
-  Stopped too soon:           risk: low/medium/high — why
-  Q saturation faked:         risk: low/medium/high — did we score
-                                                       lazily to plateau?
-  Validation-seeking:         risk: low/medium/high — banned phrases hit?
-  Slop disguised as done:     risk: low/medium/high — why
-  Skipped tests passing as DONE: risk: low/medium/high — pytest skips? itemised?
-  Iteration count too low:    risk: low/medium/high — N iterations vs
-                                                       feature complexity
+  Stopped too soon:              risk: low/medium/high — why
+  Q saturation faked:            risk: low/medium/high — were scores
+                                  honest against the rubric?
+  Validation-seeking:            risk: low/medium/high — banned phrases?
+  Slop disguised as done:        risk: low/medium/high — why
+  Skipped tests passing as DONE: risk: low/medium/high — pytest skips?
+  Blind eye to obvious upside:   risk: low/medium/high — did we ignore
+                                  something an outside reviewer would
+                                  immediately raise?
 ═══════════════════════════════════════════════════════════════════
 VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 ```
 
 ```bash
-"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 22 "VERDICT:"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 60 "VERDICT:"
 "$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/99-milan-check.md"
+"$_LB_BIN/lb-relentless-gate" milan-rows-justified "$ART_DIR/99-milan-check.md"
 "$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5 0.5
 ```
 
@@ -1339,28 +1499,34 @@ Decision rules (apply in order):
 
 1. Any "Will he be impressed" row at "no" → CONTINUE LOOP. Next
    iteration's goal: flip that no.
-2. "Live deploy proof" at "no" → CONTINUE LOOP. Implementation alone
-   doesn't pass.
-3. "Real (not mocked) test" at "no" → CONTINUE LOOP.
-4. "Quality saturation" at "no" → CONTINUE LOOP. The Q moving-avg is
-   still moving; you have more polish runway.
-5. "Exploration proof" at "no" → CONTINUE LOOP. Try a Q-improvement
-   that might not work. The point is to map the design space, not just
-   walk monotonic.
-6. "Iteration count too low" at high → CONTINUE LOOP. Most non-trivial
-   relentless runs need 30+ iterations. <20 is suspicious unless the
-   feature is genuinely tiny.
-7. "Skipped tests passing as DONE" at >low → CONTINUE LOOP. Set up the
-   env, unskip, re-evaluate.
-8. "Q saturation faked" at >low → CONTINUE LOOP. Re-score honestly
-   against the Phase 2c rubrics; if a score is at 8 because "well, it
-   looks fine" rather than against the rubric band, fix it.
-9. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
-10. Any "yes" row without a named file path / URL / SHA / score-curve
-    citation → fix the evidence. Treat as no.
-11. Any risk at "medium" → judgment call. Articulate why medium is
-    acceptable, or CONTINUE.
-12. All yes + all low + `q-saturated` returned 0 → PROCEED TO REPORT.
+2. Any row missing a "Considered but didn't" entry → fix the row, treat
+   the verdict as `no` until filled. Blind-eye violations void the gate.
+3. "Live deploy proof" at "no" → CONTINUE LOOP.
+4. "Real (not mocked) test" at "no" → CONTINUE LOOP.
+5. "Quality saturation" at "no" → CONTINUE LOOP.
+6. "Exploration proof" at "no" → CONTINUE LOOP.
+7. "No blind eye" at "no" → CONTINUE LOOP, with the next iteration's
+   goal being the most leveraged item from your list.
+8. "Skipped tests passing as DONE" at >low → CONTINUE LOOP.
+9. "Q saturation faked" at >low → re-score honestly against the
+   rubrics; if any score moves, your saturation evaluation resets.
+10. "Blind eye to obvious upside" at >low → CONTINUE LOOP.
+11. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
+12. Any "yes" row without named evidence → treat as no.
+13. Any risk at "medium" → judgment call. Articulate why medium is
+    acceptable; if you can't, CONTINUE.
+14. All yes + all low + `q-saturated` returned 0 + every row has a
+    substantive "considered but didn't" entry → PROCEED TO REPORT.
+
+**On iteration count:** the prior version of this gate had a
+"too-low iteration count" hard rule. Removed — different features
+need different runways. But the *signal* of a good relentless run is
+typically 50–60+ iterations. If you're considering PROCEED at <20
+iterations, that is itself a strong prompt to re-read the Q rubrics
+and the "Considered but didn't" entries: are you sure there's nothing
+left? If the moving-average plateau is real and the considered-list
+is honest, short runs are fine. If you're using saturation as a
+shortcut, the gate will catch it via the "Q saturation faked" row.
 
 If you PROCEED, do it. If you CONTINUE, go back to 4a-i with iteration
 N+1. There is no shame in iteration 27 being "the Milan Check told me

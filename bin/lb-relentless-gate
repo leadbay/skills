@@ -12,6 +12,8 @@
 #   iter1-ok ITER01_FILE
 #   counts FILE                        — print B/E/Q/F observable counts
 #   q-saturated ART_DIR [WIN] [DELTA]  — Q TOTAL moving-avg plateau check
+#   milan-rows-justified FILE          — every Milan row has verdict +
+#                                        evidence + considered-but-didn't
 #
 # Exit codes:
 #   0 — gate passed
@@ -56,6 +58,14 @@ Subcommands:
       ≤ MAX_DELTA (default 0.5) — i.e., Q has plateaued. Exit 1 if
       still climbing (more iterations to do) or window is too small.
       Each iter-NN.md must contain a "Q TOTAL (sum of scores): X" line.
+
+  milan-rows-justified FILE
+      Every Milan-Check row must include a "Verdict:", "Evidence:",
+      and "Considered but didn't:" line. Silence on
+      "Considered but didn't" counts as a blind-eye violation
+      (Milan won't be happy if he thinks you turned a blind eye on
+      something that could have been improved). Exit 0 if every row
+      is fully justified; exit 1 with a list of unjustified rows.
 
   help
       This message.
@@ -189,6 +199,60 @@ case "$cmd" in
       exit 1
     fi
     echo "EVAL_FRAMEWORK_OK"
+    ;;
+
+  milan-rows-justified)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate milan-rows-justified FILE" >&2
+      exit 2
+    fi
+    # Each Milan row block must have all three of: Verdict:, Evidence:,
+    # Considered but didn't:. We use awk to walk the file, partitioning
+    # at "Considered but didn't:" lines. Each block from a row header
+    # (lines that look like "  RowName" with no colon at the right) up
+    # to and including the next "Considered but didn't:" must contain
+    # all three keywords AND the content after each keyword must be
+    # non-trivially populated (>5 chars, not just "...", not "N/A"
+    # outside the explicitly allowed "No blind eye" row).
+    missing=$(awk '
+      BEGIN { row=""; verdict=0; evidence=0; considered=0; bad="" }
+      /^  [A-Z][^:]*$/ {
+        # New row header (no colon at end of line). Flush previous.
+        if (row != "" && (verdict==0 || evidence==0 || considered==0)) {
+          bad = bad row " (V=" verdict " E=" evidence " C=" considered ")\n"
+        }
+        row=$0; verdict=0; evidence=0; considered=0; next
+      }
+      /^[[:space:]]*Verdict:[[:space:]]*(yes|no)/ { verdict=1; next }
+      /^[[:space:]]*Evidence:[[:space:]]+./ {
+        line=$0; sub(/^[[:space:]]*Evidence:[[:space:]]*/, "", line)
+        if (length(line) >= 5) evidence=1
+        next
+      }
+      /^[[:space:]]*Considered but didn'\''t:[[:space:]]+./ {
+        line=$0; sub(/^[[:space:]]*Considered but didn'\''t:[[:space:]]*/, "", line)
+        # Allow "N/A — this row IS the considered-list" for the No-blind-eye row,
+        # but not bare "N/A" or empty. Require at least 5 chars beyond punctuation.
+        if (length(line) >= 5 && line !~ /^N\/A[[:space:]]*$/ && line !~ /^[[:space:]]*$/) {
+          considered=1
+        }
+        next
+      }
+      END {
+        if (row != "" && (verdict==0 || evidence==0 || considered==0)) {
+          bad = bad row " (V=" verdict " E=" evidence " C=" considered ")\n"
+        }
+        printf "%s", bad
+      }
+    ' "$file")
+    if [ -n "$missing" ]; then
+      echo "MILAN_ROWS_UNJUSTIFIED in $file:" >&2
+      printf "%s" "$missing" >&2
+      echo "  → Fill Verdict + Evidence + Considered-but-didn't on each row." >&2
+      exit 1
+    fi
+    echo "MILAN_ROWS_JUSTIFIED: $file"
     ;;
 
   q-saturated)
