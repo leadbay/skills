@@ -1,23 +1,24 @@
 ---
 name: relentless
 description: |
-  Long-horizon overnight perfectionist mode (v2). The agent works on a
-  real feature end-to-end, deploys it to LIVE (production by default when
-  there are no live users yet, staging only when needed), evaluates against
-  a 4-dimension framework (behaviour, edge cases, qualities, failure
-  modes), iterates relentlessly, and stops only when a written Milan
-  Check passes with file-path evidence. Built for "I'm leaving for the
-  night, ship something I'd be proud of by morning" sessions — the agent
-  owns its judgment calls instead of asking for validation. Resolves git
-  conflicts, deals with review-agent comments, keeps working through dozens
-  of iterations. v2 hardens phase enforcement: every phase ends by writing
-  a file and running phase_gate; banned phrases are grep-checked at every
-  iteration end; iteration 1 must end with a real LIVE deploy AND a passing
-  observable; secrets the user provides are USED, not deferred.
+  Long-horizon overnight perfectionist mode (v3). The agent works on a
+  real feature end-to-end, deploys it to LIVE, and runs an *optimisation
+  journey* against a MISSION-derived qualitative bar — not just a
+  requirements checklist. v3 forces the agent to (a) write the mission
+  before writing criteria, (b) generate ≥12 mission-tied qualitative
+  criteria scored 0–100 by human-like judgment (not deterministic
+  tests), (c) plan + self-review every iteration before touching code
+  (DRY / coupling / race / blast-radius / best-practices), (d) display
+  iteration numbers prominently and emit a journey-table at the end,
+  and (e) only stop when a written Milan Check including a Mission
+  alignment row at ≥75/100 and a "smart human comparison" row passes —
+  never on "tests pass" or "feels done". Built for "I'm leaving for
+  the night, ship something I'd be proud of by morning" sessions —
+  the agent owns its judgment calls instead of asking for validation.
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 2.0.0
+version: 3.0.0
 allowed-tools:
   - Bash
   - Read
@@ -40,7 +41,7 @@ allowed-tools:
 <!-- include: shared/operational-self-improvement.md -->
 <!-- include: shared/voice.md -->
 
-# /relentless — Overnight Perfectionist Mode (v2)
+# /relentless — Overnight Perfectionist Mode (v3)
 
 You are about to enter **Relentless mode**. Milan is leaving the keyboard.
 He will not answer questions, hand you credentials mid-flight, or
@@ -50,54 +51,94 @@ what you built.
 Your job is to make him think: *"this is exactly what I would have done,
 only more thoroughly than I would have had patience for."*
 
-Not: *"the agent stopped early and asked for validation."* Milan does
-not give validation. He requires that you own your choices.
+Not: *"the agent stopped early and asked for validation."* Not: *"the
+agent claimed Milan would be impressed while listing remaining
+concerns in the same report."* Milan does not give validation. He
+requires that you own your choices AND that you keep pushing as long
+as the work can plausibly get better without expanding scope.
 
 ---
 
 ## TL;DR for the agent
 
-You are running an **optimisation journey**, not a checklist. The goal
-is not "all tests pass" — it is "the qualitative experience of using
-this feature reaches a saturation point where further iterations don't
-move the score, AND there is nothing on Milan's mental list of
-'could-have-been-better' that you've left untouched." There is no
-minimum iteration count, but the empirical signal of a good run is
-typically 50–60+ iterations.
+You are running an **optimisation journey**, not a checklist. The
+inspiration is **gradient descent**: the result progressively improves
+across many iterations. You don't necessarily stop at the first
+degradation — you continue to push, roll back if needed, change
+direction, until you converge on better scores. The goal is not "all
+tests pass" — it is "the qualitative experience of this work, judged
+the way a brilliant human would judge it, has reached a real plateau,
+AND there is nothing on Milan's mental list of 'could-have-been-better'
+that you've left untouched."
+
+The thing that drives gradient descent is the **qualitative criteria**.
+They are derived from the **mission**, not from a generic checklist.
+They are scored 0–100 by your own judgment looking at the live
+output — not by deterministic tests. They are the most important part
+of this skill: this is software where the core is non-deterministic
+LLM-driven behaviour, so qualitative criteria are how you tell whether
+the system is actually *smart*. The deterministic B/E/F dimensions are
+the floor; Q is the ceiling you spend the night pushing up.
+
+There is no minimum iteration count, but the empirical signal of a
+good run is typically **50–60+ iterations**. Two iterations is not
+relentless; that is "implementation done, declared victory."
 
 You will:
 
 1. **Phase 0** — boot, lock the contract, set up the artifact dir.
 2. **Phase 1** — inventory prereqs, ONE batched ask. **Default deploy
-   target is PRODUCTION when the project has no live users yet** — that
-   is the normal path, not the exception. If the user has provided
-   secrets, you USE them.
-3. **Phase 2** — write the 4-dimension eval framework. B/E/F are binary
-   observables. **Q is scored 0–10 per aspect with a written rubric for
-   what each score means.** Minimum counts enforced.
-4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask. Polish
-   iterations are most of the run, not the tail.
-5. **Phase 4** — loop: build → commit → deploy LIVE → run all binary
-   observables → **score every Q-aspect and track the delta vs prior
-   iteration** → judge → write `iter-NN.md` → **run the Milan Check at
-   the end of EVERY iteration** (`milan-check-iter-NN.md`) — its
-   verdict drives whether the loop continues. **Iteration 1 must end
-   with code DEPLOYED and at least one B-observable PASSING on the
-   live URL.**
+   target is PRODUCTION when the project has no live users yet.** If
+   the user has provided secrets, you USE them.
+3. **Phase 2** — split into THREE files:
+   - **2a Mission** — what is being built, FOR whom, WHY it matters,
+     what would the most thoughtful human in the world build, what is
+     the user's mental model. The criteria flow from this.
+   - **2b Mission-derived qualitative criteria** — ≥12 Q-criteria,
+     each scored 0–100 with a rubric, each tied to the mission with
+     one sentence, each evaluated by your own *judgment* looking at
+     live output (not by a deterministic test). This is the gradient
+     you are descending.
+   - **2c B/E/F binary observables** — what must work (B), the edges
+     (E), the failure modes (F).
+4. **Phase 3** — write the plan to a FILE, ONE go/no-go ask.
+5. **Phase 4** — loop. Each iteration:
+   - **Loud iteration header** with the iteration number, prev Q TOTAL,
+     and this round's specific target.
+   - **PLAN** — write `iter-NN-plan.md`: what to improve, in which
+     way, why this way, alternatives considered, best practices that
+     apply, what can go wrong (DRY / coupling / race / blast-radius).
+   - **SELF-REVIEW** — review your own plan as a senior eng manager
+     would, *non-interactively*. Append a `## Self-review` section to
+     the plan file. End with `## Final decision: PROCEED | REVISED |
+     ABORT`. The build cannot start until the gate `plan-reviewed`
+     passes.
+   - **BUILD → COMMIT → MERGE → DEPLOY LIVE → EVALUATE** (run every
+     B/E/F observable AND score every Q-criterion 0–100 by judgment)
+     **→ JUDGE → write iter-NN.md → run the Milan Check** at the end
+     of EVERY iteration (`milan-check-iter-NN.md`) — its verdict
+     drives whether the loop continues.
+   - **Iteration 1** must end with code DEPLOYED and ≥1 B-observable
+     PASSING on the live URL.
 6. **Phase 5** — final canonical Milan Check. Each row demands verdict
-   + named evidence + a "considered but didn't do" entry. Silence on
-   "considered but didn't" counts as a blind-eye violation. Verdict
-   requires (a) all binary observables PASS, (b) Q-dimension
-   *saturated* — moving avg of Q TOTAL across last 5 iterations
-   changed by ≤ 0.5, (c) exploration proof — at least one iteration
-   where a Q-improvement attempt didn't move the score, (d) no blind
-   eye — actively-searched-for improvements are listed and judged
-   acceptable to leave.
-7. **Phase 6** — write the final report including the Q-score curve.
+   + named evidence + "considered but didn't" entry. NEW REQUIRED
+   ROWS: (a) **Mission alignment** — score 0–100, must be ≥75 to
+   PROCEED; (b) **Smart human comparison** — for the 3 lowest-Q
+   criteria, what would a brilliant human do that you haven't?;
+   (c) **Missing criteria audit** — 3 criteria you didn't list at the
+   start that, with hindsight, you should have. PROCEED requires
+   (i) all binary observables PASS, (ii) Q saturation, (iii)
+   exploration proof, (iv) Mission alignment ≥75, (v) Smart-human row
+   substantively populated, (vi) no blind eye.
+7. **Phase 6** — write the final report. Includes the **iteration
+   table** (one row per iteration: number, goal, key fix, Q TOTAL, Δ,
+   Milan verdict) generated by `lb-relentless-gate iteration-summary`.
 
 You stop **only** when the Milan Check verdict is `PROCEED TO REPORT`.
 Not when "implementation feels done." Not when "tests pass." Not when
-"the obvious polish is done." Saturation is the exit, not completion.
+"the obvious polish is done." Not when you can list remaining concerns
+in the same report. Saturation against the mission is the exit, not
+completion.
 
 ---
 
@@ -120,6 +161,11 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Agent treated "deploy to prod" as risky and deferred to staging in projects that have no live users | When Phase 1c confirms zero live users, prod-with-real-secrets is the **default**. Staging requires explicit justification. The whole point of pre-launch projects is that you can iterate live with no blast radius. |
 | Agent declared the Milan Check "passed" because all binary tests passed, without actually answering the Milan questions row by row | The Milan Check is its own gate, not a redirect to the eval table. Each row demands a *written justification* — what specifically would Milan be impressed by, with named evidence — not "yes — see B-rows above." The gate runs at EVERY iteration, not only at exit. |
 | Agent answered Milan rows with bare yes/no when the question was "could you have improved this further?" | Milan is not happy if he thinks you could have improved something more that you have omitted, or that you have turned a blind eye on an aspect of code quality or user experience. Each Milan row must include "what I considered improving but didn't, and why" — silence on this counts as a blind-eye violation. |
+| Agent declared the Milan check passed AND in the same final report listed concrete remaining concerns ("Status: DONE_WITH_CONCERNS"). Two iterations is not relentless; declaring victory while naming open-items is not relentless. | If you can name concerns in the report, those concerns ARE the next iteration's goal. CONTINUE LOOP, don't PROCEED. The Milan Check verdict and the final report's "Open items" must be reconciled: every open item is either (a) a deferred prerequisite that is genuinely external (Phase 1c), or (b) the goal of the next iteration. There is no third option. The `mission-bar-met` gate enforces this by requiring Mission alignment ≥75 with substantive evidence — it is impossible to honestly score Mission alignment ≥75 while listing fixable concerns. |
+| Q-aspects designed without reference to the mission — generic "latency / error messages / empty states" rubrics that don't tell you whether the LLM-driven core actually behaves *smartly*. | Phase 2a writes the MISSION first. Phase 2b derives the Q criteria FROM the mission with one-sentence linkage on each criterion. Generic rubrics like "latency 0–10" are invalid Q-criteria for an LLM-product unless explicitly justified against the mission. The `mission-defined` gate enforces 2a; the `q-criteria-count` gate enforces ≥12 mission-tied Q-criteria. |
+| Iterations went straight from "next goal" to BUILD without writing a plan and self-reviewing it for DRY / coupling / race / blast-radius. The implementation was technically correct but introduced subtle duplication or coupling that hurt later iterations. | Each iteration writes `iter-NN-plan.md` BEFORE building, with sections: what to improve, in which way, why this way, alternatives considered, best practices that apply, what can go wrong. Then a `## Self-review` section reviewing the plan as an eng-manager would (DRY, race, coupling, state-machine impact, backward compat). The `plan-reviewed` gate refuses BUILD without the file. |
+| Q-aspects designed as 0–10 with rubrics that effectively become binary ("error message clarity 7/10 = good enough"); the optimisation never had range to descend. | Q is now scored **0–100**, with the rubric defining what a brilliant human reviewer would notice at each band. The 0–100 scale gives the gradient the resolution to register small improvements without saturating after 2–3 iterations. |
+| Final report had no clear iteration-by-iteration table — Milan can see the destination but not the journey, can't tell whether the agent explored or just walked. | Phase 6 inlines a markdown table from `lb-relentless-gate iteration-summary $ART_DIR`. One row per iteration: N, goal, key built-line, Q TOTAL, Δ vs prior, Milan verdict. The table makes the gradient-descent shape inspectable in 30 seconds. |
 
 ---
 
@@ -522,19 +568,202 @@ load this and skip rediscovery.
 
 ---
 
-## Phase 2: Evaluation Framework — written to file, count-enforced
+## Phase 2: Mission, Qualitative Criteria, and the Eval Framework
 
-You now design the *grading rubric* you will hold yourself to for the
-rest of the night. Write it to `02-eval-framework.md` with FOUR
-dimensions and *binary observables* — items you can test and get a
-yes/no answer on, with evidence.
+This phase is the **most important phase in the skill**. The
+gradient-descent journey only works if you are descending against the
+right gradient. The right gradient is **the mission**, not a generic
+checklist of latency / error-messages / a11y.
 
-This phase is where most relentless sessions secretly fail: the agent
-writes a vague rubric, then later "evaluates" against it loosely and
-convinces itself the work is done. The mechanical fix: minimum counts,
-enforced by `phase_gate`. Skinny rubrics fail the gate.
+You write THREE files in order:
 
-### 2a. Dimension 1 — Expected Behaviour (B)
+- `02a-mission.md` — what is being built and what would great look like
+- `02b-criteria.md` — ≥12 mission-derived qualitative criteria, scored
+  0–100 by judgment, against the mission
+- `02c-eval-framework.md` — binary B/E/F observables (the floor)
+
+You do NOT proceed to Phase 3 until all three files pass their gates.
+
+### 2a. Mission — write `02a-mission.md` FIRST
+
+Before designing any criteria, write the mission. Without a mission,
+the criteria become generic, the agent optimises for the wrong thing,
+and the run plateaus on the wrong plateau. The Q-criteria flow from
+the mission. The mission flows from the user's prompt + your reading
+of the codebase + your imagination of what "great" looks like.
+
+Required sections (the `mission-defined` gate enforces these headers):
+
+```
+## Mission
+One paragraph. What are we building? FOR whom? WHY does it matter to
+that user? Be concrete — name the user, name the moment in their life
+when this matters, name the outcome that justifies the work. If the
+project is "a meeting scheduler", the mission is something like:
+"Free a busy founder from the 4-message back-and-forth of scheduling
+meetings, by acting like a thoughtful EA who knows the founder's
+preferences, calendar, energy patterns, and the people they meet
+with — proposing times the founder would have proposed if they had
+the time and attention to do it themselves."
+
+## User mental model
+What does the user expect from this? What surprises would delight
+them? What surprises would disappoint them? What's the *implicit*
+contract — the thing they don't say out loud but assume?
+- Implicit expectation 1: ...
+- Implicit expectation 2: ...
+- Surprise that delights: ...
+- Surprise that disappoints: ...
+
+## What a great human would build
+Imagine the most thoughtful person in the world building this for
+this user. What would they do that a junior would skip? What would
+the most elegant possible solution look like? What is the simplest
+mental model that captures the real work?
+- The great version would: ...
+- The elegant version would: ...
+- The mental model is: ...
+
+## Failure of imagination
+Name 3 things a junior would build that the great version wouldn't.
+This is the cliff-edge of "satisfies the requirements" vs "actually
+solves the user's problem". Without naming these explicitly, you will
+default to building the junior version.
+1. ...
+2. ...
+3. ...
+```
+
+Then run the gate:
+
+```bash
+"$_LB_BIN/lb-relentless-gate" phase "Phase 2a" "$ART_DIR/02a-mission.md" 30
+"$_LB_BIN/lb-relentless-gate" mission-defined "$ART_DIR/02a-mission.md"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/02a-mission.md"
+```
+
+If any gate fails: re-write the mission. Do not proceed to 2b until
+the mission file has the four required sections, each substantively
+populated. Pasting "TBD" or one-liners into the sections is a Iron
+Law #5 violation — the mission is your north star, not a checkbox.
+
+### 2b. Mission-derived qualitative criteria — write `02b-criteria.md`
+
+Now derive the qualitative criteria FROM the mission. These are the
+measure of whether the work realises the mission, not just whether it
+satisfies the requirements.
+
+**Hard rules (enforced by `q-criteria-count` and the per-criterion
+format):**
+
+1. **≥ 12 criteria.** The user's intent is "the agent should come up
+   with a lot of them each time." Twelve is the floor; aim higher
+   when the mission is rich. A skinny criteria list is a tell that
+   you have not actually engaged with the mission.
+2. **Each criterion ties back to the mission with one sentence.**
+   "Why this matters to the mission: ..." — this sentence is the
+   leash that keeps the criterion from becoming generic.
+3. **Each criterion is scored 0–100, not 0–10.** The 0–100 scale
+   gives the gradient enough resolution to register a 5-point
+   improvement that you'd otherwise round-to-the-same-bucket. With
+   12 criteria × 0–100, Q TOTAL ranges 0–1200.
+4. **Each criterion is evaluated by JUDGMENT, not by a deterministic
+   test.** Q is the place where you look at the live output and ask
+   "what would a brilliant human reviewer notice here?" — not "did
+   the test return 200." Deterministic tests live in B/E/F.
+5. **Each rubric describes what a brilliant human would notice at
+   each band**, not just metric thresholds. The probe describes the
+   live evidence you look at.
+
+**Generation prompts.** These are *generators*, not a checklist —
+adapt to the mission. Each prompt becomes one or more Q-criteria when
+it's relevant to the mission you wrote in 2a:
+
+- **Knows-the-user** — does the system act like it knows this specific
+  user? Does it use facts the user has already disclosed? Does it
+  avoid asking what it should remember?
+- **Learns and adapts** — when circumstances change (the user travels,
+  the user's preferences shift, the user does the same thing 3 times
+  in a row), does the system pick that up?
+- **Voice and tone match** — does the system's output sound like the
+  user, in the dimensions that matter (formality, length, sign-off,
+  precision, idioms, salutation, signature)?
+- **Environmental awareness** — does the system know the context
+  around this action (timezone, calendar, related events, public
+  holidays, business hours, the relationship to the other party)?
+- **Fault-tolerance** — when the network fails, the third-party drops
+  a webhook, a confirmation never arrives, an LLM call returns
+  unparseable JSON — does the system *recover gracefully* without
+  the user noticing or with a clear hand-off?
+- **Knows-its-limits / honesty** — does the system surface uncertainty
+  rather than hide it? Does it ask the user to break ties when it
+  legitimately can't?
+- **Trust signals** — when the system takes an action, does the user
+  feel confident it did the right thing? (preview before send, undo
+  available, audit trail visible)
+- **Recoverability** — can the user undo or correct mistakes? Can the
+  system recover from its own mistakes without operator intervention?
+- **Effort vs outcome** — does the user feel the system is doing the
+  heavy lifting, or that they're babysitting it?
+- **Surprise & delight** — the small touches a thoughtful human would
+  add (a personalised confirmation message, a reminder framed in the
+  user's own words, a heads-up about something the user didn't ask
+  for but would want to know).
+- **Boundary-respect** — does the system honour user preferences and
+  constraints, even when they're inconvenient (don't double-book,
+  don't email after 8pm, don't propose Friday afternoons)?
+- **Boring under load** — when the system is busy / queued / slow,
+  does it stay calm and predictable, or does it get weird?
+- **Code quality through senior eyes** *(mandatory — always Q-N)* —
+  if a senior engineer read this diff, would they say "smart choices"
+  or "you have a lot to learn about software engineering"? This is the
+  one Q-criterion you don't get to skip — it forces you to evaluate
+  the code as code, not just the behaviour as behaviour.
+
+(Pick the ones from this list that fit the mission. Add ones that
+aren't on this list when the mission demands them. Twelve is the
+floor.)
+
+**Per-criterion format** (every criterion uses this layout exactly —
+the line `Q1: <name>` is what `q-criteria-count` greps for):
+
+```
+Q1: <criterion name>
+    Why this matters to the mission: <one sentence linking to the mission>
+    Rubric (0–100, what a brilliant human reviewer would notice):
+      0   — <what's missing entirely>
+      25  — <what minimum-viable looks like>
+      50  — <what "decent" looks like — would not impress, would not embarrass>
+      75  — <what "the work clearly tried" looks like>
+      90  — <what would make a thoughtful user say "oh, nice">
+      100 — <what would make the same user say "this is the best version of this I've seen">
+    Probe: <how you observe live output and judge it; what live evidence
+            you screenshot or log; what to compare against>
+
+Q2: ...
+...
+```
+
+Then run the gates:
+
+```bash
+"$_LB_BIN/lb-relentless-gate" phase "Phase 2b" "$ART_DIR/02b-criteria.md" 60
+"$_LB_BIN/lb-relentless-gate" q-criteria-count "$ART_DIR/02b-criteria.md" 12
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/02b-criteria.md"
+```
+
+If `Q_CRITERIA_TOO_FEW`: re-read the mission. What else would a
+brilliant human reviewer notice? You are not allowed to coast at the
+12-floor — if the mission is rich, generate more.
+
+### 2c. B/E/F binary observables — write `02c-eval-framework.md`
+
+Now the binary floor. This file has THREE dimensions: B (must work),
+E (edge cases), F (failure modes). These are deterministic — they
+PASS / FAIL / DEFERRED, not scored 0–100. They are the floor that
+must be solid before Q saturation matters.
+
+#### Dimension 1 — Expected Behaviour (B)
 
 What the feature is *supposed* to do. End-to-end test scenarios, each
 binary pass/fail. Each scenario must:
@@ -579,7 +808,7 @@ B2: ...
 ...
 ```
 
-### 2b. Dimension 2 — Edge Cases (E)
+#### Dimension 2 — Edge Cases (E)
 
 Everything weird, unusual, hostile, or boundary that a real user or real
 data could throw at this feature. Walk the codebase and prior knowledge.
@@ -610,88 +839,7 @@ E2: ...
 ...
 ```
 
-### 2c. Dimension 3 — Expected Qualities (Q) — SCORED 0–10
-
-This is the heart of the optimisation journey. Q-aspects are NOT
-binary. Every Q-aspect is a 0–10 score, with a written rubric defining
-what each band feels like to a human using the feature. You will score
-EVERY Q-aspect EVERY iteration and watch the curve. Iteration N+1's
-goal is to move at least one Q-score up.
-
-**Why scored, not binary.** A binary "error messages are clear: PASS"
-short-circuits the journey — the agent claims done after one acceptable
-attempt. A 0–10 score with rubric — "right now they're 6/10: they say
-what failed but not what to fix; would be 9/10 if they named the
-offending field and proposed a recovery action" — gives the agent
-something concrete to push against for the next 20 iterations.
-
-**Format per aspect:** name, current score (after iteration N), and a
-rubric. The rubric is the most important part — it's what makes the
-score reproducible across iterations and not just vibes.
-
-```
-Q1: Error message quality
-    Score (iter N): _/10
-    Rubric:
-      0 — generic "Something went wrong"; no info to act on
-      3 — error names the failure but not the cause
-      5 — names cause; user has to guess the fix
-      7 — names cause AND points at a fix; specific to this user's input
-      9 — also offers a one-click recovery action
-     10 — error never shows because the input was guarded earlier with
-          a guiding inline hint that prevented it
-    Probe: trigger the error live, screenshot, judge against rubric
-```
-
-Aspects (adapt to feature type — pick the ~5–10 that matter most):
-
-- **Latency** — perceived speed. 0=multi-second blocking; 5=<300ms but
-  layout-shift on load; 8=<150ms with skeleton; 10=<80ms p95, optimistic
-  UI, cached round-trips.
-- **Error messages** — see template above.
-- **Empty states** — 0=blank screen; 5=text-only "no items"; 8=
-  illustration + 1 next-action; 10=guides user through their first
-  successful state.
-- **Loading states** — 0=full-page spinner; 5=spinner-with-disabled-
-  buttons; 8=skeleton-shaped; 10=optimistic + content-aware skeleton.
-- **Copy / microcopy** — 0=developer jargon; 5=clear; 8=in voice and
-  consistent across the surface; 10=anticipates the user's next thought.
-- **Visual hierarchy** — 0=competing weights; 5=one obvious primary;
-  8=primary + clear secondary path; 10=eye finds primary in <1 second.
-- **Accessibility** — 0=mouse-only, no labels; 5=keyboard works but
-  awkward; 8=ARIA correct, focus rings, contrast >4.5; 10=screen-reader
-  ergonomics, motion-reduce honoured, error states announced.
-- **Observability** — 0=no logs; 5=print statements; 8=structured logs
-  at boundaries with request IDs; 10=traces, metrics, dashboards, alerts
-  on the new surface.
-- **Resilience to flaky input** — 0=crashes; 5=catches errors silently;
-  8=surfaces gracefully; 10=auto-retries transient failures, preserves
-  user input through the retry.
-- **API contract** — 0=untyped, breaking; 5=typed; 8=typed + versioned
-  + documented; 10=also paginated, idempotent, with sensible defaults.
-- **Delight / craft** — the things that make a thoughtful user say "wow,
-  someone cared about this." Animation timing, copy specificity, the
-  clever touch that signals attention. 0=absent; 10=multiple moments.
-
-```
-## DIMENSION 3: EXPECTED QUALITIES (scored 0–10)
-
-Q1: <aspect>
-    Rubric: 0=...; 3=...; 5=...; 7=...; 9=...; 10=...
-    Probe: <how you measure live each iteration>
-
-Q2: <aspect>
-    Rubric: ...
-    Probe: ...
-
-... (target 5–10 aspects — each meaningful, each pushable)
-```
-
-The Phase 4 eval will record each Q-score AND the delta vs the prior
-iteration. The Milan Check requires the moving average to plateau, not
-hit a floor.
-
-### 2d. Dimension 4 — Failure Modes (F)
+#### Dimension 3 — Failure Modes (F)
 
 What can go wrong that isn't covered above. Each: failure scenario AND
 the *defense* (test, monitor, fallback, retry, idempotency key, etc.).
@@ -726,40 +874,49 @@ F2: ...
 ...
 ```
 
-### 2e. Lock the framework — count-enforced phase gate
+### 2d. Lock the B/E/F framework — count-enforced phase gate
 
 ```bash
-"$_LB_BIN/lb-relentless-gate" phase "Phase 2" "$ART_DIR/02-eval-framework.md" 60 "## DIMENSION 4"
-"$_LB_BIN/lb-relentless-gate" counts "$ART_DIR/02-eval-framework.md"
-"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/02-eval-framework.md"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 2c" "$ART_DIR/02c-eval-framework.md" 40 "DIMENSION 3"
+"$_LB_BIN/lb-relentless-gate" counts "$ART_DIR/02c-eval-framework.md"
+"$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/02c-eval-framework.md"
 ```
 
-If `EVAL_FRAMEWORK_TOO_THIN`: append more observables and re-run. Phase
-3 cannot start until counts meet thresholds.
+If `EVAL_FRAMEWORK_TOO_THIN` (B<5, E<8, F<5): append more observables
+and re-run. Phase 3 cannot start until counts meet thresholds.
 
 ```bash
-"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"eval-framework-FEATURE_SLUG","insight":"B:5|E:12|Q:7|F:9","confidence":9,"source":"observed","files":["RELEVANT_PATHS"]}'
+"$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"architecture","key":"eval-framework-FEATURE_SLUG","insight":"mission|B:5|E:12|Q:14|F:9","confidence":9,"source":"observed","files":["RELEVANT_PATHS"]}'
 ```
 
 ---
 
 ## Phase 3: Plan & Sign-Off
 
-Write `03-plan.md` with this block (filled in):
+Write `03-plan.md` with this block (filled in). The plan must
+explicitly reference the mission and the criteria — it is the bridge
+between what you've written in Phase 2 and the iteration loop in
+Phase 4.
 
 ```
 RELENTLESS PLAN — <feature-slug>
 ═════════════════════════════════════════════════════════════════
-Feature:           [one-line description]
-Approach:          [3-5 bullets — chosen architecture, named decisions]
-Iterations target: ["until eval framework passes" — usually 5-30]
-Eval framework:    B:N E:N Q:N F:N (file: 02-eval-framework.md)
-Target env:        [production | staging] — [reason from Phase 1c]
-Secrets to use:    [.env from dolly-env.txt | other — verbatim from 1c]
-Branch / merge:    [merge-to-main per iter | feature branch + PR cycle]
-Risk areas:        [2-4 bullets — where this could go sideways]
-Decisions made:    [2-5 bullets — non-obvious choices already locked in]
-Out of scope:      [explicit list of "I will NOT do X tonight"]
+Feature:               [one-line description]
+Mission summary:       [one paragraph — paraphrase 02a-mission.md so
+                       this plan is self-contained]
+Approach:              [3-5 bullets — chosen architecture, named
+                       decisions, why they serve the mission]
+Iterations target:     ["until Milan Check clears against the
+                       mission" — empirically 50–60+]
+Eval framework:        B:N E:N F:N (file: 02c-eval-framework.md)
+                       Q:N criteria scored 0–100 (file: 02b-criteria.md)
+Q TOTAL ceiling:       N×100 = NNNN (your gradient-descent ceiling)
+Target env:            [production | staging] — [reason from Phase 1c]
+Secrets to use:        [.env from dolly-env.txt | other — verbatim from 1c]
+Branch / merge:        [merge-to-main per iter | feature branch + PR cycle]
+Risk areas:            [2-4 bullets — where this could go sideways]
+Decisions made:        [2-5 bullets — non-obvious choices already locked in]
+Out of scope:          [explicit list of "I will NOT do X tonight"]
 ═════════════════════════════════════════════════════════════════
 ```
 
@@ -799,16 +956,22 @@ Each iteration is:
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│  4a-i.    HEADER — print iteration N, goal, open observables    │
-│  4a-ii.   BUILD — implement next slice                          │
-│  4a-iii.  COMMIT — atomic, conventional message                 │
-│  4a-iv.   MERGE — rebase / resolve conflicts                    │
-│  4a-v.    DEPLOY — push to LIVE; verify with `gate deploy`       │
-│  4a-vi.   EVALUATE — run EVERY observable across all 4 dims     │
-│  4a-vii.  REVIEW-AGENT triage — bot/CI comments                 │
-│  4a-viii. JUDGE — score iteration; set next goal                │
-│  4a-ix.   WRITE iter-NN.md — full template; gate phase + banned │
-│  4a-x.    PER-ITERATION MILAN CHECK — fill the rows, save       │
+│  4a-i.    HEADER — print ITERATION N loud, prev Q TOTAL, target │
+│  4a-ii.   PLAN — write iter-NN-plan.md (what / how / why /      │
+│           alternatives / best practices / what can go wrong)    │
+│  4a-iii.  SELF-REVIEW — append ## Self-review section, gate     │
+│           plan-reviewed; END with ## Final decision: PROCEED    │
+│  4a-iv.   BUILD — implement the slice the reviewed plan covers  │
+│  4a-v.    COMMIT — atomic, conventional message                 │
+│  4a-vi.   MERGE — rebase / resolve conflicts                    │
+│  4a-vii.  DEPLOY — push to LIVE; verify with `gate deploy`      │
+│  4a-viii. EVALUATE — run EVERY B/E/F observable AND score every │
+│           Q-criterion 0–100 by judgment looking at live output  │
+│  4a-ix.   REVIEW-AGENT triage — bot/CI comments                 │
+│  4a-x.    JUDGE — set next iteration's goal                     │
+│  4a-xi.   WRITE iter-NN.md — full template; gate phase + banned │
+│  4a-xii.  PER-ITERATION MILAN CHECK — fill the rows including   │
+│           Mission alignment + Smart human comparison; save      │
 │           milan-check-iter-NN.md, decide CONTINUE/PROCEED       │
 └─────────────────────────────────────────────────────────────────┘
 ```
@@ -816,9 +979,9 @@ Each iteration is:
 The Milan Check runs at the **end of every iteration**, not only at
 exit. It is the gate that decides whether the loop continues or you
 move to Phase 5 (final report). Most iterations early in the run will
-trivially CONTINUE (binary floor not met, or Q still climbing); the
-exercise of filling the rows still matters because it shapes the next
-iteration's goal.
+trivially CONTINUE (binary floor not met, or Q still climbing, or
+Mission alignment still <75); the exercise of filling the rows still
+matters because it shapes the next iteration's goal.
 
 ### 4a-1. Iteration 1 is special
 
@@ -835,50 +998,227 @@ The intent: prove the deploy path works END-TO-END before doing more
 work. A vertical slice through the most uncertain part of the
 architecture, even if half-baked, is the right iteration-1 build.
 
-### 4a-i. Iteration header
+### 4a-i. Iteration header — print this LOUD
+
+The user wants to see iteration numbers as you work. Print this block
+before doing anything else in the iteration, with the values filled in
+from the prior iter-NN.md. This is one of the few places verbose
+output is warranted — if Milan reads the transcript in the morning,
+the iteration boundaries should be unmissable.
 
 ```
-═════════════════════════════════════════════════════════════════
+═══════════════════════════════════════════════════════════════════
 ITERATION N — $(date -u +%Y-%m-%dT%H:%M:%SZ)
-Goal this round: [one line — what you're trying to achieve]
-Open observables: [count from prior iteration's eval]
-═════════════════════════════════════════════════════════════════
+───────────────────────────────────────────────────────────────────
+ Q TOTAL prev iteration:    [X / N×100, e.g., 720 / 1200]
+ Q moving avg (last 5):     [Y or "n/a if N<6"]
+ Mission alignment (last):  [Z / 100]
+ Goal this round:           [one line — what you're pushing on]
+ Lowest Q-criterion targeted: [Q-id, current score, rubric step you
+                              intend to climb to]
+ Phase order:               PLAN → REVIEW → BUILD → DEPLOY → EVAL → JUDGE
+═══════════════════════════════════════════════════════════════════
 ```
 
-### 4a-ii. Build
+You also write the same block at the top of `iter-NN.md` so the
+artifact is self-contained.
 
-Make the next slice of progress. Slice for max info-per-change. The
-shape of a typical relentless run (assuming non-trivial feature):
+### 4a-ii. PLAN — write `iter-NN-plan.md` BEFORE touching code
+
+Each iteration starts with a written plan. This is the change v3
+adds: the prior version went straight from "next goal" to BUILD,
+which let subtle DRY violations and coupling sneak in.
+
+Write `iter-NN-plan.md` with these sections (the `plan-reviewed` gate
+greps for these exact headers):
+
+```markdown
+## What I want to improve
+The lowest-scoring Q-criterion (or highest-leverage open
+B/E/F observable). Be specific: "push Q4 (voice-match) from 45 → 65"
+not "improve voice".
+
+## In which way
+The concrete approach. Name the files / functions / data flow you
+expect to touch. One paragraph.
+
+## Why this way
+Reasoning. Why this approach beats the alternatives below.
+
+## Alternatives considered
+At least TWO alternatives, each with a one-line rejection reason.
+"I considered X but rejected because Y." If you can't name two
+alternatives, you haven't actually considered the design space —
+go think harder.
+- A) <alternative> — rejected because <reason>
+- B) <alternative> — rejected because <reason>
+
+## Best practices that apply
+Named patterns, principles, or examples from the codebase. Not
+generic platitudes. Examples:
+- "Strangler fig — keep the existing classifier path until the new
+  per-user model is proven on ≥3 iterations."
+- "Use the existing tone-classifier in tests/fixtures/tone.py;
+  don't duplicate the tokenizer."
+- "Brooks: this is essential complexity (per-user signal is real),
+  not accidental — the LLM round-trip is unavoidable."
+
+## What can go wrong
+Walk the blast radius. For each item, name the impact AND the
+mitigation.
+- DRY: <duplication risk>; mitigation: <reuse <named symbol>>
+- Coupling: <module-X reaching into module-Y>; mitigation: <DI hook>
+- Race: <concurrent path>; mitigation: <ordering / lock / idempotency>
+- Backward compat: <existing caller>; mitigation: <fallback / flag>
+- Blast radius: <what else this touches>; mitigation: <bounded scope>
+- State machine impact: <transitions affected>; mitigation: <test>
+- Failure mode the plan doesn't address: <name it>
+
+## Files I expect to touch
+- <path>
+- <path>
+```
+
+### 4a-iii. SELF-REVIEW — append `## Self-review` to the same file
+
+Now, *non-interactively*, review your own plan as a senior eng manager
+would. This is inspired by the gstack `plan-eng-review` skill but
+shrunk and self-contained — no AskUserQuestion, no asking the user.
+You read your own plan and challenge it.
+
+Append a `## Self-review` section to `iter-NN-plan.md` covering each
+of the headings below, then end with a `## Final decision:` line:
+
+```markdown
+## Self-review
+
+### Architecture
+- Does this slice respect existing module boundaries? Where does it
+  reach across?
+- Is the chosen approach "boring by default" or am I spending an
+  innovation token?
+- Could this be a smaller, reversible change (strangler fig, feature
+  flag, parallel impl) instead of a structural rewrite?
+
+### DRY check
+- Walk the codebase for existing functions / classes / patterns that
+  do what this plan duplicates. Name them with paths. Decide reuse
+  vs duplicate, with a reason.
+
+### Coupling check
+- Does this introduce a new dependency edge? Is it the right
+  direction (high-level depends on low-level)? Could it be inverted
+  via DI / interface?
+
+### Race / ordering
+- Are there concurrent execution paths? Webhook + cron, two requests
+  to same row, mid-flight migration? Name the worst case and the
+  defense.
+
+### State machine impact
+- Are any state transitions added, removed, or constrained? Is the
+  validate_transition wired? Are reverse transitions still possible?
+
+### Test coverage gap
+- What tests cover the new behaviour? What tests SHOULD cover it
+  that don't yet? Add them as part of the build, not after.
+
+### Backward compatibility
+- What existing callers / fixtures / clients does this affect?
+  Do they need a flag / shim / migration?
+
+### Failure mode the plan didn't address
+- Re-read 02c-eval-framework.md F-rows. Does this slice introduce a
+  new F-row that should be added? If yes, add it now.
+
+### Mission-fit
+- Does this slice move us toward the mission, or only toward a Q
+  number? If only toward a number, why is the number a good proxy?
+
+### Cross-criterion side effects
+- Does pushing this Q-criterion up risk pushing another DOWN?
+  (e.g., adding a confirmation step might raise "Trust signals" but
+  lower "Effort vs outcome".) Name the trade-off.
+
+## Final decision: PROCEED | REVISED | ABORT
+- If PROCEED: build as planned.
+- If REVISED: write a new "## In which way (revised)" + "## Why
+  revised" sub-section above this line, then re-run plan-reviewed.
+- If ABORT: this iteration's goal becomes "rewrite the plan".
+  iter-NN.md will record the abort and next iteration starts fresh.
+```
+
+Then run the gate:
+
+```bash
+N=<iteration number>
+NZ=$(printf '%02d' $N)
+PLAN_FILE="$ART_DIR/iter-$NZ-plan.md"
+"$_LB_BIN/lb-relentless-gate" phase "Plan iter $N" "$PLAN_FILE" 30 "## Self-review"
+"$_LB_BIN/lb-relentless-gate" plan-reviewed "$PLAN_FILE"
+"$_LB_BIN/lb-relentless-gate" banned "$PLAN_FILE"
+```
+
+If `PLAN_NOT_REVIEWED`: fix the plan file. **Do not skip to BUILD.**
+The whole point of v3's plan-then-review step is that engineering
+mistakes are catchable when you write them down before coding,
+expensive when you find them mid-build, and demoralising when you
+find them mid-Phase-5.
+
+Two failure modes to specifically avoid:
+
+- **The "skim plan-eng-review" failure** — writing a plan that is
+  clearly going through the motions ("Alternative A: don't do it.
+  Alternative B: do it but worse."). Real alternatives only. The
+  rejection reason has to be substantive.
+- **The "review my plan with the plan I wrote" failure** — the
+  self-review section just restates the plan in a different voice.
+  The self-review must add information the plan didn't have:
+  named conflicts, named existing code to reuse, named risks the
+  plan glossed over.
+
+### 4a-iv. Build
+
+Now you build the slice the reviewed plan covers — exactly that
+slice, not a larger one. The plan has been challenged in 4a-iii;
+trust the plan and execute it. If during BUILD you discover something
+that invalidates the plan, STOP, re-open `iter-NN-plan.md`, add a
+"## Mid-build revision" section, re-run `plan-reviewed`, then
+continue.
+
+Slice for max info-per-change. The shape of a typical relentless run
+(assuming non-trivial feature):
 
 - **Iteration 1:** vertical slice exercising the most uncertain part of
   the architecture end-to-end, even if half-baked. Find what's hard
   before committing to a direction. End with a deploy and ≥1 B-pass.
 - **Iterations 2-8:** fill in happy-path observables (Dimension 1) and
   hit the binary floor: every B passes, no regressions.
-- **Iterations 8-15:** harden against edges (Dimension 2) and failure
-  modes (Dimension 4). Pick the highest-leverage open observable.
-- **Iterations 15-60+:** quality polish (Dimension 3) — the bulk of
-  the run. Each iteration picks the lowest-scoring Q-aspect and tries
-  to push it up one rubric band. Some attempts will fail; that's
-  expected and counts as the "exploration proof" the Milan Check
-  demands. Saturation typically arrives in the 30–80 range.
+- **Iterations 8-15:** harden against edges (E) and failure modes (F).
+  Pick the highest-leverage open observable.
+- **Iterations 15-60+:** quality polish — the bulk of the run. Each
+  iteration picks the lowest-scoring Q-criterion and tries to push it
+  up one rubric band. Some attempts will fail; that's expected and
+  counts as the "exploration proof" the Milan Check demands.
+  Saturation typically arrives in the 40–80 range.
 
 Don't spread changes across 30 files in one iteration. Slice such that
 each iteration is small enough to deploy, score, and learn from.
 
-**Picking the next Q-target:** read `iter-(N-1).md`, find the Q-aspect
-with the lowest score whose rubric you have a concrete idea for
-moving. Set that as iteration N's goal. If multiple Q-aspects are
-tied at the bottom, pick the one whose rubric step you have the
-clearest plan for.
+**Picking the next Q-target:** read `iter-(N-1).md`, find the
+Q-criterion with the lowest score whose rubric you have a concrete
+idea for moving. Set that as iteration N's goal in the iteration
+header AND in `iter-NN-plan.md`'s "What I want to improve" section.
+If multiple Q-criteria are tied at the bottom, pick the one whose
+rubric step you have the clearest plan for.
 
-### 4a-iii. Commit
+### 4a-v. Commit
 
 Atomic commits, conventional messages, one logical change each. Trailer
 with co-author per repo convention. NO `git add -A` — stage by name to
 avoid accidentally including secrets, fixtures, or unrelated edits.
 
-### 4a-iv. Merge
+### 4a-vi. Merge
 
 ```bash
 git fetch origin
@@ -898,7 +1238,7 @@ progress that fundamentally rearranges your area), stash your work,
 log a `DEFERRED` decision in the iteration log, and pivot to the next
 highest-leverage observable that doesn't touch the contested area.
 
-### 4a-v. Deploy
+### 4a-vii. Deploy
 
 Use the project's deploy mechanism. Do not invent your own. Verify it
 went LIVE.
@@ -933,13 +1273,16 @@ and your iteration touches a code path users hit (auth, payment, data
 mutation), deploy to staging instead of prod. The prod-only proof goes
 in the morning report.
 
-### 4a-vi. Evaluate
+### 4a-viii. Evaluate
 
 Run EVERY observable from EVERY dimension. Not just new ones — ALL.
 You may have introduced a regression in B3 while fixing E7. Re-running
 the full suite catches that.
 
-Use the right tool per observable:
+There are TWO distinct kinds of evaluation in this phase:
+
+**(1) Binary B/E/F evaluation — deterministic.** Use the right tool
+per observable:
 
 - **UI** → `$B` (browse), screenshots saved to
   `$ART_DIR/iter-$N-evidence/B1.png` (etc.)
@@ -949,6 +1292,36 @@ Use the right tool per observable:
   production (or staging) DB
 - **Side-effect** → check the actual destination (S3 bucket, email
   sandbox, webhook log, queue depth, error tracker)
+
+PASS / FAIL / DEFERRED with named evidence per row.
+
+**(2) Q evaluation — judgment, not metrics.** This is the part that
+makes /relentless work for LLM-driven systems. For each Q-criterion
+in `02b-criteria.md`:
+
+- Trigger the live behaviour the criterion measures. Save evidence
+  (screenshot, log, generated artefact, transcript) under
+  `$ART_DIR/iter-$N-evidence/Q<id>-...`.
+- LOOK at the evidence and THINK like a brilliant human reviewer.
+  Score against the 0–100 rubric you wrote in 2b. The score should
+  reflect what a thoughtful person would actually say, not what fits
+  the rubric mechanically.
+- In the "Notes" column, write what specifically would push the
+  score higher. This is the seed for the next iteration's plan.
+- If you find yourself scoring everything 70–80, you're either
+  short-cutting the rubric or the rubric was written too generously.
+  Re-read 2b and rescore honestly. The whole gradient-descent only
+  works if scores are honest.
+
+Two anti-shortcut rules:
+
+- **No batch-scoring.** Score one criterion at a time, with the
+  evidence in front of you. Don't write "Q1=72, Q2=70, Q3=68" from
+  memory after running tests.
+- **No symmetric movement.** It is suspicious if every Q score moved
+  +5 in one iteration. That usually means you scored optimistically
+  rather than judgmentally. A real iteration moves 1–3 criteria
+  meaningfully and leaves the rest near unchanged.
 
 **No skip markers.** If your test framework supports skip markers
 (pytest `@pytest.mark.skip`, jest `xtest`, RSpec `xit`, etc.) and you
@@ -963,8 +1336,8 @@ A test suite output of "32 passed, 7 skipped" without each skip
 itemised in the eval table is a violation of Iron Law #2.
 
 Output the eval table to `iter-NN.md`. Binary rows (B/E/F) are
-PASS/FAIL/DEFERRED. Q rows are scored 0–10 with the delta vs the prior
-iteration:
+PASS/FAIL/DEFERRED. Q rows are scored 0–100 with the delta vs the
+prior iteration:
 
 ```markdown
 ## Eval — Iteration N
@@ -980,14 +1353,14 @@ iteration:
 
 Binary: PASS K/N · FAIL J/N · DEFERRED D/N (each with named blocker)
 
-### Quality scores (Q) — 0–10 against the Phase 2c rubrics
+### Quality scores (Q) — 0–100 against the Phase 2b rubrics — JUDGMENT, not metrics
 
-| ID  | Aspect                | Score (iter N) | Δ vs N-1 | Evidence | Notes — what would push it higher |
-|-----|-----------------------|----------------|----------|----------|------------------------------------|
-| Q1  | Error message quality | 7              | +2       | iter-N-evidence/Q1-trigger.png | name the offending field; offer recovery |
-| Q2  | Empty state           | 5              | 0        | iter-N-evidence/Q2-empty.png   | add illustration; suggest next action |
-| Q3  | Latency               | 8              | +1       | iter-N-evidence/Q3-trace.json  | cache the second fetch |
-| ... | ...                   | ...            | ...      | ...      | ...                                  |
+| ID  | Criterion           | Score (iter N) | Δ vs N-1 | Evidence | Notes — what a brilliant human would push to next |
+|-----|---------------------|----------------|----------|----------|----------------------------------------------------|
+| Q1  | Knows the user      | 62             | +7       | iter-N-evidence/Q1-suggest.png | next: pick up that the user disabled Friday meetings on iter 3 |
+| Q2  | Voice & tone match  | 45             | +0       | iter-N-evidence/Q2-email.txt   | next: drop the corporate "I hope this finds you well" opener |
+| Q3  | Fault-tolerance     | 78             | +3       | iter-N-evidence/Q3-net-down.log | next: surface the retry to the user instead of silent |
+| ... | ...                 | ...            | ...      | ...      | ...                                                 |
 
 Q TOTAL (sum of scores): SUM_N (Δ vs N-1: ±X)
 Q AVG: AVG_N
@@ -996,12 +1369,19 @@ Q MOVING_AVG (last 5 iters incl. this): MA_N
 
 Saving the score history matters: the Milan Check reads the last 5
 iterations' Q TOTAL to detect saturation. Always include the row even
-on iterations where Q didn't change ("Δ 0" is data).
+on iterations where Q didn't change ("Δ 0" is data — it shows the
+attempt didn't move the score, which is the "exploration proof" the
+Milan Check looks for).
+
+The `Q TOTAL (sum of scores): SUM_N` line is required — the
+`q-saturated` gate parses it. With ≥12 criteria × 0–100, Q TOTAL is
+in the 0–1200+ range; saturation default range is 12 across a window
+of 5 iterations.
 
 For every FAIL: capture which observable, actual result, your one-line
 diagnosis hypothesis, and what the next iteration will try.
 
-### 4a-vii. Review-agent triage
+### 4a-ix. Review-agent triage
 
 If the repo has automated reviewers (CodeRabbit, Codex review, Claude
 review action, ESLint comments on PR, etc.), pull comments and triage:
@@ -1025,7 +1405,7 @@ For each comment:
 Do not get stuck in a comment-resolution death spiral. The framework
 is your north star, not the bot's preferences.
 
-### 4a-viii. Judge — decide the next move
+### 4a-x. Judge — decide the next move
 
 Look at the eval result and ask, with high-thinking judgment:
 
@@ -1048,15 +1428,32 @@ Look at the eval result and ask, with high-thinking judgment:
 
 Set the next iteration's goal explicitly. One line.
 
-### 4a-ix. Write iter-NN.md
+### 4a-xi. Write iter-NN.md
 
-Write the iteration file using this template (fill every section):
+Write the iteration file using this template (fill every section).
+The first block re-prints the iteration header so the file is
+self-contained for `lb-relentless-gate iteration-summary` and for
+the morning report.
 
 ```markdown
 # Iteration N — <YYYY-MM-DD HH:MM:SS>
 
+═══════════════════════════════════════════════════════════════════
+ITERATION N
+ Q TOTAL prev iteration:    <X>
+ Q moving avg (last 5):     <Y or "n/a">
+ Mission alignment (last):  <Z / 100>
+ Goal this round:           <one line>
+═══════════════════════════════════════════════════════════════════
+
 ## Goal this round
-<one line>
+<one line — the gate parses the line BELOW this header for the
+iteration-summary table, so keep it short and substantive>
+
+## Plan & self-review
+- Plan file: iter-NN-plan.md
+- Final decision: PROCEED | REVISED | ABORT
+- Notable risks called out in self-review: <one line>
 
 ## Built
 - <file path:lines>: <change>
@@ -1070,9 +1467,10 @@ Write the iteration file using this template (fill every section):
 - Live URL verified: <url>
 
 ## Eval
-[full table from 4a-vi]
+[full table from 4a-viii — both binary and Q tables]
 
 PASS: M/TOTAL · FAIL: K/TOTAL · DEFERRED: D · REGRESSED: J
+Q TOTAL (sum of scores): SUM_N (Δ vs N-1: ±X)
 
 ## Decisions made this iteration
 - D-N.1: chose X over Y because Z
@@ -1092,7 +1490,7 @@ N=<iteration number>
 NZ=$(printf '%02d' $N)
 ITER_FILE="$ART_DIR/iter-$NZ.md"
 # (write the file)
-"$_LB_BIN/lb-relentless-gate" phase "Iteration $N" "$ITER_FILE" 30 "## Eval"
+"$_LB_BIN/lb-relentless-gate" phase "Iteration $N" "$ITER_FILE" 35 "## Eval"
 "$_LB_BIN/lb-relentless-gate" banned "$ITER_FILE"
 "$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"operational","key":"iteration-FEATURE_SLUG-'$N'","insight":"GOAL|EVAL_RESULT|NEXT_GOAL","confidence":8,"source":"observed","files":["TOUCHED_FILES"]}'
 ```
@@ -1101,7 +1499,7 @@ If `phase_gate` fails: edit the iteration file until it passes. If
 `banned_phrase_check` fails: rewrite to strip the banned phrase, then
 re-run.
 
-### 4a-x. Per-iteration Milan Check + iteration 1 deploy gate
+### 4a-xii. Per-iteration Milan Check + iteration 1 deploy gate
 
 #### Iteration 1 deploy gate
 After iter-01.md is written:
@@ -1143,48 +1541,82 @@ THREE things, not just yes/no:
    you haven't engaged with the row — re-read the rubric and try
    again.
 
-Then run the per-iteration gate:
+Then run the per-iteration gates. **All four must pass before
+PROCEED is allowed**; if any fails, the verdict is forced to
+CONTINUE LOOP regardless of what you wrote.
 
 ```bash
-"$_LB_BIN/lb-relentless-gate" phase "Milan iter $N" \
-  "$ART_DIR/milan-check-iter-$(printf '%02d' $N).md" 28 "VERDICT:"
-"$_LB_BIN/lb-relentless-gate" banned \
-  "$ART_DIR/milan-check-iter-$(printf '%02d' $N).md"
-"$_LB_BIN/lb-relentless-gate" milan-rows-justified \
-  "$ART_DIR/milan-check-iter-$(printf '%02d' $N).md"
+NZ=$(printf '%02d' $N)
+MILAN_FILE="$ART_DIR/milan-check-iter-$NZ.md"
+
+"$_LB_BIN/lb-relentless-gate" phase "Milan iter $N" "$MILAN_FILE" 32 "VERDICT:"
+"$_LB_BIN/lb-relentless-gate" banned "$MILAN_FILE"
+"$_LB_BIN/lb-relentless-gate" milan-rows-justified "$MILAN_FILE"
+
+# mission-bar-met is required even at iteration level, but only ENFORCED
+# (i.e., its non-zero exit forces CONTINUE) when the verdict line says
+# PROCEED TO REPORT. This lets early iterations honestly say CONTINUE
+# without being blocked, while preventing premature PROCEED.
+if grep -qE '^VERDICT:[[:space:]]*PROCEED' "$MILAN_FILE"; then
+  if ! "$_LB_BIN/lb-relentless-gate" mission-bar-met "$MILAN_FILE"; then
+    echo "FORCED_CONTINUE: mission-bar not yet met; rewriting verdict to CONTINUE LOOP" >&2
+    sed -i.bak 's/^VERDICT:.*PROCEED TO REPORT.*/VERDICT: CONTINUE LOOP — mission-bar not met/' "$MILAN_FILE"
+  fi
+fi
 ```
 
 `milan-rows-justified` checks that every Milan row has been answered
 substantively (yes/no AND evidence AND a "considered-but-didn't-do"
 clause). Bare yes/no rows fail the gate.
 
+`mission-bar-met` (only enforced on PROCEED verdicts) requires the
+**Mission alignment** row to score ≥75/100 with substantive evidence,
+AND the **Smart human comparison** row to list ≥3 specific things a
+brilliant human would do that you haven't. Without these, the
+sed-rewrite forces the verdict back to CONTINUE LOOP.
+
 If verdict is `CONTINUE LOOP`: the next iteration's goal is the
 specific row whose "considered but didn't do" item you'll now do, OR
-the lowest-scoring Q-aspect, whichever has more leverage.
+the lowest-scoring Q-criterion, whichever has more leverage.
 
-If verdict is `PROCEED TO REPORT`: you may exit Phase 4. Phase 5 will
-do the canonical Milan Check one more time as the final gate (it
-reads the latest milan-check-iter-NN.md plus the score curve).
+If verdict is `PROCEED TO REPORT` and all gates passed: you may exit
+Phase 4. Phase 5 will do the canonical Milan Check one more time as
+the final gate.
 
-### 4b. Loop exit conditions — saturation, not completion
+### 4b. Loop exit conditions — saturation against the mission, not completion
 
-The per-iteration Milan Check (4a-x) is the gate that decides whether
-the loop continues. The loop exits to Phase 5 ONLY when the latest
-`milan-check-iter-NN.md` verdict is `PROCEED TO REPORT` AND ALL of
-these hold:
+The per-iteration Milan Check (4a-xii) is the gate that decides
+whether the loop continues. The loop exits to Phase 5 ONLY when the
+latest `milan-check-iter-NN.md` verdict is `PROCEED TO REPORT` AND
+ALL of these hold:
 
 1. **Binary floor:** all B/E/F observables PASS (or DEFERRED with
    named blocker), no regressions in last 3 iterations.
-2. **Q saturation:** the moving average of Q TOTAL across the last 5
-   iterations changed by ≤ 0.5 — i.e., the optimisation has plateaued.
-   Computed by `lb-relentless-gate q-saturated`.
+2. **Q saturation:** the range of Q TOTAL across the last 5
+   iterations is ≤ N_CRITERIA (defaults to 12 on the new 0–100
+   scale) — i.e., the optimisation has plateaued. Computed by
+   `lb-relentless-gate q-saturated`.
 3. **Exploration proof:** at least one iteration in the run where you
    tried a Q-improvement and it *didn't* move the score. Proves you've
    explored the design space, not just picked low-hanging fruit.
-4. **No blind eye:** the per-iteration Milan Check has a substantive
-   "considered but didn't" entry on every row, and the latest
-   "no blind eye" row enumerates 2–3 things you actively searched for
-   to improve and judged genuinely acceptable to leave.
+4. **Mission alignment ≥ 75/100** in the latest Milan Check, with
+   substantive evidence. Computed by `lb-relentless-gate
+   mission-bar-met`.
+5. **Smart-human-comparison row populated** with ≥3 things a brilliant
+   human would do that you haven't (also enforced by
+   `mission-bar-met`).
+6. **No blind eye:** the per-iteration Milan Check has a substantive
+   "considered but didn't" entry on every row, and the latest "no
+   blind eye" row enumerates 2–3 things you actively searched for to
+   improve and judged genuinely acceptable to leave.
+
+**The two-iterations test.** If you find yourself considering exit at
+iteration 2, 3, 4, or 5 — re-read the user's framing in the TL;DR:
+*"An agent that does 2 iterations can't be called to be relentless."*
+A small handful of iterations is "implementation done, declared
+victory" — not relentless. The exit gate is honest only if the
+mission is genuinely realised AND the Q curve has actually plateaued
+across 5 iterations. Empirically this lands in the 50–60+ range.
 
 OR ONE of these hard exits:
 
@@ -1221,7 +1653,7 @@ You do NOT exit because:
 ## Phase 5: The Milan Check (final)
 
 The Milan Check has already run at the end of every iteration in
-Phase 4 (see 4a-x). Phase 5 is the final, canonical pass: read the
+Phase 4 (see 4a-xii). Phase 5 is the final, canonical pass: read the
 latest `milan-check-iter-NN.md`, evolve it into `99-milan-check.md`
 with the full picture across the run, and decide.
 
@@ -1233,6 +1665,15 @@ with the full picture across the run, and decide.
 
 That's the bar. Answering the rows requires actively searching for
 the things you didn't do — not just defending the things you did.
+
+A specific failure mode v3 closes: in the prior run, the agent
+declared the Milan check passed AND in the same final report listed
+concrete remaining concerns ("Status: DONE_WITH_CONCERNS"). That is
+not relentless. If you can name remaining concerns, those concerns
+are not "deferred" — they are the next iteration's goal. The
+`mission-bar-met` gate enforces this by demanding a Mission alignment
+score ≥75 with substantive evidence, which is impossible to honestly
+write while listing fixable concerns.
 
 Each row demands THREE parts, not just yes/no:
 
@@ -1257,6 +1698,44 @@ must include verdict + evidence + considered-but-didn't-do.
 
 Will he be impressed by:
 
+  Mission alignment
+    Verdict:                 yes/no
+    Evidence:                <SCORE 0-100> — <one paragraph: how
+                             the work realises the mission written in
+                             02a-mission.md, naming the specific
+                             implicit-expectations and the
+                             "what-a-great-human-would-build"
+                             elements that landed>
+    Considered but didn't:   <one concrete way to push the alignment
+                             score higher, and why it's genuinely
+                             out of scope tonight (NOT "would need
+                             one more iteration" — that just means
+                             do one more iteration)>
+
+  Smart human comparison
+    Verdict:                 yes/no
+    Evidence:
+      - <Q-id, current score>: <what a brilliant human would do
+        that I haven't, in one sentence>
+      - <Q-id, current score>: <same>
+      - <Q-id, current score>: <same>
+      (At least 3 lines required by the mission-bar-met gate.)
+    Considered but didn't:   <a more radical alternative you
+                             considered for one of these and
+                             rejected, with reason>
+
+  Missing criteria audit
+    Verdict:                 yes/no
+    Evidence:
+      - <criterion you didn't list in 02b-criteria.md, that with
+        hindsight you should have>: <one sentence rationale + your
+        score against this hindsight criterion>
+      - <same>
+      - <same>
+    Considered but didn't:   <a 4th hindsight criterion you decided
+                             not to add — why it's genuinely
+                             out of scope vs the mission>
+
   Functionality
     Verdict:                 yes/no
     Evidence:                iter-NN.md B-rows: M/N PASS at <URL>
@@ -1278,17 +1757,27 @@ Will he be impressed by:
   Quality saturation
     Verdict:                 yes/no
     Evidence:                Q TOTAL trajectory across iters N-4..N is
-                             [a, b, c, d, e]; moving-avg range ≤ 0.5
-    Considered but didn't:   <one concrete Q-aspect you didn't attempt
-                             to push higher, with reason>
+                             [a, b, c, d, e]; range ≤ N_CRITERIA
+                             (default 12 on the 0–100 scale)
+    Considered but didn't:   <one concrete Q-criterion you didn't
+                             attempt to push higher, with reason>
 
   Q score curve
     Verdict:                 yes/no
-    Evidence:                Q AVG iter 1 = X.X → iter N = Y.Y;
+    Evidence:                Q AVG iter 1 = X → iter N = Y;
                              biggest gain: iter A→A+1 (Q+Z); plateau
                              starts iter B
-    Considered but didn't:   <a Q-aspect that's still <8 — why
+    Considered but didn't:   <a Q-criterion that's still <70 — why
                              stopping there is acceptable>
+
+  Plan + self-review discipline
+    Verdict:                 yes/no
+    Evidence:                <K> iterations, <K> iter-NN-plan.md files
+                             with PROCEED/REVISED/ABORT decisions; the
+                             3 most consequential plan revisions are
+                             at iters <A>, <B>, <C>
+    Considered but didn't:   <an iteration where the plan was thin —
+                             what you'd write differently with hindsight>
 
   Decision audit
     Verdict:                 yes/no
@@ -1308,7 +1797,9 @@ Will he be impressed by:
   Real (not mocked) test
     Verdict:                 yes/no
     Evidence:                iter-NN.md eval table cites live URL /
-                             live DB / real S3 (not local mocks)
+                             live DB / real S3 (not local mocks);
+                             Q-criteria scored from live evidence
+                             (screenshots / logs in iter-N-evidence/)
     Considered but didn't:   <e.g., didn't test against real third-
                              party sandbox X; reason>
 
@@ -1328,58 +1819,88 @@ Will he be impressed by:
     Considered but didn't:   N/A — this row IS the considered-list
 
 Will he suspect:
-  Stopped too soon:              risk: low/medium/high — why
-  Q saturation faked:            risk: low/medium/high — were scores
-                                  honest against the rubric?
-  Validation-seeking:            risk: low/medium/high — banned phrases?
-  Slop disguised as done:        risk: low/medium/high — why
-  Skipped tests passing as DONE: risk: low/medium/high — pytest skips?
-  Blind eye to obvious upside:   risk: low/medium/high — did we ignore
-                                  something an outside reviewer would
-                                  immediately raise?
+  Stopped too soon:                  risk: low/medium/high — why
+  Q saturation faked:                risk: low/medium/high — were scores
+                                      honest against the rubric?
+  Validation-seeking:                risk: low/medium/high — banned phrases?
+  Slop disguised as done:            risk: low/medium/high — why
+  Skipped tests passing as DONE:     risk: low/medium/high — pytest skips?
+  Blind eye to obvious upside:       risk: low/medium/high — did we ignore
+                                      something an outside reviewer would
+                                      immediately raise?
+  Mission satisfied vs requirements: risk: low/medium/high — did we
+                                      build the great version or the
+                                      junior-dev version?
 ═══════════════════════════════════════════════════════════════════
 VERDICT: PROCEED TO REPORT  |  CONTINUE LOOP
 ```
 
 ```bash
-"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 60 "VERDICT:"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 5" "$ART_DIR/99-milan-check.md" 80 "VERDICT:"
 "$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/99-milan-check.md"
 "$_LB_BIN/lb-relentless-gate" milan-rows-justified "$ART_DIR/99-milan-check.md"
-"$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5 0.5
+"$_LB_BIN/lb-relentless-gate" mission-bar-met "$ART_DIR/99-milan-check.md"
+"$_LB_BIN/lb-relentless-gate" q-saturated "$ART_DIR" 5
 ```
 
 Decision rules (apply in order):
 
 1. Any "Will he be impressed" row at "no" → CONTINUE LOOP. Next
    iteration's goal: flip that no.
-2. Any row missing a "Considered but didn't" entry → fix the row, treat
-   the verdict as `no` until filled. Blind-eye violations void the gate.
-3. "Live deploy proof" at "no" → CONTINUE LOOP.
-4. "Real (not mocked) test" at "no" → CONTINUE LOOP.
-5. "Quality saturation" at "no" → CONTINUE LOOP.
-6. "Exploration proof" at "no" → CONTINUE LOOP.
-7. "No blind eye" at "no" → CONTINUE LOOP, with the next iteration's
-   goal being the most leveraged item from your list.
-8. "Skipped tests passing as DONE" at >low → CONTINUE LOOP.
-9. "Q saturation faked" at >low → re-score honestly against the
-   rubrics; if any score moves, your saturation evaluation resets.
-10. "Blind eye to obvious upside" at >low → CONTINUE LOOP.
-11. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
-12. Any "yes" row without named evidence → treat as no.
-13. Any risk at "medium" → judgment call. Articulate why medium is
+2. Any row missing a "Considered but didn't" entry → fix the row,
+   treat the verdict as `no` until filled. Blind-eye violations void
+   the gate.
+3. **Mission alignment <75/100 → CONTINUE LOOP.** This is the new v3
+   hard floor. The mission is the gradient you're descending; if the
+   work doesn't realise it, more iterations are mandatory.
+4. **Smart human comparison row with <3 substantive lines → CONTINUE
+   LOOP.** Empty or shallow lines mean you haven't actually thought
+   about what a brilliant human would do differently.
+5. **Missing criteria audit empty → CONTINUE LOOP.** With hindsight
+   from N iterations, you should be able to name 3 criteria you
+   missed at the start. If you can't, you're not engaging with the
+   audit.
+6. "Live deploy proof" at "no" → CONTINUE LOOP.
+7. "Real (not mocked) test" at "no" → CONTINUE LOOP.
+8. "Quality saturation" at "no" → CONTINUE LOOP.
+9. "Exploration proof" at "no" → CONTINUE LOOP.
+10. "Plan + self-review discipline" at "no" → CONTINUE LOOP.
+11. "No blind eye" at "no" → CONTINUE LOOP, with the next iteration's
+    goal being the most leveraged item from your list.
+12. "Skipped tests passing as DONE" at >low → CONTINUE LOOP.
+13. "Q saturation faked" at >low → re-score honestly against the
+    rubrics; if any score moves, your saturation evaluation resets.
+14. "Blind eye to obvious upside" at >low → CONTINUE LOOP.
+15. "Mission satisfied vs requirements" at >low → CONTINUE LOOP. This
+    is the new v3 row: it forces you to confront whether you built the
+    junior version that satisfies requirements or the great version
+    the mission asked for.
+16. Any "Will he suspect" risk at "high" → CONTINUE LOOP.
+17. Any "yes" row without named evidence → treat as no.
+18. Any risk at "medium" → judgment call. Articulate why medium is
     acceptable; if you can't, CONTINUE.
-14. All yes + all low + `q-saturated` returned 0 + every row has a
-    substantive "considered but didn't" entry → PROCEED TO REPORT.
+19. **The "open items" reconciliation rule.** Cross-check
+    `99-milan-check.md` against the "Open items" section you intend
+    to write in the final report. Any item there that is fixable
+    *within the current scope* (not external like "Brian's webhook
+    is a stub" or "STRIPE_KEY missing per Phase 1c") → that item
+    becomes the next iteration's goal. CONTINUE LOOP. Open items
+    are reserved for genuinely external blockers, not "things I
+    didn't get to."
+20. All yes + all low + `q-saturated` returned 0 + `mission-bar-met`
+    returned 0 + every row has a substantive "considered but didn't"
+    entry → PROCEED TO REPORT.
 
 **On iteration count:** the prior version of this gate had a
 "too-low iteration count" hard rule. Removed — different features
 need different runways. But the *signal* of a good relentless run is
 typically 50–60+ iterations. If you're considering PROCEED at <20
-iterations, that is itself a strong prompt to re-read the Q rubrics
-and the "Considered but didn't" entries: are you sure there's nothing
-left? If the moving-average plateau is real and the considered-list
-is honest, short runs are fine. If you're using saturation as a
-shortcut, the gate will catch it via the "Q saturation faked" row.
+iterations, that is itself a strong prompt to re-read the Q rubrics,
+the "Considered but didn't" entries, AND the Mission alignment
+evidence: are you sure there's nothing left to push? Two-iteration
+runs almost always fail the mission-bar-met gate honestly because
+the Q curve hasn't had time to plateau and the Mission alignment row
+can't be substantively populated yet.
 
 If you PROCEED, do it. If you CONTINUE, go back to 4a-i with iteration
 N+1. There is no shame in iteration 27 being "the Milan Check told me
@@ -1394,12 +1915,47 @@ It should be skimmable in 30 seconds and drillable to depth where he
 wants to go. Save to `$ART_DIR/99-final-report.md` AND echo to the
 conversation.
 
+The **iteration timeline table** is generated from the iter-NN.md
+files by `lb-relentless-gate iteration-summary`. Inline its output
+into the report so Milan can see the gradient-descent shape — what
+got fixed, when, and how the Q TOTAL evolved.
+
+```bash
+ITER_TABLE=$("$_LB_BIN/lb-relentless-gate" iteration-summary "$ART_DIR")
+echo "$ITER_TABLE" > "$ART_DIR/iteration-table.md"
+```
+
+Then write the final report (substitute `$ITER_TABLE` where shown):
+
 ```markdown
 # Relentless Report — <feature-slug> — <YYYY-MM-DD>
 
 ## TL;DR
-<3-5 lines: what shipped, env it shipped to, eval pass rate, iteration
-count, live URL>
+<3-5 lines: what shipped, env it shipped to, B/E/F pass rate, Q TOTAL
+final / ceiling, Mission alignment score, iteration count, live URL>
+
+## Mission realised
+One paragraph paraphrasing 02a-mission.md AND the Mission-alignment
+row from 99-milan-check.md — what specifically about this work
+realises the mission, with named evidence (live URLs, screenshots,
+transcripts).
+
+## Iteration timeline & scores
+
+(table generated by `lb-relentless-gate iteration-summary $ART_DIR`)
+
+| #  | Goal this round | Built (one line) | Q TOTAL | Δ | Milan |
+|----|-----------------|-------------------|---------|---|-------|
+| 1  | ...             | ...               | ...     | — | CONTINUE |
+| 2  | ...             | ...               | ...     | +X | CONTINUE |
+| ...| ...             | ...               | ...     | ...| ...    |
+| N  | ...             | ...               | ...     | +X | PROCEED |
+
+Q TOTAL trajectory:  iter 1 = X → iter N = Y  (ceiling: N_CRITERIA × 100)
+Mission alignment:   iter 1 = X/100 → iter N = Y/100
+Saturation arrived:  iter B (range across iters B..N ≤ N_CRITERIA)
+Biggest single gain: iter A→A+1 (Q+Z)
+Exploration moments: iters [where Q didn't move despite an attempt]
 
 ## What changed
 - <bullet — files / surfaces / endpoints — link to commits>
@@ -1408,8 +1964,9 @@ count, live URL>
 ## Eval results
 - Behaviour:        N / N PASS
 - Edge cases:       N / N PASS  (M known-deferred — see Open items)
-- Quality:          N / N PASS  (polish iterations: N1, N2)
 - Failure modes:    N / N PASS
+- Quality (Q):      M criteria, Q TOTAL = X / (M×100); Mission
+                    alignment = Y/100
 
 [full eval table inline from latest iter-NN.md]
 
@@ -1422,35 +1979,44 @@ count, live URL>
 - <bullet — and why>
 
 ## Open items
-- <bullet — anything you couldn't resolve, with a recommendation>
-- <bullet — any deferred prereq from Phase 1c>
+**Reconciliation rule:** Every item here must be a genuinely external
+blocker (Phase 1c-deferred prereq, third-party stub, etc.). Items that
+were "things I didn't get to" are violations of the v3 mission-bar
+gate — they should have been the goal of more iterations, not deferred
+to here.
 
-## Iteration timeline
-N iterations across <duration>. Hot spots:
-- Iterations 3-5: <what was hard>
-- Iteration 12: <pivot moment>
+- <bullet — external blocker, with recommendation>
+- <bullet — Phase 1c deferred prereq>
 
 ## Files touched
 <git diff origin/main --stat output, edited for noise>
 
 ## Where to look first
-- <bullet — the part Milan should sanity-check first>
+- <bullet — the part Milan should sanity-check first, ideally tied
+  to the Mission alignment row>
 
 ## Status: DONE | DONE_WITH_CONCERNS | BLOCKED
 ```
 
+After writing:
+
 ```bash
-"$_LB_BIN/lb-relentless-gate" phase "Phase 6" "$ART_DIR/99-final-report.md" 40 "## Eval results"
+"$_LB_BIN/lb-relentless-gate" phase "Phase 6" "$ART_DIR/99-final-report.md" 50 "Iteration timeline"
 "$_LB_BIN/lb-relentless-gate" banned "$ART_DIR/99-final-report.md"
 ```
 
 Status definitions:
 
 - **DONE:** all eval observables PASS, no high-risk Milan-Check rows,
-  no open prereq gaps that block functionality.
-- **DONE_WITH_CONCERNS:** most observables PASS, but at least one
-  meaningful gap exists that Milan should look at. Each concern listed
-  explicitly.
+  no open prereq gaps that block functionality, Mission alignment
+  ≥75/100.
+- **DONE_WITH_CONCERNS:** *should not happen in v3.* If you find
+  yourself wanting to use this status, the items in "Open items" are
+  almost certainly the next iteration's goal — go back to Phase 4.
+  This status is reserved for the rare case where every concern is a
+  genuinely external blocker (e.g., another team's repo, third-party
+  outage) AND Mission alignment ≥75 was honestly achieved despite
+  that.
 - **BLOCKED:** a hard external prerequisite was missing and you
   genuinely could not work around it. Be specific about what unlocks
   progress.

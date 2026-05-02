@@ -10,10 +10,22 @@
 #   banned FILE
 #   deploy URL SHA_SHORT
 #   iter1-ok ITER01_FILE
-#   counts FILE                        — print B/E/Q/F observable counts
+#   counts FILE                        — print B/E/F observable counts
+#   q-criteria-count FILE [MIN]        — Q-criteria count check (default ≥12)
+#   mission-defined FILE               — mission file has required sections
+#   plan-reviewed FILE                 — iter plan has plan + self-review +
+#                                        final-decision sections
 #   q-saturated ART_DIR [WIN] [DELTA]  — Q TOTAL moving-avg plateau check
+#                                        (default DELTA scales with Q range:
+#                                        12 for ≥100-scale, 0.5 for ≤10-scale)
 #   milan-rows-justified FILE          — every Milan row has verdict +
 #                                        evidence + considered-but-didn't
+#   mission-bar-met FILE               — Milan check has Mission alignment
+#                                        row at score ≥ 75 with substantive
+#                                        evidence + smart-human row populated
+#   iteration-summary ART_DIR          — emit a markdown table summarising
+#                                        every iter-NN.md (number, goal,
+#                                        Q TOTAL, Δ, milan verdict, fixes)
 #
 # Exit codes:
 #   0 — gate passed
@@ -48,15 +60,40 @@ Subcommands:
       least one B-row PASS (the iteration-1 done-criterion).
 
   counts FILE
-      Print B/E/Q/F observable counts. Used by Phase 2 to enforce
-      minimums (B≥5, E≥8, Q≥5, F≥5). Stdout: "B=N E=N Q=N F=N TOTAL=N".
-      Exit 1 if any minimum is unmet.
+      Print B/E/F observable counts (B≥5, E≥8, F≥5). Stdout:
+      "B=N E=N F=N TOTAL=N". Exit 1 if any minimum is unmet. (Q is
+      counted separately by q-criteria-count to allow the new
+      mission-derived 0–100 scale with a different minimum.)
+
+  q-criteria-count FILE [MIN]
+      Count Q-criteria in FILE (lines starting with "Q[0-9]+:") and
+      enforce a minimum (default MIN=12). The user requested "the
+      agent should come up with a lot of them each time"; this is
+      where that's enforced. Stdout: "Q=N MIN=M". Exit 1 if Q < MIN.
+
+  mission-defined FILE
+      Phase 2a: the mission file must declare what is being built,
+      for whom, why it matters, what the most thoughtful human in the
+      world would build, and the user mental model. Checks for
+      required headers: "## Mission", "## User mental model",
+      "## What a great human would build", "## Failure of
+      imagination". Exit 1 with named missing sections.
+
+  plan-reviewed FILE
+      Phase 4a-iii: the iteration plan file must contain
+      "## What I want to improve", "## In which way",
+      "## Why this way", "## Alternatives considered",
+      "## What can go wrong", "## Self-review", and a
+      "## Final decision: PROCEED" or "## Final decision: REVISED"
+      line. Exit 1 with named missing sections.
 
   q-saturated ART_DIR [WINDOW] [MAX_DELTA]
       Read Q TOTAL from the last WINDOW iter-NN.md files in ART_DIR
-      (default WINDOW=5). Compute the moving-average delta. Exit 0 if
-      ≤ MAX_DELTA (default 0.5) — i.e., Q has plateaued. Exit 1 if
-      still climbing (more iterations to do) or window is too small.
+      (default WINDOW=5). Compute the range across the window.
+      Exit 0 if ≤ MAX_DELTA — i.e., Q has plateaued.
+      MAX_DELTA auto-detects scale: if any Q TOTAL > 100, default
+      is 12 (suits 12 criteria × 0–100); else default 0.5 (legacy
+      0–10 scale). Exit 1 if still climbing or window too small.
       Each iter-NN.md must contain a "Q TOTAL (sum of scores): X" line.
 
   milan-rows-justified FILE
@@ -66,6 +103,21 @@ Subcommands:
       (Milan won't be happy if he thinks you turned a blind eye on
       something that could have been improved). Exit 0 if every row
       is fully justified; exit 1 with a list of unjustified rows.
+
+  mission-bar-met FILE
+      Phase 5: the Milan Check must have a "Mission alignment" row
+      with a score (0–100) ≥ 75 AND a "Smart human comparison" row
+      whose Evidence lists at least 3 lines. Catches the failure
+      mode where the agent declared the Milan check passed despite
+      naming concrete remaining concerns in the same report.
+      Exit 1 with the failing row(s) named.
+
+  iteration-summary ART_DIR
+      Generate a markdown table summarising every iter-NN.md in
+      ART_DIR. Columns: N | Goal | Built (one line) | Q TOTAL | Δ |
+      Milan verdict. Used by Phase 6 to inline a journey table into
+      the morning report so Milan can see the gradient-descent shape.
+      Always exits 0; emits "_no iterations found_" if empty.
 
   help
       This message.
@@ -190,15 +242,157 @@ case "$cmd" in
     fi
     B=$(grep -cE '^B[0-9]+:' "$file" || true)
     E=$(grep -cE '^E[0-9]+:' "$file" || true)
-    Q=$(grep -cE '^Q[0-9]+:' "$file" || true)
     F=$(grep -cE '^F[0-9]+:' "$file" || true)
-    TOTAL=$((B + E + Q + F))
-    echo "B=$B E=$E Q=$Q F=$F TOTAL=$TOTAL"
-    if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$Q" -lt 5 ] || [ "$F" -lt 5 ]; then
-      echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 Q≥5 F≥5" >&2
+    TOTAL=$((B + E + F))
+    echo "B=$B E=$E F=$F TOTAL=$TOTAL"
+    if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$F" -lt 5 ]; then
+      echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 F≥5 (Q checked by q-criteria-count)" >&2
       exit 1
     fi
     echo "EVAL_FRAMEWORK_OK"
+    ;;
+
+  q-criteria-count)
+    file="${1:-}"; min="${2:-12}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate q-criteria-count FILE [MIN]" >&2
+      exit 2
+    fi
+    Q=$(grep -cE '^Q[0-9]+:' "$file" || true)
+    echo "Q=$Q MIN=$min"
+    if [ "$Q" -lt "$min" ]; then
+      echo "Q_CRITERIA_TOO_FEW — found $Q, need ≥$min mission-derived qualitative criteria" >&2
+      echo "  → The user's intent: 'the agent should come up with a lot of them each time'" >&2
+      echo "  → Re-read the mission file. What else would a brilliant human reviewer notice?" >&2
+      exit 1
+    fi
+    echo "Q_CRITERIA_OK"
+    ;;
+
+  mission-defined)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate mission-defined FILE" >&2
+      exit 2
+    fi
+    missing=""
+    for section in "## Mission" "## User mental model" "## What a great human would build" "## Failure of imagination"; do
+      if ! grep -qF -- "$section" "$file"; then
+        missing="$missing\n  - $section"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      echo "MISSION_NOT_DEFINED in $file — missing required sections:" >&2
+      printf "%b\n" "$missing" >&2
+      echo "  → Without a written mission, the Q criteria become generic and the optimisation journey loses its target." >&2
+      exit 1
+    fi
+    echo "MISSION_DEFINED: $file"
+    ;;
+
+  plan-reviewed)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate plan-reviewed FILE" >&2
+      exit 2
+    fi
+    missing=""
+    for section in "## What I want to improve" "## In which way" "## Why this way" "## Alternatives considered" "## What can go wrong" "## Self-review"; do
+      if ! grep -qF -- "$section" "$file"; then
+        missing="$missing\n  - $section"
+      fi
+    done
+    if ! grep -qE '^## Final decision: (PROCEED|REVISED|ABORT)' "$file"; then
+      missing="$missing\n  - ## Final decision: PROCEED|REVISED|ABORT"
+    fi
+    if [ -n "$missing" ]; then
+      echo "PLAN_NOT_REVIEWED in $file — missing required sections:" >&2
+      printf "%b\n" "$missing" >&2
+      echo "  → Build cannot start until the plan is written AND self-reviewed." >&2
+      exit 1
+    fi
+    echo "PLAN_REVIEWED: $file"
+    ;;
+
+  mission-bar-met)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate mission-bar-met FILE" >&2
+      exit 2
+    fi
+    # Mission alignment row must contain a numeric score ≥ 75 in its Evidence line.
+    align_score=$(awk '
+      /^[[:space:]]*Mission alignment[[:space:]]*$/ { in_block=1; next }
+      in_block && /^[[:space:]]*Evidence:/ {
+        line=$0
+        # find a number 0-100 in the evidence line
+        n=match(line, /[0-9]+/)
+        if (n > 0) { num=substr(line, RSTART, RLENGTH); print num; exit }
+      }
+      in_block && /^  [A-Z]/ && !/^[[:space:]]*Evidence:/ && !/^[[:space:]]*Verdict:/ && !/^[[:space:]]*Considered/ { in_block=0 }
+    ' "$file")
+    if [ -z "$align_score" ]; then
+      echo "MISSION_BAR_FAIL: no 'Mission alignment' row with a numeric score in $file" >&2
+      echo "  → Add a row 'Mission alignment' with Evidence stating the 0-100 score and rationale." >&2
+      exit 1
+    fi
+    if [ "$align_score" -lt 75 ]; then
+      echo "MISSION_BAR_FAIL: Mission alignment score $align_score < 75 in $file" >&2
+      echo "  → Keep iterating. The work does not yet realize the mission." >&2
+      exit 1
+    fi
+    # Smart human comparison row must list ≥3 lines of evidence (one per "lowest-Q" criterion).
+    smart_lines=$(awk '
+      /^[[:space:]]*Smart human comparison[[:space:]]*$/ { in_block=1; lines=0; next }
+      in_block && /^[[:space:]]*Evidence:/ { in_evidence=1; lines++; next }
+      in_block && in_evidence && /^[[:space:]]+- / { lines++; next }
+      in_block && /^[[:space:]]*Considered but didn'\''t:/ { printed=1; print lines; in_block=0; in_evidence=0 }
+      END { if (in_block && !printed) print lines }
+    ' "$file")
+    if [ -z "$smart_lines" ] || [ "$smart_lines" -lt 3 ]; then
+      echo "MISSION_BAR_FAIL: 'Smart human comparison' row has <3 evidence lines in $file" >&2
+      echo "  → For the 3 lowest-scoring Q criteria, name what a brilliant human would do that you haven't." >&2
+      exit 1
+    fi
+    echo "MISSION_BAR_MET: alignment=$align_score smart-human-evidence-lines=$smart_lines"
+    ;;
+
+  iteration-summary)
+    art_dir="${1:-}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate iteration-summary ART_DIR" >&2
+      exit 2
+    fi
+    iters=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | sort || true)
+    if [ -z "$iters" ]; then
+      echo "_no iterations found in ${art_dir}_"
+      exit 0
+    fi
+    echo "| #  | Goal this round | Built (one line) | Q TOTAL | Δ | Milan |"
+    echo "|----|-----------------|-------------------|---------|---|-------|"
+    prev_q=""
+    for f in $iters; do
+      n=$(basename "$f" | sed -E 's/^iter-0*([0-9]+)\.md$/\1/')
+      goal=$(awk '/^## Goal this round/ { getline; print; exit }' "$f" | sed 's/|/\\|/g' | head -c 80)
+      built=$(awk '/^## Built/ { in_b=1; next } /^## /{ in_b=0 } in_b && /^- / { print; exit }' "$f" | sed 's/^- //; s/|/\\|/g' | head -c 80)
+      q=$(grep -E '^Q TOTAL.*:' "$f" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
+      [ -z "$q" ] && q="—"
+      delta="—"
+      if [ -n "$prev_q" ] && [ "$q" != "—" ] && [ "$prev_q" != "—" ]; then
+        delta=$(awk -v a="$q" -v b="$prev_q" 'BEGIN { d=a-b; sign=(d>=0?"+":""); printf "%s%.1f", sign, d }')
+      fi
+      milan_file="$art_dir/milan-check-iter-$(printf '%02d' "$n").md"
+      milan="—"
+      if [ -f "$milan_file" ]; then
+        if grep -qE '^VERDICT:[[:space:]]*PROCEED' "$milan_file"; then
+          milan="PROCEED"
+        elif grep -qE '^VERDICT:[[:space:]]*CONTINUE' "$milan_file"; then
+          milan="CONTINUE"
+        fi
+      fi
+      printf "| %s | %s | %s | %s | %s | %s |\n" "$n" "${goal:-—}" "${built:-—}" "$q" "$delta" "$milan"
+      prev_q="$q"
+    done
     ;;
 
   milan-rows-justified)
@@ -256,7 +450,7 @@ case "$cmd" in
     ;;
 
   q-saturated)
-    art_dir="${1:-}"; window="${2:-5}"; max_delta="${3:-0.5}"
+    art_dir="${1:-}"; window="${2:-5}"; max_delta="${3:-}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
       echo "Usage: lb-relentless-gate q-saturated ART_DIR [WINDOW] [MAX_DELTA]" >&2
       echo "  (ART_DIR must exist and contain iter-NN.md files)" >&2
@@ -269,6 +463,7 @@ case "$cmd" in
       exit 1
     fi
     totals=""
+    max_seen=0
     for f in $iters; do
       t=$(grep -E '^Q TOTAL.*:' "$f" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
       if [ -z "$t" ]; then
@@ -276,7 +471,20 @@ case "$cmd" in
         exit 1
       fi
       totals="$totals $t"
+      # track the max integer part so we can pick a sensible default delta
+      tint=${t%%.*}
+      if [ "$tint" -gt "$max_seen" ] 2>/dev/null; then max_seen="$tint"; fi
     done
+    # Auto-detect scale when MAX_DELTA wasn't given.
+    # 0–10 legacy scale: max Q TOTAL ≤ 100 → delta = 0.5
+    # 0–100 mission-derived scale: max Q TOTAL > 100 → delta = 12 (≈ 1 pt/criterion swing across the window)
+    if [ -z "$max_delta" ]; then
+      if [ "$max_seen" -gt 100 ]; then
+        max_delta="12"
+      else
+        max_delta="0.5"
+      fi
+    fi
     # Compute |last - first| / window-1, plus min/max range, via awk for floats
     delta=$(echo "$totals" | awk -v w="$window" -v md="$max_delta" '
       {
