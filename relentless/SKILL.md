@@ -39,7 +39,18 @@ description: |
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 7.0.0
+  v7.1 adds Iron Law #8 — Loop Continuity. Iron Law #7's mechanical
+  exit gates correctly forced CONTINUE LOOP, but agents still ended
+  the conversation turn at iteration boundaries with messages like
+  "Resume with /relentless --resume for iter N+1" — leaving the
+  asleep user to manually re-trigger. #8 makes the conversation turn
+  end at exactly three points (Phase 5 PROCEED, hard external block,
+  --max-iterations); anywhere else the iter-(N+1) header must follow
+  milan-check-iter-NN.md in the SAME response. New iron-8 banned
+  phrases group catches "resume with /relentless", "ready for iter
+  N+1", "i'll pick this up", etc. § 4-pre Loop Continuity Rule and
+  the rewritten 4a-xii branch make the rule operationally concrete.
+version: 7.1.0
 allowed-tools:
   - Bash
   - Read
@@ -419,6 +430,8 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | v4 still allowed PROCEED while improvement was possible: 3-of-5 plateau leaves 2 of the last 5 having IMPROVED (= room to improve still exists), and one CLEAN second-opinion might be a single subagent being lucky/cursory. The user's clarification: "Pass IF AND ONLY IF any further improvement is actually impossible." | v5 tightens the bar: (1) iteration floor raised to 15; (2) `attempts-exhausted` requires ALL 5 of last 5 to be NO_MOVEMENT/REGRESSED (was 3-of-5) — if even one IMPROVED, gradient is alive; (3) NEW `second-opinions-consistent` gate requires ≥2 second-opinion files (`99-second-opinion-NN.md`), both CLEAN/EXTERNAL_ONLY, with ≥5 iterations between them. The second subagent receives the first's findings + verifies each was addressed before adding new ones. Two independent reviewers across time agreeing nothing's fixable is the operational definition of "further improvement is actually impossible." |
 | v5's hardcoded `iteration-count: 15` floor was prescriptive about something we can't know in advance. A tiny task might honestly converge in ~8 iterations; a complex one may need 80+. Imposing a fixed minimum either wastes iterations on small tasks (degrading quality with make-work) or under-specifies for big ones. The user's clarification: "we might be overprescriptive about the minimal number of iterations for things we have no clue how many iterations they will take." | v6 drops the auto-call to `iteration-count` from the exit gates. The other gates are work-based and organically require a window of iterations to pass honestly: `q-saturated` needs 5 iters of plateau, `attempts-exhausted 5-of-5` needs 5 iters of NO_MOVEMENT outcomes, `second-opinions-consistent` needs ≥2 opinions ≥3 iters apart. Together they impose a natural floor of ~6–8 iterations for the smallest honest task, scaling organically up to 80+ for complex ones. The work tells you when you're done; we don't. The `iteration-count` subcommand is kept for diagnostic use only. |
 | v6's per-iteration plan + self-review (4a-iii) had the shape of an engineering review without the substance. The `plan-reviewed` gate just checked header presence; an agent could write "DRY: nothing to reuse, looks clean" under each heading and pass. No file-path evidence required, no enumerated edge cases, no actual grep cited. | v7 adds two new required plan sections: `## Functions / methods to add or modify` (≥1 entry shaped like `<file.ext>:<name>: ADD\|MODIFY`) and `## Edge cases this slice must handle` (≥3 enumerated). New `plan-substantive` gate (run after `plan-reviewed`) checks: (a) ≥1 path-shaped function entry, (b) ≥3 edge-case bullets, (c) DRY check cites either a `Searched: <pattern>` line OR a path-with-extension, (d) Coupling check names a module path. Self-review sub-sections updated with evidence-required wording. Style-guide check sub-section now reads `wiki/style/<repo>.md` (or invokes `/distill-style` first if missing) and cites at least one applicable rule. |
+| Even with v7's substantive plan/self-review and Iron Law #7's `attempts-exhausted` / `q-saturated` / `second-opinions-consistent` gates ALL forcing CONTINUE LOOP, the agent ended its conversation turn after writing `iter-NN.md` + `milan-check-iter-NN.md` — typically with "Resume with `/relentless --resume` for iter N+1" or a future-tense "Iter N+1 plan: ..." paragraph. The exit gates correctly said CONTINUE; the agent obeyed the verdict in *file* but quit the *turn*, leaving the user (who is asleep) to manually re-trigger. Q TOTAL was visibly mid-climb (e.g., 707/1200, mission alignment 55/100); none of the four exit gates met. | **Iron Law #8 — Loop Continuity.** A relentless conversation turn ends at exactly three points: Phase 5 verdict `PROCEED TO REPORT`, hard external block (≥3 retries across ≥10 minutes), or `--max-iterations` cap. Anywhere else, ending the turn breaks the contract. After `milan-check-iter-NN.md` is saved with verdict `CONTINUE LOOP`, the IMMEDIATELY next text in the same conversation response is the iter-(N+1) header (Phase 4a-i) and the start of its plan/build phase. The user is asleep — there is nobody to send "resume" instructions to. See § Loop Continuity Rule and the new iron-8 banned phrases. |
+| Agent wrote a fluent "iter N+1 plan: ..." paragraph at the end of its turn, treating it as a hand-off note — feels like progress, is actually the stop bug. The "plan" should be the iter-(N+1) header you've already written, not a future-tense paragraph. | If you find yourself writing "iter N+1 plan" or "next iteration: ..." as prose at end-of-turn, you are mid-failure-mode. The plan IS the next iteration's `4a-i` header you write IMMEDIATELY (followed by 4a-ii PLAN file). Future-tense planning prose for the next iteration is a banned shape. |
 
 ---
 
@@ -491,15 +504,53 @@ These are non-negotiable. Violating any voids the contract.
    fails, that's another NO_MOVEMENT toward exhaustion, which is
    precisely what proves impossibility.
 
+8. **Loop continuity.** A relentless conversation turn ends at
+   exactly three points: (a) Phase 5 verdict `PROCEED TO REPORT`
+   (after which Phase 6 completes in the same turn), (b) a hard
+   external block declared after ≥3 retries across ≥10 minutes,
+   (c) the `--max-iterations` cap is hit. ANY OTHER end-of-turn
+   while the loop is live is a contract breach.
+
+   Concretely: after `milan-check-iter-NN.md` is saved with verdict
+   `CONTINUE LOOP` (whether by agent judgment or by Iron Law #7's
+   gates auto-rewriting PROCEED to CONTINUE), the IMMEDIATELY next
+   text in the same conversation response is the iter-(N+1) header
+   (Phase 4a-i), followed by the iter-(N+1) plan + self-review
+   (4a-ii / 4a-iii). No "ready for iter N+1" message. No "resume
+   with `/relentless --resume`" message. No prose paragraph titled
+   "iter N+1 plan" — the plan IS the file at `iter-(N+1)-plan.md`
+   you write next.
+
+   The user is asleep. The whole reason `/relentless` exists is
+   that nobody is there to type "yes, keep going". If your next
+   sentence would only make sense to a user who is reading it and
+   re-triggering you, you are mid-violation. Re-read this law,
+   delete the sentence, write the iter-(N+1) header instead.
+
+   Why this is its own law and not a sub-clause of #3 or #7:
+   Iron Law #3 bans **explicitly asking** the user to validate.
+   Iron Law #7 governs **the verdict** (the agent honestly arrived
+   at PROCEED vs CONTINUE based on the work). Iron Law #8 governs
+   **what happens next in the conversation** — specifically that
+   `CONTINUE LOOP` means the loop body continues in the same turn,
+   not that the agent reports the verdict and waits. v7 fixed the
+   verdict; v7.1 adds #8 to fix the response shape that follows
+   the verdict. The iter-4 → iter-5 stoppage that motivated this
+   law happened with all v7 gates passing correctly — the verdict
+   was right, but the agent quit the turn anyway.
+
 ---
 
 ## Banned phrases
 
 If your output during a relentless session contains any of these (case
-insensitive), it is a violation of Iron Law #3. Strip the phrase,
-rewrite the sentence as a decision with reasoning. Run
+insensitive), it is a violation of Iron Law #3 (validation-seeking) or
+Iron Law #8 (loop continuity). Strip the phrase, rewrite the sentence
+as a decision with reasoning, OR — for #8 phrases — delete the
+sentence and write the iter-(N+1) header instead. Run
 `banned_phrase_check` at every iteration end and at every phase gate.
 
+**Iron Law #3 group (validation-seeking):**
 ```
 your call
 want me to
@@ -517,6 +568,32 @@ feel free to
 call out if any are wrong
 let's see if
 ```
+
+**Iron Law #8 group (loop continuity / stop-mid-loop signals):**
+```
+resume with
+/relentless --resume
+ready for iter
+ready for iteration
+ready to resume
+resuming with /relentless
+pick up with iter
+pick up with iteration
+in the next turn
+this turn ends
+stopping here for now
+pausing here for now
+i'll pick this up
+i will pick this up
+loop will continue
+```
+
+The phrases in the #8 group are written by an agent that has just
+internalised the user is asleep yet is now writing instructions to
+them about how to wake the loop back up. That self-contradiction is
+the failure mode. If you catch yourself typing one of these, your
+next action is the iter-(N+1) header, not a continuation of the
+sentence.
 
 The exception: AskUserQuestion calls in Phase 0c, Phase 1c, and Phase 3
 are sanctioned interrupts and use direct phrasing per
@@ -1235,6 +1312,69 @@ per-iteration time cap. There is no upper iteration count unless the
 user passed `--max-iterations`. You stop only when Phase 5 (Milan
 Check) clears.
 
+### 4-pre. Loop Continuity Rule (Iron Law #8 — read once, hold throughout Phase 4)
+
+Iron Law #8 is most often violated at iteration boundaries: the agent
+finishes `iter-NN.md` and `milan-check-iter-NN.md`, the verdict reads
+`CONTINUE LOOP` (whether by agent judgment or by Iron Law #7's
+mechanical gates auto-rewriting PROCEED), and instinct says *"now is
+a good moment to wrap up the response and check in with the user."*
+That instinct is the bug. This section exists to neutralise it.
+
+**The unbreakable rule for this phase:**
+
+> A relentless conversation turn does NOT end at iteration boundaries.
+> The single conversation response that started Phase 4 keeps running
+> through iter 1, 2, 3, ... 47, ... 60, ... until exactly one of three
+> things happens: Phase 5 verdict `PROCEED TO REPORT`, hard external
+> block (≥3 retries across ≥10 minutes), or `--max-iterations` cap.
+
+Practically, this means: **the iteration boundary is a content
+boundary inside your response, not a turn boundary in the
+conversation.** You write `milan-check-iter-NN.md`, gate it, and then
+— in the same response — you start writing the iter-(N+1) header,
+followed by `iter-(N+1)-plan.md`. There is no whitespace pause where
+a "summary" goes. There is no "resume with `/relentless --resume`"
+because there is no resume needed — the loop never stopped.
+
+**Mental model.** Think of Phase 4 as a single function call that
+internally runs `while (verdict == CONTINUE_LOOP) { do_iteration() }`.
+The end of one iteration is just the loop guard; the next thing that
+happens is the next iteration body. The agent that writes a "wrap-up
+message" between loop bodies is the agent that has dropped out of the
+loop.
+
+**The tell that you're mid-violation.** If you find yourself typing
+any of these as your last sentences of the response, you are
+mid-violation; delete and write the iter-(N+1) header instead:
+
+- "Resume with `/relentless --resume` for iter N+1."
+- "Iter N+1 plan: ..." (as prose; the plan goes in iter-(N+1)-plan.md)
+- "Ready for iteration N+1."
+- "Next: ..." (when followed by a description of what iter-(N+1) will
+  do, instead of the actual iter-(N+1) header)
+- "I'll pick this up in the next turn."
+- "Loop continues. Iter N+1 plan: ..."
+
+Each of these is a hand-off note to a sleeping user. The user is
+asleep. There is no hand-off. Continue the loop.
+
+**One concrete cue.** After running `lb-relentless-gate
+milan-rows-justified` for iter NN with verdict `CONTINUE LOOP` (or
+after Iron Law #7's gradient-descent / second-opinion gates rewrite
+PROCEED to CONTINUE), your NEXT chunk of output begins with:
+
+```
+═════════════════════════════════════════════════════════════════
+ITERATION (N+1) — <YYYY-MM-DD HH:MM:SS>
+Prev Q TOTAL: ...
+Q-target this round: ...
+═════════════════════════════════════════════════════════════════
+```
+
+Not a paragraph. Not "OK, time for iter N+1." The header. Then
+4a-ii (PLAN to file) immediately follows.
+
 ### 4a. Iteration anatomy
 
 Each iteration is:
@@ -1934,14 +2074,43 @@ MILAN_FILE="$ART_DIR/milan-check-iter-$NZ.md"
 substantively (yes/no AND evidence AND a "considered-but-didn't-do"
 clause). Bare yes/no rows fail the gate.
 
-If verdict is `CONTINUE LOOP`: the next iteration's goal is the
-specific row whose "considered but didn't do" item you'll now do, OR
-the lowest-scoring Q-criterion, whichever has more leverage. Skip
-4a-xiii and 4a-xiv; they only run when PROCEED is being considered.
+#### Branch on verdict — Iron Law #8 governs what comes next in the conversation
 
-If verdict is `PROCEED TO REPORT`: do **not** exit Phase 4 yet. Run
-4a-xiii (gradient-descent check) and 4a-xiv (second-opinion subagent)
-first. Either may force the verdict back to CONTINUE LOOP.
+**If verdict is `CONTINUE LOOP`** (whether by agent judgment or by
+Iron Law #7's gates rewriting PROCEED to CONTINUE in 4a-xiii/xiv):
+per Iron Law #8 / § 4-pre, the next sequence of actions in the SAME
+conversation response is:
+
+1. (silently, in your head) decide the next iteration's goal — the
+   specific row whose "considered but didn't do" item you'll now do,
+   OR the lowest-scoring Q-criterion, whichever has more leverage.
+2. Write the iter-(N+1) header (the box from § 4a-i) as your next
+   visible output.
+3. Begin 4a-ii (write `iter-(N+1)-plan.md`) for iteration N+1.
+4. Skip 4a-xiii and 4a-xiv; they only run when PROCEED is being
+   considered (and 4a-xiv may itself have just rewritten PROCEED to
+   CONTINUE for this iter, in which case you proceed to step 1
+   above immediately).
+
+That's it. No wrap-up paragraph. No "iter N+1 plan: ..." prose. No
+"resume with `/relentless --resume`" sentence. If your next visible
+output after the gate calls is anything other than the iter-(N+1)
+header, you have violated Iron Law #8. Delete and re-do.
+
+**Smoke check on yourself before continuing:** look at the last 200
+characters you've output. Are they describing the next iteration in
+the future tense, or are they the iter-(N+1) header? If the former,
+that text is the bug. Replace it with the header.
+
+**If verdict is `PROCEED TO REPORT`**: do **not** exit Phase 4 yet.
+Run 4a-xiii (gradient-descent check) and 4a-xiv (second-opinion
+subagent) first. Either may force the verdict back to CONTINUE LOOP
+— if so, follow the CONTINUE LOOP branch above (still in the same
+response). If both clear, "exit Phase 4" means *transition to Phase
+5 in the same response*, not "end the turn". Phase 5 runs the
+canonical Milan Check, then Phase 6 writes the final report, all in
+the same conversation response. The turn ends only after
+`99-final-report.md` is written and gated.
 
 ### 4a-xiii. Gradient-descent check — when PROCEED is being considered
 
@@ -2758,6 +2927,36 @@ iteration goals. Those go stale the moment the bug is fixed.
 - **Never end with "want me to /ship".** /ship is part of Phase 6 if
   the deploy mechanism is push-to-merge. Otherwise the deploy already
   happened in Phase 4. Either way, no question.
+
+### Anti-stop-mid-loop rules (Iron Law #8 detail)
+
+- **Never end your conversation turn while the loop is live.** A turn
+  ends only at Phase 5 PROCEED → Phase 6 final report; hard external
+  block (≥3 retries across ≥10 minutes); or `--max-iterations` cap.
+  Anywhere else, the loop continues in the same response.
+- **Never write "Resume with `/relentless --resume`".** The user is
+  asleep. There is nobody to read that instruction. The "resume" is
+  the iter-(N+1) header you write right now.
+- **Never write a future-tense "Iter N+1 plan: ..." paragraph at the
+  end of an iteration.** That paragraph IS the iter-(N+1) header (the
+  box from § 4a-i) followed by `iter-(N+1)-plan.md`, both written
+  immediately. Future-tense planning prose is the stop bug.
+- **Never write "ready for iter N+1" / "ready to resume".** Readiness
+  is meaningless when there's no audience to grant permission. Just
+  write the header.
+- **Never treat a long iter-NN.md as a stopping point** — its length
+  is a function of evidence, not pacing.
+- **Never treat conversation length as a reason to wrap up.** The
+  harness handles compression automatically; you handle the loop.
+- **Never end a response with bullet points summarising what just
+  happened in the last iteration.** That summary lives in iter-NN.md;
+  the conversation is already on the next iteration's header.
+- **Forcing function — the last 200 chars test.** Before letting a
+  response end during Phase 4, look at the last 200 characters. If
+  they are not (a) the iter-(N+1) header you've just written, (b) a
+  4a-ii PLAN-file action for iter-(N+1), or (c) Phase 5/6 content
+  with a PROCEED verdict surviving 4a-xiii + 4a-xiv — you are
+  mid-violation. Continue the loop.
 
 ### Anti-slop rules
 

@@ -100,8 +100,12 @@ Subcommands:
       MIN_LINES defaults to 1; REQUIRED_PATTERN defaults to none.
 
   banned FILE
-      Fail if FILE contains validation-seeking phrases that violate
-      Iron Law #3 (e.g., "your call", "want me to", "let me know").
+      Fail if FILE contains validation-seeking phrases violating Iron
+      Law #3 (e.g., "your call", "want me to", "let me know") OR
+      stop-mid-loop phrases violating Iron Law #8 (e.g., "resume with
+      /relentless", "ready for iter N+1", "i'll pick this up"). On
+      detection, each match is reported with which law it violates
+      and the corrective action.
 
   deploy URL SHA_SHORT
       Poll URL for the deployed commit SHA marker. Returns DEPLOY_LIVE
@@ -264,39 +268,67 @@ case "$cmd" in
       echo "BANNED_PHRASE_CHECK_SKIP: $file does not exist" >&2
       exit 0
     fi
-    # Use literal -F patterns via -e flags so apostrophes don't need escaping.
-    # Case-insensitive (-i), line-numbered when reporting.
-    if grep -i -F -q \
-         -e "your call" \
-         -e "want me to" \
-         -e "hold for review" \
-         -e "i didn't want to" \
-         -e "i don't want to" \
-         -e "if you're ok with" \
-         -e "let me know" \
-         -e "would you like me to" \
-         -e "is this approach ok" \
-         -e "if that's fine" \
-         -e "if you'd prefer" \
-         -e "feel free to" \
-         -e "call out if any are wrong" \
-         -- "$file" 2>/dev/null; then
+    # Two pattern groups, kept in arrays so detection + reporting use
+    # one source of truth (prior versions duplicated each list).
+    #
+    # IRON LAW #3 — validation-seeking phrases.
+    iron3=(
+      "your call"
+      "want me to"
+      "hold for review"
+      "i didn't want to"
+      "i don't want to"
+      "if you're ok with"
+      "let me know"
+      "would you like me to"
+      "is this approach ok"
+      "if that's fine"
+      "if you'd prefer"
+      "feel free to"
+      "call out if any are wrong"
+    )
+    # IRON LAW #8 — loop-continuity (stop-mid-loop) phrases. Each is
+    # specific enough that legitimate iter-NN.md / milan-check-iter-NN.md
+    # / iter-NN-plan.md content does not trip it (those files don't say
+    # "ready for iter" or "/relentless --resume" — that wording is the
+    # stop-mid-loop conversational shape).
+    iron8=(
+      "resume with \`/relentless"
+      "resume with /relentless"
+      "/relentless --resume"
+      "ready for iter"
+      "ready for iteration"
+      "ready to resume"
+      "resuming with /relentless"
+      "pick up with iter"
+      "pick up with iteration"
+      "in the next turn"
+      "this turn ends"
+      "stopping here for now"
+      "pausing here for now"
+      "i'll pick this up"
+      "i will pick this up"
+      "loop will continue"
+    )
+
+    grep_args=()
+    for p in "${iron3[@]}" "${iron8[@]}"; do
+      grep_args+=(-e "$p")
+    done
+
+    if grep -i -F -q "${grep_args[@]}" -- "$file" 2>/dev/null; then
       echo "BANNED_PHRASE_DETECTED in $file:" >&2
-      grep -i -F -n \
-         -e "your call" \
-         -e "want me to" \
-         -e "hold for review" \
-         -e "i didn't want to" \
-         -e "i don't want to" \
-         -e "if you're ok with" \
-         -e "let me know" \
-         -e "would you like me to" \
-         -e "is this approach ok" \
-         -e "if that's fine" \
-         -e "if you'd prefer" \
-         -e "feel free to" \
-         -e "call out if any are wrong" \
-         -- "$file" >&2
+      grep -i -F -n "${grep_args[@]}" -- "$file" >&2
+      for p in "${iron3[@]}"; do
+        if grep -i -F -q -- "$p" "$file" 2>/dev/null; then
+          echo "  → IRON LAW #3 violation: \"$p\" — rewrite as a decision with reasoning." >&2
+        fi
+      done
+      for p in "${iron8[@]}"; do
+        if grep -i -F -q -- "$p" "$file" 2>/dev/null; then
+          echo "  → IRON LAW #8 violation: \"$p\" — delete; the next text must be the iter-(N+1) header (4a-i) followed by iter-(N+1)-plan.md, in the same response." >&2
+        fi
+      done
       exit 1
     fi
     echo "BANNED_PHRASE_CHECK_PASS: $file"
