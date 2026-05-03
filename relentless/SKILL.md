@@ -18,7 +18,13 @@ description: |
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 2.0.0
+  v2.1 hardens loop continuity: Iron Law #7 forbids ending the
+  conversation turn at iteration boundaries; new banned phrases catch
+  "Resume with /relentless --resume", "ready for iter N+1", and
+  similar stop-mid-loop signals; § 4-pre and the rewritten 4a-x
+  branch require the iter-(N+1) header to follow milan-check-iter-NN.md
+  in the SAME response.
+version: 2.1.0
 allowed-tools:
   - Bash
   - Read
@@ -267,6 +273,8 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | Agent treated "deploy to prod" as risky and deferred to staging in projects that have no live users | When Phase 1c confirms zero live users, prod-with-real-secrets is the **default**. Staging requires explicit justification. The whole point of pre-launch projects is that you can iterate live with no blast radius. |
 | Agent declared the Milan Check "passed" because all binary tests passed, without actually answering the Milan questions row by row | The Milan Check is its own gate, not a redirect to the eval table. Each row demands a *written justification* — what specifically would Milan be impressed by, with named evidence — not "yes — see B-rows above." The gate runs at EVERY iteration, not only at exit. |
 | Agent answered Milan rows with bare yes/no when the question was "could you have improved this further?" | Milan is not happy if he thinks you could have improved something more that you have omitted, or that you have turned a blind eye on an aspect of code quality or user experience. Each Milan row must include "what I considered improving but didn't, and why" — silence on this counts as a blind-eye violation. |
+| Agent finished iter-NN.md and milan-check-iter-NN.md with verdict `CONTINUE LOOP`, then ENDED ITS CONVERSATION TURN with a recap and "Resume with `/relentless --resume` for iter N+1" — leaving Milan to manually re-trigger continuation in the morning. The whole point is that he ISN'T there to re-trigger anything. | **Iron Law #7 — Loop Continuity.** A relentless conversation turn ends only at three points: Phase 5 verdict `PROCEED TO REPORT`, hard external block (≥3 retries across ≥10 minutes), or `--max-iterations` cap. Anywhere else, ending the turn breaks the contract. After writing `milan-check-iter-NN.md` with verdict `CONTINUE LOOP`, the IMMEDIATELY next action — in the same response — is the iter-(N+1) header (4a-i) and the start of its build phase. The user is asleep. There is nobody to send "resume" instructions to. See § Loop Continuity Rule and the new banned phrases. |
+| Agent wrote a fluent "iter N+1 plan: ..." paragraph at the end of its turn, treating it as a hand-off note — feels like progress, is actually the stop bug. The "plan" should be the iter-(N+1) header you've already written, not a future-tense paragraph. | If you find yourself writing "iter N+1 plan" or "next iteration: ..." as prose at end-of-turn, you are mid-failure-mode. The plan IS the next iteration's `4a-i` header you write IMMEDIATELY. Future-tense planning prose for the next iteration is a banned shape. |
 
 ---
 
@@ -307,15 +315,44 @@ These are non-negotiable. Violating any voids the contract.
    pre-commit hooks (`--no-verify`). The autonomy granted by the contract
    is for *building*, not for blast-radius gambling.
 
+7. **Loop continuity.** A relentless conversation turn ends at exactly
+   three points: (a) Phase 5 verdict `PROCEED TO REPORT` (after which
+   Phase 6 completes in the same turn), (b) a hard external block
+   declared after ≥3 retries across ≥10 minutes, (c) the
+   `--max-iterations` cap is hit. ANY OTHER end-of-turn while the loop
+   is live is a contract breach.
+
+   Concretely: after `milan-check-iter-NN.md` is saved with verdict
+   `CONTINUE LOOP`, the IMMEDIATELY next text in the same conversation
+   response is the iter-(N+1) header (Phase 4a-i), followed by the
+   build phase (4a-ii). No "ready for iter N+1" message. No "resume
+   with `/relentless --resume`" message. No prose paragraph titled
+   "iter N+1 plan" — the plan IS the header you write next.
+
+   The user is asleep. The whole reason `/relentless` exists is that
+   nobody is there to type "yes, keep going". If your next sentence
+   would only make sense to a user who is reading it and re-triggering
+   you, you are mid-violation. Re-read this law, delete the sentence,
+   write the iter-(N+1) header instead.
+
+   Why this is its own law (not a sub-clause of #3): Iron Law #3 bans
+   asking the user to validate; this law bans the more subtle failure
+   of *implicitly waiting* for the user without explicitly asking —
+   the "I'll pick this up next turn" stop. Both are lethal to a
+   relentless run; both are now banned distinctly.
+
 ---
 
 ## Banned phrases
 
 If your output during a relentless session contains any of these (case
-insensitive), it is a violation of Iron Law #3. Strip the phrase,
-rewrite the sentence as a decision with reasoning. Run
+insensitive), it is a violation of Iron Law #3 (validation-seeking) or
+Iron Law #7 (loop continuity). Strip the phrase, rewrite the sentence
+as a decision with reasoning, OR — for #7 phrases — delete the
+sentence and write the iter-(N+1) header instead. Run
 `banned_phrase_check` at every iteration end and at every phase gate.
 
+**Iron Law #3 group (validation-seeking):**
 ```
 your call
 want me to
@@ -333,6 +370,36 @@ feel free to
 call out if any are wrong
 let's see if
 ```
+
+**Iron Law #7 group (loop continuity / stop-mid-loop signals):**
+```
+resume with
+/relentless --resume
+ready for iter
+ready for iteration
+ready to resume
+resuming with
+pick up with iter
+pick up with iteration
+in the next turn
+next turn
+this turn ends
+stopping here
+pausing here
+i'll pick this up
+i will pick this up
+loop will continue
+loop continues. iter
+iter ___ plan: (when used as a future-tense plan paragraph
+                rather than as the actual next iteration header)
+```
+
+The phrases in the #7 group are written by an agent that has *just*
+internalised the user is asleep yet is now writing instructions to
+them about how to wake the loop back up. That self-contradiction is
+the failure mode. If you catch yourself typing one of these, your
+next action is the iter-(N+1) header, not a continuation of the
+sentence.
 
 The exception: AskUserQuestion calls in Phase 0c, Phase 1c, and Phase 3
 are sanctioned interrupts and use direct phrasing per
@@ -940,6 +1007,67 @@ per-iteration time cap. There is no upper iteration count unless the
 user passed `--max-iterations`. You stop only when Phase 5 (Milan
 Check) clears.
 
+### 4-pre. Loop Continuity Rule (read once, hold throughout Phase 4)
+
+Iron Law #7 is most often violated at iteration boundaries: the agent
+finishes `iter-NN.md` and `milan-check-iter-NN.md`, the verdict reads
+`CONTINUE LOOP`, and instinct says *"now is a good moment to wrap up
+the response and check in with the user."* That instinct is the bug.
+This section exists to neutralise it.
+
+**The unbreakable rule for this phase:**
+
+> A relentless conversation turn does NOT end at iteration boundaries.
+> The single conversation response that started Phase 4 keeps running
+> through iter 1, 2, 3, ... 47, ... 60, ... until exactly one of three
+> things happens: Phase 5 verdict `PROCEED TO REPORT`, hard external
+> block (≥3 retries across ≥10 minutes), or `--max-iterations` cap.
+
+Practically, this means: **the iteration boundary is a content
+boundary inside your response, not a turn boundary in the
+conversation.** You write `milan-check-iter-NN.md`, gate it, and then
+— in the same response — you start writing the iter-(N+1) header.
+There is no whitespace pause where a "summary" goes. There is no
+"resume with `/relentless --resume`" because there is no resume needed
+— the loop never stopped.
+
+**Mental model.** Think of Phase 4 as a single function call that
+internally runs `while (verdict == CONTINUE_LOOP) { do_iteration() }`.
+The end of one iteration is just the loop guard; the next thing that
+happens is the next iteration body. The agent that writes a "wrap-up
+message" between loop bodies is the agent that has dropped out of the
+loop.
+
+**The tell that you're mid-violation.** If you find yourself typing
+any of these as your last sentences of the response, you are
+mid-violation; delete and write the iter-(N+1) header instead:
+
+- "Resume with `/relentless --resume` for iter N+1."
+- "Iter N+1 plan: ..."
+- "Ready for iteration N+1."
+- "Next: ..." (when followed by a description of what iter-(N+1) will
+  do, instead of the actual iter-(N+1) header)
+- "I'll pick this up in the next turn."
+- "Loop continues. Iter N+1 plan: ..."
+
+Each of these is a hand-off note to a sleeping user. The user is
+asleep. There is no hand-off. Continue the loop.
+
+**One concrete cue.** After running `lb-relentless-gate
+milan-rows-justified` for iter NN with verdict `CONTINUE LOOP`, your
+NEXT chunk of output begins with:
+
+```
+═════════════════════════════════════════════════════════════════
+ITERATION (N+1) — <YYYY-MM-DD HH:MM:SS>
+Goal this round: <one line>
+Open observables: <count>
+═════════════════════════════════════════════════════════════════
+```
+
+Not a paragraph. Not "OK, time for iter N+1." The header. Then
+4a-ii (BUILD) immediately follows.
+
 ### 4a. Iteration anatomy
 
 Each iteration is:
@@ -1305,13 +1433,34 @@ Then run the per-iteration gate:
 substantively (yes/no AND evidence AND a "considered-but-didn't-do"
 clause). Bare yes/no rows fail the gate.
 
-If verdict is `CONTINUE LOOP`: the next iteration's goal is the
-specific row whose "considered but didn't do" item you'll now do, OR
-the lowest-scoring Q-aspect, whichever has more leverage.
+#### Branch on verdict — no other ending is permitted here
 
-If verdict is `PROCEED TO REPORT`: you may exit Phase 4. Phase 5 will
-do the canonical Milan Check one more time as the final gate (it
-reads the latest milan-check-iter-NN.md plus the score curve).
+**If verdict is `CONTINUE LOOP`**: per Iron Law #7 / § 4-pre, the next
+sequence of actions in the SAME conversation response is:
+
+1. (silently, in your head) decide the next iteration's goal — the
+   specific row whose "considered but didn't do" item you'll now do,
+   OR the lowest-scoring Q-aspect, whichever has more leverage.
+2. Write the iter-(N+1) header (the box from § 4a-i) as your next
+   visible output.
+3. Begin 4a-ii (BUILD) for iteration N+1.
+
+That's it. No wrap-up paragraph. No "iter N+1 plan: ..." prose. No
+"resume with `/relentless --resume`" sentence. If your next visible
+output after the gate calls is anything other than the iter-(N+1)
+header, you have violated Iron Law #7. Delete and re-do.
+
+**Smoke check on yourself before continuing:** look at the last 200
+characters you've output. Are they describing the next iteration in
+the future tense, or are they the iter-(N+1) header? If the former,
+that text is the bug. Replace it with the header.
+
+**If verdict is `PROCEED TO REPORT`**: you may exit Phase 4 — but
+"exit Phase 4" means *transition to Phase 5 in the same response*,
+not "end the turn". Phase 5 runs the canonical Milan Check, then
+Phase 6 writes the final report, all in the same conversation
+response. The turn ends only after `99-final-report.md` is written
+and gated.
 
 ### 4b. Loop exit conditions — saturation, not completion
 
@@ -1362,6 +1511,18 @@ You do NOT exit because:
 - You can't think of what to improve next. That's a Phase 4a-viii
   failure, not an exit condition. Re-read the Q rubrics; the gap
   between "current score" and "10" is your iteration backlog.
+- The iteration just finished. End-of-iteration is not end-of-turn
+  (Iron Law #7). The next iteration starts in the same response.
+- It "feels like a natural break point". There are no natural breaks
+  in a relentless run — the only break is Phase 5 verdict PROCEED.
+- You wrote a long iter-NN.md and want to "let the user catch up".
+  The user is asleep. Catching up happens at morning report.
+- You want to "report progress so far". iter-NN.md and the score
+  curve already record progress; the conversation does not need to
+  recap them. Continue the loop instead.
+- The conversation response is getting long. The harness compresses
+  prior messages automatically as it approaches context limits;
+  length is not your concern, the loop is.
 
 ---
 
@@ -1679,6 +1840,35 @@ iteration goals. Those go stale the moment the bug is fixed.
 - **Never end with "want me to /ship".** /ship is part of Phase 6 if
   the deploy mechanism is push-to-merge. Otherwise the deploy already
   happened in Phase 4. Either way, no question.
+
+### Anti-stop-mid-loop rules (Iron Law #7 detail)
+
+- **Never end your conversation turn while the loop is live.** A turn
+  ends only at Phase 5 PROCEED → Phase 6 final report; hard external
+  block (≥3 retries across ≥10 minutes); or `--max-iterations` cap.
+  Anywhere else, the loop continues in the same response.
+- **Never write "Resume with `/relentless --resume`".** The user is
+  asleep. There is nobody to read that instruction. The "resume" is
+  the iter-(N+1) header you write right now.
+- **Never write a future-tense "Iter N+1 plan: ..." paragraph at the
+  end of an iteration.** That paragraph IS the iter-(N+1) header (the
+  box from § 4a-i), written immediately. Future-tense planning prose
+  is the stop bug.
+- **Never write "ready for iter N+1" / "ready to resume".** Readiness
+  is meaningless when there's no audience to grant permission. Just
+  write the header.
+- **Never treat a long iter-NN.md as a stopping point** — its length
+  is a function of evidence, not pacing.
+- **Never treat conversation length as a reason to wrap up.** The
+  harness handles compression automatically; you handle the loop.
+- **Never end a response with bullet points summarising what just
+  happened in the last iteration.** That summary lives in iter-NN.md;
+  the conversation is already on the next iteration's header.
+- **Forcing function — the last 200 chars test.** Before letting a
+  response end during Phase 4, look at the last 200 characters. If
+  they are not (a) the iter-(N+1) header you've just written, (b) a
+  build-phase action for iter-(N+1), or (c) Phase 5/6 content with a
+  PROCEED verdict — you are mid-violation. Continue the loop.
 
 ### Anti-slop rules
 

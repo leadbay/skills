@@ -105,39 +105,72 @@ case "$cmd" in
       echo "BANNED_PHRASE_CHECK_SKIP: $file does not exist" >&2
       exit 0
     fi
-    # Use literal -F patterns via -e flags so apostrophes don't need escaping.
-    # Case-insensitive (-i), line-numbered when reporting.
-    if grep -i -F -q \
-         -e "your call" \
-         -e "want me to" \
-         -e "hold for review" \
-         -e "i didn't want to" \
-         -e "i don't want to" \
-         -e "if you're ok with" \
-         -e "let me know" \
-         -e "would you like me to" \
-         -e "is this approach ok" \
-         -e "if that's fine" \
-         -e "if you'd prefer" \
-         -e "feel free to" \
-         -e "call out if any are wrong" \
-         -- "$file" 2>/dev/null; then
+    # Two pattern groups, kept in arrays so detection + reporting use one
+    # source of truth (the prior version duplicated each list).
+    #
+    # IRON LAW #3 — validation-seeking phrases.
+    iron3=(
+      "your call"
+      "want me to"
+      "hold for review"
+      "i didn't want to"
+      "i don't want to"
+      "if you're ok with"
+      "let me know"
+      "would you like me to"
+      "is this approach ok"
+      "if that's fine"
+      "if you'd prefer"
+      "feel free to"
+      "call out if any are wrong"
+    )
+    # IRON LAW #7 — loop-continuity (stop-mid-loop) phrases. These are
+    # the agent quietly handing the loop back to a sleeping user. Each
+    # pattern is specific enough that legitimate iter-NN.md / milan-
+    # check-iter-NN.md content does not trip it (those files don't say
+    # "ready for iter" or "/relentless --resume" — that wording is the
+    # stop-mid-loop conversational shape).
+    iron7=(
+      "resume with \`/relentless"
+      "resume with /relentless"
+      "/relentless --resume"
+      "ready for iter"
+      "ready for iteration"
+      "ready to resume"
+      "resuming with /relentless"
+      "pick up with iter"
+      "pick up with iteration"
+      "in the next turn"
+      "this turn ends"
+      "stopping here for now"
+      "pausing here for now"
+      "i'll pick this up"
+      "i will pick this up"
+      "loop will continue"
+    )
+
+    # Build -e args for one combined grep pass.
+    grep_args=()
+    for p in "${iron3[@]}" "${iron7[@]}"; do
+      grep_args+=(-e "$p")
+    done
+
+    if grep -i -F -q "${grep_args[@]}" -- "$file" 2>/dev/null; then
       echo "BANNED_PHRASE_DETECTED in $file:" >&2
-      grep -i -F -n \
-         -e "your call" \
-         -e "want me to" \
-         -e "hold for review" \
-         -e "i didn't want to" \
-         -e "i don't want to" \
-         -e "if you're ok with" \
-         -e "let me know" \
-         -e "would you like me to" \
-         -e "is this approach ok" \
-         -e "if that's fine" \
-         -e "if you'd prefer" \
-         -e "feel free to" \
-         -e "call out if any are wrong" \
-         -- "$file" >&2
+      grep -i -F -n "${grep_args[@]}" -- "$file" >&2
+      # Hint which iron law each match violates, so the agent knows
+      # which corrective action to take (rewrite as a decision vs.
+      # delete and continue the loop).
+      for p in "${iron3[@]}"; do
+        if grep -i -F -q -- "$p" "$file" 2>/dev/null; then
+          echo "  → IRON LAW #3 violation: \"$p\" — rewrite as a decision with reasoning." >&2
+        fi
+      done
+      for p in "${iron7[@]}"; do
+        if grep -i -F -q -- "$p" "$file" 2>/dev/null; then
+          echo "  → IRON LAW #7 violation: \"$p\" — delete; the next text must be the iter-(N+1) header (4a-i), in the same response." >&2
+        fi
+      done
       exit 1
     fi
     echo "BANNED_PHRASE_CHECK_PASS: $file"
