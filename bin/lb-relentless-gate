@@ -10,10 +10,74 @@
 #   banned FILE
 #   deploy URL SHA_SHORT
 #   iter1-ok ITER01_FILE
-#   counts FILE                        — print B/E/Q/F observable counts
+#   counts FILE                        — print B/E/F observable counts
+#   q-criteria-count FILE [MIN]        — Q-criteria count check (default ≥12)
+#   mission-defined FILE               — mission file has required sections
+#   plan-reviewed FILE                 — iter plan has plan + self-review +
+#                                        final-decision sections
+#   plan-substantive FILE              — v7 hardening of plan review.
+#                                        Beyond plan-reviewed (header
+#                                        presence), checks that the
+#                                        engineering review actually has
+#                                        substance: ≥1 file-path-shaped
+#                                        function entry, ≥3 enumerated
+#                                        edge cases, DRY section cites a
+#                                        path or a Searched: line,
+#                                        Coupling section names a module
+#                                        path. Catches the failure mode
+#                                        where the agent writes "DRY:
+#                                        nothing to reuse" without
+#                                        actually grepping.
 #   q-saturated ART_DIR [WIN] [DELTA]  — Q TOTAL moving-avg plateau check
+#                                        (default DELTA scales with Q range:
+#                                        12 for ≥100-scale, 0.5 for ≤10-scale)
 #   milan-rows-justified FILE          — every Milan row has verdict +
 #                                        evidence + considered-but-didn't
+#   mission-bar-met FILE               — Milan check has Mission alignment
+#                                        row at score ≥ 75 with substantive
+#                                        evidence + smart-human row populated
+#   iteration-summary ART_DIR          — emit a markdown table summarising
+#                                        every iter-NN.md (number, goal,
+#                                        Q TOTAL, Δ, milan verdict, fixes)
+#   iteration-count ART_DIR [MIN]      — count iter-NN.md files; fail if
+#                                        below MIN. v6: NO LONGER auto-called
+#                                        by the per-iter or final exit
+#                                        check — kept for diagnostic /
+#                                        explicit use. The other gates
+#                                        (q-saturated, attempts-exhausted,
+#                                        second-opinions-consistent)
+#                                        organically prevent early exit
+#                                        without needing a hardcoded count.
+#   attempts-exhausted ART_DIR [WIN] [MIN_FAILS]
+#                                      — gradient-descent stagnation check.
+#                                        Last WIN iter-NN.md files must
+#                                        contain '## Q-target outcome:
+#                                        NO_MOVEMENT|REGRESSED' for ≥
+#                                        MIN_FAILS of them. v5 default:
+#                                        5-of-5 (was 3-of-5 in v4). If
+#                                        even one of the last 5 IMPROVED,
+#                                        gradient is alive — keep going.
+#                                        Defaults: WIN=5, MIN_FAILS=5.
+#   second-opinion-clean ART_DIR [FILE]
+#                                      — single second-opinion file check.
+#                                        FILE defaults to
+#                                        99-second-opinion.md. Used as
+#                                        the inner check; second-opinions-
+#                                        consistent walks every per-iter
+#                                        file. Verdict must be CLEAN or
+#                                        EXTERNAL_ONLY.
+#   second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]
+#                                      — Requires ≥MIN_OPINIONS files
+#                                        matching 99-second-opinion-NN.md,
+#                                        all CLEAN/EXTERNAL_ONLY, with at
+#                                        least MIN_GAP iterations between
+#                                        first and last. Two independent
+#                                        reviewers across time agreeing
+#                                        nothing's fixable >> one CLEAN.
+#                                        v6 defaults: MIN_OPINIONS=2,
+#                                        MIN_GAP=3 (was 5 — too prescriptive
+#                                        for tiny tasks; 3 still ensures
+#                                        real change between reviews).
 #
 # Exit codes:
 #   0 — gate passed
@@ -48,15 +112,57 @@ Subcommands:
       least one B-row PASS (the iteration-1 done-criterion).
 
   counts FILE
-      Print B/E/Q/F observable counts. Used by Phase 2 to enforce
-      minimums (B≥5, E≥8, Q≥5, F≥5). Stdout: "B=N E=N Q=N F=N TOTAL=N".
-      Exit 1 if any minimum is unmet.
+      Print B/E/F observable counts (B≥5, E≥8, F≥5). Stdout:
+      "B=N E=N F=N TOTAL=N". Exit 1 if any minimum is unmet. (Q is
+      counted separately by q-criteria-count to allow the new
+      mission-derived 0–100 scale with a different minimum.)
+
+  q-criteria-count FILE [MIN]
+      Count Q-criteria in FILE (lines starting with "Q[0-9]+:") and
+      enforce a minimum (default MIN=12). The user requested "the
+      agent should come up with a lot of them each time"; this is
+      where that's enforced. Stdout: "Q=N MIN=M". Exit 1 if Q < MIN.
+
+  mission-defined FILE
+      Phase 2a: the mission file must declare what is being built,
+      for whom, why it matters, what the most thoughtful human in the
+      world would build, and the user mental model. Checks for
+      required headers: "## Mission", "## User mental model",
+      "## What a great human would build", "## Failure of
+      imagination". Exit 1 with named missing sections.
+
+  plan-reviewed FILE
+      Phase 4a-iii: the iteration plan file must contain (v7 list):
+      "## Targeted Q-criterion", "## Current score",
+      "## Projected score", "## What I want to improve",
+      "## In which way", "## Why this way",
+      "## Alternatives considered",
+      "## Functions / methods to add or modify",
+      "## Edge cases this slice must handle",
+      "## What can go wrong", "## Self-review", and
+      "## Final decision: PROCEED|REVISED|ABORT".
+      Header presence only — pair with plan-substantive for the
+      content check. Exit 1 with named missing sections.
+
+  plan-substantive FILE
+      v7 hardening: beyond plan-reviewed (header presence), checks
+      that the engineering review actually has substance:
+        - ≥1 file-path-shaped entry under
+          "## Functions / methods to add or modify"
+        - ≥3 enumerated items under "## Edge cases this slice must
+          handle"
+        - "### DRY check" contains either a "Searched: <pattern>"
+          line OR a path-with-extension reference
+        - "### Coupling check" names a module path
+      Catches "DRY: nothing to reuse" without an actual grep.
 
   q-saturated ART_DIR [WINDOW] [MAX_DELTA]
       Read Q TOTAL from the last WINDOW iter-NN.md files in ART_DIR
-      (default WINDOW=5). Compute the moving-average delta. Exit 0 if
-      ≤ MAX_DELTA (default 0.5) — i.e., Q has plateaued. Exit 1 if
-      still climbing (more iterations to do) or window is too small.
+      (default WINDOW=5). Compute the range across the window.
+      Exit 0 if ≤ MAX_DELTA — i.e., Q has plateaued.
+      MAX_DELTA auto-detects scale: if any Q TOTAL > 100, default
+      is 12 (suits 12 criteria × 0–100); else default 0.5 (legacy
+      0–10 scale). Exit 1 if still climbing or window too small.
       Each iter-NN.md must contain a "Q TOTAL (sum of scores): X" line.
 
   milan-rows-justified FILE
@@ -66,6 +172,59 @@ Subcommands:
       (Milan won't be happy if he thinks you turned a blind eye on
       something that could have been improved). Exit 0 if every row
       is fully justified; exit 1 with a list of unjustified rows.
+
+  mission-bar-met FILE
+      Phase 5: the Milan Check must have a "Mission alignment" row
+      with a score (0–100) ≥ 75 AND a "Smart human comparison" row
+      whose Evidence lists at least 3 lines. Catches the failure
+      mode where the agent declared the Milan check passed despite
+      naming concrete remaining concerns in the same report.
+      Exit 1 with the failing row(s) named.
+
+  iteration-summary ART_DIR
+      Generate a markdown table summarising every iter-NN.md in
+      ART_DIR. Columns: N | Goal | Built (one line) | Q TOTAL | Δ |
+      Milan verdict. Used by Phase 6 to inline a journey table into
+      the morning report so Milan can see the gradient-descent shape.
+      Always exits 0; emits "_no iterations found_" if empty.
+
+  iteration-count ART_DIR [MIN]
+      Count iter-NN.md files; fail if below MIN (default 5).
+      v6: NO LONGER auto-called by the per-iter or final exit
+      check — kept for diagnostic / explicit use only. The other
+      gates (q-saturated, attempts-exhausted,
+      second-opinions-consistent) organically prevent early exit
+      because they require a window of iterations to be honest.
+      Stdout: "ITERATIONS=N MIN=M". Exit 1 if N < M.
+
+  attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]
+      Gradient-descent stagnation check. Reads the last WINDOW
+      iter-NN.md files. Counts how many contain a
+      '## Q-target outcome:' line whose value is NO_MOVEMENT or
+      REGRESSED. Exit 0 if count ≥ MIN_FAILS — i.e., the agent
+      genuinely tried and the score didn't move.
+      v5 defaults: WINDOW=5, MIN_FAILS=5 (all of last 5 must
+      plateau). v4 was 3-of-5 — too lax: 2 of the last 5 could
+      still have IMPROVED, meaning gradient was alive but the agent
+      exited anyway. v5 framing: "if and only if any further
+      improvement is actually impossible" — even one IMPROVED in
+      the last window means improvement IS possible.
+
+  second-opinion-clean ART_DIR [FILE]
+      Single-file check. FILE defaults to 99-second-opinion.md
+      (relative to ART_DIR). Verdict must be CLEAN or EXTERNAL_ONLY,
+      with ≥3 numbered findings. Used internally by
+      second-opinions-consistent.
+
+  second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]
+      v5 strengthening: requires ≥MIN_OPINIONS second-opinion files
+      saved as 99-second-opinion-NN.md (NN = iteration number when
+      spawned), all with Verdict CLEAN or EXTERNAL_ONLY, AND with
+      at least MIN_GAP iterations between earliest and latest.
+      Two independent fresh-context reviewers across time agreeing
+      nothing's fixable left is a much stronger signal than one
+      CLEAN — catches a single subagent being lucky/cursory.
+      Defaults: MIN_OPINIONS=2, MIN_GAP=5.
 
   help
       This message.
@@ -223,15 +382,222 @@ case "$cmd" in
     fi
     B=$(grep -cE '^B[0-9]+:' "$file" || true)
     E=$(grep -cE '^E[0-9]+:' "$file" || true)
-    Q=$(grep -cE '^Q[0-9]+:' "$file" || true)
     F=$(grep -cE '^F[0-9]+:' "$file" || true)
-    TOTAL=$((B + E + Q + F))
-    echo "B=$B E=$E Q=$Q F=$F TOTAL=$TOTAL"
-    if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$Q" -lt 5 ] || [ "$F" -lt 5 ]; then
-      echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 Q≥5 F≥5" >&2
+    TOTAL=$((B + E + F))
+    echo "B=$B E=$E F=$F TOTAL=$TOTAL"
+    if [ "$B" -lt 5 ] || [ "$E" -lt 8 ] || [ "$F" -lt 5 ]; then
+      echo "EVAL_FRAMEWORK_TOO_THIN — minimum: B≥5 E≥8 F≥5 (Q checked by q-criteria-count)" >&2
       exit 1
     fi
     echo "EVAL_FRAMEWORK_OK"
+    ;;
+
+  q-criteria-count)
+    file="${1:-}"; min="${2:-12}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate q-criteria-count FILE [MIN]" >&2
+      exit 2
+    fi
+    Q=$(grep -cE '^Q[0-9]+:' "$file" || true)
+    echo "Q=$Q MIN=$min"
+    if [ "$Q" -lt "$min" ]; then
+      echo "Q_CRITERIA_TOO_FEW — found $Q, need ≥$min mission-derived qualitative criteria" >&2
+      echo "  → The user's intent: 'the agent should come up with a lot of them each time'" >&2
+      echo "  → Re-read the mission file. What else would a brilliant human reviewer notice?" >&2
+      exit 1
+    fi
+    echo "Q_CRITERIA_OK"
+    ;;
+
+  mission-defined)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate mission-defined FILE" >&2
+      exit 2
+    fi
+    missing=""
+    for section in "## Mission" "## User mental model" "## What a great human would build" "## Failure of imagination"; do
+      if ! grep -qF -- "$section" "$file"; then
+        missing="$missing\n  - $section"
+      fi
+    done
+    if [ -n "$missing" ]; then
+      echo "MISSION_NOT_DEFINED in $file — missing required sections:" >&2
+      printf "%b\n" "$missing" >&2
+      echo "  → Without a written mission, the Q criteria become generic and the optimisation journey loses its target." >&2
+      exit 1
+    fi
+    echo "MISSION_DEFINED: $file"
+    ;;
+
+  plan-reviewed)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate plan-reviewed FILE" >&2
+      exit 2
+    fi
+    missing=""
+    # v4 added: Targeted Q-criterion, Current score, Projected score
+    # v7 added: Functions / methods to add or modify, Edge cases this slice must handle
+    for section in "## Targeted Q-criterion" "## Current score" "## Projected score" "## What I want to improve" "## In which way" "## Why this way" "## Alternatives considered" "## Functions / methods to add or modify" "## Edge cases this slice must handle" "## What can go wrong" "## Self-review"; do
+      if ! grep -qF -- "$section" "$file"; then
+        missing="$missing\n  - $section"
+      fi
+    done
+    if ! grep -qE '^## Final decision: (PROCEED|REVISED|ABORT)' "$file"; then
+      missing="$missing\n  - ## Final decision: PROCEED|REVISED|ABORT"
+    fi
+    if [ -n "$missing" ]; then
+      echo "PLAN_NOT_REVIEWED in $file — missing required sections:" >&2
+      printf "%b\n" "$missing" >&2
+      echo "  → Build cannot start until the plan is written AND self-reviewed." >&2
+      exit 1
+    fi
+    echo "PLAN_REVIEWED: $file"
+    ;;
+
+  plan-substantive)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate plan-substantive FILE" >&2
+      exit 2
+    fi
+    fail=""
+
+    # 1. Functions section: ≥1 line that looks like a path (e.g.,
+    #    "harness/api/webhook.py:handler: ADD") — match a path-like
+    #    token containing a slash AND a dot+extension.
+    # Note: regex passed as string to avoid awk literal-/ delimiter issues.
+    funcs=$(awk '
+      /^## Functions \/ methods to add or modify/ { in_b=1; next }
+      in_b && /^## / { in_b=0 }
+      in_b && $0 ~ "[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\\.[a-zA-Z]+" { print }
+    ' "$file") || true
+    funcs_n=$(printf "%s\n" "$funcs" | grep -c . || true)
+    if [ "$funcs_n" -lt 1 ]; then
+      fail="$fail\n  - ## Functions / methods to add or modify: need ≥1 entry shaped like '<path/file.ext>:<name>: ADD|MODIFY — <purpose>'"
+    fi
+
+    # 2. Edge cases: ≥3 bulleted/numbered items
+    edges=$(awk '
+      /^## Edge cases this slice must handle/ { in_b=1; next }
+      in_b && /^## / { in_b=0 }
+      in_b && /^[[:space:]]*[-*0-9]+\.?[[:space:]]+./ { print; n++ }
+      END { exit n>=3 ? 0 : 1 }
+    ' "$file") || true
+    edges_n=$(printf "%s\n" "$edges" | grep -c . || true)
+    if [ "$edges_n" -lt 3 ]; then
+      fail="$fail\n  - ## Edge cases this slice must handle: need ≥3 enumerated items (found $edges_n)"
+    fi
+
+    # 3. DRY check: needs either a 'Searched:' line OR a path-with-extension
+    dry_block=$(awk '
+      /^### DRY check/ { in_b=1; next }
+      in_b && /^### / { in_b=0 }
+      in_b { print }
+    ' "$file") || true
+    if ! printf "%s\n" "$dry_block" | grep -qE 'Searched:|[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\.[a-zA-Z]+'; then
+      fail="$fail\n  - ### DRY check: must contain either 'Searched: <pattern>' (what you grepped) OR a path/file.ext reference"
+    fi
+
+    # 4. Coupling check: needs a path-with-extension OR a named module path
+    cpl_block=$(awk '
+      /^### Coupling check/ { in_b=1; next }
+      in_b && /^### / { in_b=0 }
+      in_b { print }
+    ' "$file") || true
+    if ! printf "%s\n" "$cpl_block" | grep -qE '[a-zA-Z0-9_.-]+/[a-zA-Z0-9_./-]+\.[a-zA-Z]+|[a-zA-Z0-9_-]+/[a-zA-Z0-9_./-]+'; then
+      fail="$fail\n  - ### Coupling check: must name an existing module path (e.g., 'harness/scheduler/jobs.py' or 'harness/capabilities/')"
+    fi
+
+    if [ -n "$fail" ]; then
+      echo "PLAN_NOT_SUBSTANTIVE in $file:" >&2
+      printf "%b\n" "$fail" >&2
+      echo "  → v7: header presence isn't enough. The engineering review must surface concrete things." >&2
+      exit 1
+    fi
+    echo "PLAN_SUBSTANTIVE: funcs=$funcs_n edges=$edges_n dry=ok coupling=ok"
+    ;;
+
+  mission-bar-met)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate mission-bar-met FILE" >&2
+      exit 2
+    fi
+    # Mission alignment row must contain a numeric score ≥ 75 in its Evidence line.
+    align_score=$(awk '
+      /^[[:space:]]*Mission alignment[[:space:]]*$/ { in_block=1; next }
+      in_block && /^[[:space:]]*Evidence:/ {
+        line=$0
+        # find a number 0-100 in the evidence line
+        n=match(line, /[0-9]+/)
+        if (n > 0) { num=substr(line, RSTART, RLENGTH); print num; exit }
+      }
+      in_block && /^  [A-Z]/ && !/^[[:space:]]*Evidence:/ && !/^[[:space:]]*Verdict:/ && !/^[[:space:]]*Considered/ { in_block=0 }
+    ' "$file")
+    if [ -z "$align_score" ]; then
+      echo "MISSION_BAR_FAIL: no 'Mission alignment' row with a numeric score in $file" >&2
+      echo "  → Add a row 'Mission alignment' with Evidence stating the 0-100 score and rationale." >&2
+      exit 1
+    fi
+    if [ "$align_score" -lt 75 ]; then
+      echo "MISSION_BAR_FAIL: Mission alignment score $align_score < 75 in $file" >&2
+      echo "  → Keep iterating. The work does not yet realize the mission." >&2
+      exit 1
+    fi
+    # Smart human comparison row must list ≥3 lines of evidence (one per "lowest-Q" criterion).
+    smart_lines=$(awk '
+      /^[[:space:]]*Smart human comparison[[:space:]]*$/ { in_block=1; lines=0; next }
+      in_block && /^[[:space:]]*Evidence:/ { in_evidence=1; lines++; next }
+      in_block && in_evidence && /^[[:space:]]+- / { lines++; next }
+      in_block && /^[[:space:]]*Considered but didn'\''t:/ { printed=1; print lines; in_block=0; in_evidence=0 }
+      END { if (in_block && !printed) print lines }
+    ' "$file")
+    if [ -z "$smart_lines" ] || [ "$smart_lines" -lt 3 ]; then
+      echo "MISSION_BAR_FAIL: 'Smart human comparison' row has <3 evidence lines in $file" >&2
+      echo "  → For the 3 lowest-scoring Q criteria, name what a brilliant human would do that you haven't." >&2
+      exit 1
+    fi
+    echo "MISSION_BAR_MET: alignment=$align_score smart-human-evidence-lines=$smart_lines"
+    ;;
+
+  iteration-summary)
+    art_dir="${1:-}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate iteration-summary ART_DIR" >&2
+      exit 2
+    fi
+    iters=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | sort || true)
+    if [ -z "$iters" ]; then
+      echo "_no iterations found in ${art_dir}_"
+      exit 0
+    fi
+    echo "| #  | Goal this round | Built (one line) | Q TOTAL | Δ | Milan |"
+    echo "|----|-----------------|-------------------|---------|---|-------|"
+    prev_q=""
+    for f in $iters; do
+      n=$(basename "$f" | sed -E 's/^iter-0*([0-9]+)\.md$/\1/')
+      goal=$(awk '/^## Goal this round/ { getline; print; exit }' "$f" | sed 's/|/\\|/g' | head -c 80)
+      built=$(awk '/^## Built/ { in_b=1; next } /^## /{ in_b=0 } in_b && /^- / { print; exit }' "$f" | sed 's/^- //; s/|/\\|/g' | head -c 80)
+      q=$(grep -E '^Q TOTAL.*:' "$f" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
+      [ -z "$q" ] && q="—"
+      delta="—"
+      if [ -n "$prev_q" ] && [ "$q" != "—" ] && [ "$prev_q" != "—" ]; then
+        delta=$(awk -v a="$q" -v b="$prev_q" 'BEGIN { d=a-b; sign=(d>=0?"+":""); printf "%s%.1f", sign, d }')
+      fi
+      milan_file="$art_dir/milan-check-iter-$(printf '%02d' "$n").md"
+      milan="—"
+      if [ -f "$milan_file" ]; then
+        if grep -qE '^VERDICT:[[:space:]]*PROCEED' "$milan_file"; then
+          milan="PROCEED"
+        elif grep -qE '^VERDICT:[[:space:]]*CONTINUE' "$milan_file"; then
+          milan="CONTINUE"
+        fi
+      fi
+      printf "| %s | %s | %s | %s | %s | %s |\n" "$n" "${goal:-—}" "${built:-—}" "$q" "$delta" "$milan"
+      prev_q="$q"
+    done
     ;;
 
   milan-rows-justified)
@@ -289,7 +655,7 @@ case "$cmd" in
     ;;
 
   q-saturated)
-    art_dir="${1:-}"; window="${2:-5}"; max_delta="${3:-0.5}"
+    art_dir="${1:-}"; window="${2:-5}"; max_delta="${3:-}"
     if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
       echo "Usage: lb-relentless-gate q-saturated ART_DIR [WINDOW] [MAX_DELTA]" >&2
       echo "  (ART_DIR must exist and contain iter-NN.md files)" >&2
@@ -302,6 +668,7 @@ case "$cmd" in
       exit 1
     fi
     totals=""
+    max_seen=0
     for f in $iters; do
       t=$(grep -E '^Q TOTAL.*:' "$f" 2>/dev/null | grep -oE '[0-9]+(\.[0-9]+)?' | head -1)
       if [ -z "$t" ]; then
@@ -309,7 +676,20 @@ case "$cmd" in
         exit 1
       fi
       totals="$totals $t"
+      # track the max integer part so we can pick a sensible default delta
+      tint=${t%%.*}
+      if [ "$tint" -gt "$max_seen" ] 2>/dev/null; then max_seen="$tint"; fi
     done
+    # Auto-detect scale when MAX_DELTA wasn't given.
+    # 0–10 legacy scale: max Q TOTAL ≤ 100 → delta = 0.5
+    # 0–100 mission-derived scale: max Q TOTAL > 100 → delta = 12 (≈ 1 pt/criterion swing across the window)
+    if [ -z "$max_delta" ]; then
+      if [ "$max_seen" -gt 100 ]; then
+        max_delta="12"
+      else
+        max_delta="0.5"
+      fi
+    fi
     # Compute |last - first| / window-1, plus min/max range, via awk for floats
     delta=$(echo "$totals" | awk -v w="$window" -v md="$max_delta" '
       {
@@ -335,6 +715,143 @@ case "$cmd" in
       echo "  → Q is still climbing/oscillating; more iterations needed." >&2
       exit 1
     fi
+    ;;
+
+  iteration-count)
+    art_dir="${1:-}"; min="${2:-5}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate iteration-count ART_DIR [MIN]" >&2
+      exit 2
+    fi
+    n=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | wc -l | tr -d ' ')
+    echo "ITERATIONS=$n MIN=$min"
+    if [ "$n" -lt "$min" ]; then
+      echo "ITERATION_FLOOR_NOT_MET — only $n iterations, need ≥$min" >&2
+      echo "  → v6: this gate is diagnostic-only; the other gates (q-saturated, attempts-exhausted, second-opinions-consistent) are the real backstop." >&2
+      exit 1
+    fi
+    echo "ITERATION_FLOOR_MET"
+    ;;
+
+  attempts-exhausted)
+    art_dir="${1:-}"; window="${2:-5}"; min_fails="${3:-5}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate attempts-exhausted ART_DIR [WINDOW] [MIN_FAILS]" >&2
+      exit 2
+    fi
+    iters=$(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | sort | tail -n "$window" || true)
+    iter_count=$(echo "$iters" | grep -c . || true)
+    if [ "$iter_count" -lt "$window" ]; then
+      echo "ATTEMPTS_NOT_EXHAUSTED: only $iter_count iterations (need ≥$window in window)" >&2
+      exit 1
+    fi
+    fails=0
+    targeted=0
+    for f in $iters; do
+      outcome=$(grep -E '^## Q-target outcome:' "$f" 2>/dev/null | head -1 | sed -E 's/^## Q-target outcome:[[:space:]]*//' | tr -d ' \r' || true)
+      case "$outcome" in
+        NO_MOVEMENT|REGRESSED) fails=$((fails + 1)); targeted=$((targeted + 1)) ;;
+        IMPROVED) targeted=$((targeted + 1)) ;;
+        NOT_TARGETED|"") : ;;
+      esac
+    done
+    echo "ATTEMPTS: window=$window targeted=$targeted plateau-or-regress=$fails min_fails=$min_fails"
+    if [ "$targeted" -lt "$window" ]; then
+      echo "ATTEMPTS_NOT_EXHAUSTED: only $targeted of $window iterations declared a Q-target outcome" >&2
+      echo "  → Each iteration must end iter-NN.md with a '## Q-target outcome: IMPROVED|NO_MOVEMENT|REGRESSED' line." >&2
+      exit 1
+    fi
+    if [ "$fails" -lt "$min_fails" ]; then
+      echo "ATTEMPTS_NOT_EXHAUSTED: only $fails of $window iterations plateaued/regressed (need ≥$min_fails)" >&2
+      echo "  → If every attempt is succeeding, there is still gradient to descend. Keep going." >&2
+      exit 1
+    fi
+    echo "ATTEMPTS_EXHAUSTED: agent tried $window and ≥$min_fails of those did not move the score"
+    ;;
+
+  second-opinion-clean)
+    art_dir="${1:-}"; explicit_file="${2:-}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate second-opinion-clean ART_DIR [FILE]" >&2
+      exit 2
+    fi
+    if [ -n "$explicit_file" ]; then
+      file="$explicit_file"
+    else
+      file="$art_dir/99-second-opinion.md"
+    fi
+    if [ ! -f "$file" ]; then
+      echo "SECOND_OPINION_MISSING: $file does not exist" >&2
+      echo "  → Before PROCEED, spawn a fresh-context Agent (Phase 4a-xiv) to review mission + criteria + latest iter; save findings + Verdict to $file." >&2
+      exit 1
+    fi
+    verdict=$(grep -E '^[[:space:]]*Verdict:[[:space:]]*' "$file" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*Verdict:[[:space:]]*//' | awk '{print $1}' || true)
+    case "$verdict" in
+      CLEAN|EXTERNAL_ONLY)
+        findings=$(grep -cE '^[0-9]+\.[[:space:]]+' "$file" 2>/dev/null || true)
+        if [ "$findings" -lt 3 ]; then
+          echo "SECOND_OPINION_THIN: $file Verdict=$verdict but only $findings numbered findings (need ≥3 to prove the subagent engaged)" >&2
+          exit 1
+        fi
+        echo "SECOND_OPINION_CLEAN: $(basename "$file") Verdict=$verdict findings=$findings"
+        ;;
+      CONTINUE_LOOP_REQUIRED)
+        echo "SECOND_OPINION_REQUIRES_CONTINUE: $file says CONTINUE_LOOP_REQUIRED" >&2
+        echo "  → The fresh reviewer found substantive gaps. Address them in next iteration(s); do not PROCEED." >&2
+        exit 1
+        ;;
+      "")
+        echo "SECOND_OPINION_NO_VERDICT: $file missing 'Verdict: CLEAN|EXTERNAL_ONLY|CONTINUE_LOOP_REQUIRED' line" >&2
+        exit 1
+        ;;
+      *)
+        echo "SECOND_OPINION_BAD_VERDICT: '$verdict' (expected CLEAN|EXTERNAL_ONLY|CONTINUE_LOOP_REQUIRED)" >&2
+        exit 1
+        ;;
+    esac
+    ;;
+
+  second-opinions-consistent)
+    art_dir="${1:-}"; min_op="${2:-2}"; min_gap="${3:-3}"
+    if [ -z "$art_dir" ] || [ ! -d "$art_dir" ]; then
+      echo "Usage: lb-relentless-gate second-opinions-consistent ART_DIR [MIN_OPINIONS] [MIN_GAP]" >&2
+      exit 2
+    fi
+    files=$(ls "$art_dir"/99-second-opinion-[0-9][0-9].md 2>/dev/null | sort || true)
+    n=$(echo "$files" | grep -c . || true)
+    if [ "$n" -lt "$min_op" ]; then
+      echo "SECOND_OPINIONS_TOO_FEW: found $n files matching 99-second-opinion-NN.md, need ≥$min_op" >&2
+      echo "  → v5 requires multiple second-opinion calls across the run, named 99-second-opinion-NN.md (NN = iteration when spawned)." >&2
+      echo "  → Spawn another fresh-context Agent at iter $(($(ls "$art_dir"/iter-[0-9][0-9].md 2>/dev/null | wc -l | tr -d ' ') + 1)) and save its output to 99-second-opinion-<NN>.md." >&2
+      exit 1
+    fi
+    # All files must be CLEAN or EXTERNAL_ONLY (re-use the single-file check)
+    bad=""
+    iters=""
+    for f in $files; do
+      if ! "$0" second-opinion-clean "$art_dir" "$f" >/dev/null 2>&1; then
+        # capture the verdict for the error message
+        v=$(grep -E '^[[:space:]]*Verdict:[[:space:]]*' "$f" 2>/dev/null | head -1 | sed -E 's/^[[:space:]]*Verdict:[[:space:]]*//' | awk '{print $1}')
+        bad="$bad $(basename "$f")=${v:-MISSING}"
+      fi
+      iter_n=$(basename "$f" | sed -E 's/^99-second-opinion-0*([0-9]+)\.md$/\1/')
+      iters="$iters $iter_n"
+    done
+    if [ -n "$bad" ]; then
+      echo "SECOND_OPINIONS_NOT_ALL_CLEAN:$bad" >&2
+      echo "  → Every 99-second-opinion-NN.md file must have Verdict CLEAN or EXTERNAL_ONLY." >&2
+      exit 1
+    fi
+    # MIN_GAP check: difference between earliest and latest iter must be ≥ MIN_GAP
+    first=$(echo $iters | tr ' ' '\n' | sort -n | head -1)
+    last=$(echo $iters | tr ' ' '\n' | sort -n | tail -1)
+    gap=$((last - first))
+    if [ "$gap" -lt "$min_gap" ]; then
+      echo "SECOND_OPINIONS_TOO_CLOSE: opinions spawned at iters [$iters], gap=$gap < min_gap=$min_gap" >&2
+      echo "  → The point of multiple opinions is to verify consistency over time. Spawn the next one ≥$min_gap iterations after the previous." >&2
+      exit 1
+    fi
+    echo "SECOND_OPINIONS_CONSISTENT: $n opinions across iters [$iters], gap=$gap ≥ $min_gap, all CLEAN/EXTERNAL_ONLY"
     ;;
 
   help|--help|-h|"")
