@@ -1,7 +1,7 @@
 ---
 name: sales-retro
-description: Weekly sales intelligence — signups, activation, churn risk, Big Fish detection
-version: 0.2.0
+description: Weekly sales intelligence — two Discord messages: user-facing funnel + sales-team performance from Supabase MCP
+version: 0.3.0
 ---
 
 <!-- include: shared/preamble.md -->
@@ -16,12 +16,35 @@ When the user types `/sales-retro`, run this skill.
 - `/sales-retro 14d` — last 14 days
 - `/sales-retro 30d` — last 30 days
 
-## Instructions
+## Output contract
 
-Parse argument for time window. Default 7 days. Compute midnight-aligned start date.
-Also compute PRIOR window of same length for activity comparison.
+This skill emits **TWO Discord-sized code blocks** in one response:
 
-### Step 1: New verified signups
+1. **Message 1 — Users** (signups, activation, quota, churn, big fish — sourced from PostHog)
+2. **Message 2 — Sales Team** (meetings, customer calls, transcript-derived insights — sourced from the Supabase MCP `pzhjwclpluxbfopctyot`)
+
+Each message MUST be under 1950 characters. Cut content to fit; never split a section across messages.
+
+## Configuration
+
+```
+SUPABASE_PROJECT_ID=pzhjwclpluxbfopctyot
+SALES_REPS=ludo@leadbay.ai,quang@leadbay.ai,jean-marie@leadbay.ai,zoe@leadbay.ai
+```
+
+Verify roster against `team_members` if the org grows. Founders (Milan/Maxime) appear in `team_members` but are NOT on the sales scoreboard.
+
+## Date hygiene
+
+`date` may be stale in long-running sessions. Run `date +%Y-%m-%d` fresh and confirm it matches the most recent commit timestamp on a known-active repo. Compute midnight-aligned `START` and `END` (`END = today + 1 day`).
+
+Compute a PRIOR window of equal length for activity comparison.
+
+---
+
+## MESSAGE 1 — Users (PostHog-sourced)
+
+### Step U1: New verified signups
 
 ```sql
 SELECT distinct_id as email, timestamp, properties.is_freemium,
@@ -34,13 +57,9 @@ WHERE event = 'user_created' AND timestamp >= '{start}'
 ORDER BY timestamp DESC
 ```
 
-**Filter out:** internal emails, test emails, orgs starting with "Wow Effect" (placeholder),
-duplicate user_created for same email (keep latest). **Only report verified users.**
-Count unverified separately (just the number, no list).
+**Filter out:** internal emails, test emails, orgs starting with "Wow Effect" (placeholder), duplicate user_created for same email (keep latest). **Only report verified users.** Count unverified separately (just the number, no list). Detect **team rollouts**: multiple users from same email domain = group as one line.
 
-Detect **team rollouts**: multiple users from same email domain = group them as one line.
-
-### Step 2: Activation of new verified signups
+### Step U2: Activation of new verified signups
 
 ```sql
 SELECT distinct_id as email, count() as active_days
@@ -50,7 +69,7 @@ FROM events WHERE event = 'first_lead_click_of_day'
 GROUP BY distinct_id
 ```
 
-### Step 3: Quota hits
+### Step U3: Quota hits
 
 ```sql
 SELECT distinct_id as email, count() as hits,
@@ -61,21 +80,20 @@ GROUP BY distinct_id, properties.resource_type, properties.window_type
 ORDER BY hits DESC
 ```
 
-### Step 4: Cancellations
+### Step U4: Cancellations
 
 ```sql
 SELECT distinct_id as email, properties.old_billing_status as old,
-  properties.new_billing_status as new, properties.stripe_status
+  properties.new_billing_status as new, properties.stripe_status, timestamp
 FROM events WHERE event = 'billing_status_changed' AND timestamp >= '{start}'
   AND distinct_id NOT LIKE '%@leadbay.ai'
   AND properties.new_billing_status != properties.old_billing_status
 ORDER BY timestamp DESC
 ```
 
-Only show transitions TO canceled/NOT_SET_UP (actual cancellations), or ACTION_NEEDED (payment issues).
-Skip transitions that are just status corrections or new signups.
+Only show transitions TO canceled/NOT_SET_UP (true cancels) or ACTION_NEEDED (payment issues). **Detect transient hiccups:** if a cohort goes OK→ACTION_NEEDED→OK within minutes (Stripe retry/dunning glitch), call it out as a hiccup not a cancellation.
 
-### Step 5: Paid conversions and top-ups
+### Step U5: Paid conversions and top-ups
 
 ```sql
 SELECT distinct_id as email, event, timestamp,
@@ -87,9 +105,7 @@ WHERE event IN ('STRIPE_SUBSCRIPTION_CREATED', 'TOPUP_PURCHASED')
 ORDER BY timestamp DESC
 ```
 
-New subscriptions and top-up purchases are key revenue signals. Track who converted and who is buying more capacity.
-
-### Step 6: Most active existing users
+### Step U6: Most active existing users
 
 ```sql
 SELECT distinct_id as email, count() as active_days,
@@ -101,121 +117,202 @@ GROUP BY distinct_id, person.properties.billing_status
 ORDER BY active_days DESC LIMIT 10
 ```
 
-### Step 7: Activity drops
+### Step U7: Big Fish detection
 
-```sql
-SELECT prev.email, prev.days as prev_days, curr.days as curr_days,
-  person.properties.billing_status as billing
-FROM (
-  SELECT distinct_id as email, count() as days FROM events
-  WHERE event = 'first_lead_click_of_day'
-    AND timestamp >= '{prior_start}' AND timestamp < '{start}'
-  GROUP BY distinct_id
-) as prev
-LEFT JOIN (
-  SELECT distinct_id as email, count() as days FROM events
-  WHERE event = 'first_lead_click_of_day' AND timestamp >= '{start}'
-  GROUP BY distinct_id
-) as curr ON prev.email = curr.email
-WHERE (curr.days IS NULL OR curr.days < prev.days)
-  AND prev.email NOT LIKE '%@leadbay.ai'
-  AND prev.email NOT LIKE '%@example.com'
-ORDER BY prev.days DESC LIMIT 10
-```
-
-### Step 8: Big Fish detection
-
-From ALL data gathered, identify potential enterprise accounts by:
-- Email domain of a known large company (Fortune 500, major brands, unicorns)
+Identify enterprise accounts via:
+- Email domain of a known large company (Fortune 500, unicorns, big French groups)
 - Multiple users from same domain (team adoption)
-- High activity + quota hits from a recognizable company
+- High activity or quota hits from a recognizable company
 
-For each Big Fish: company name, the specific email(s), and what signal triggered it.
-
-### Step 9: Ad form leads
+### Step U8: Ad form leads
 
 ```sql
 SELECT count() FROM events
 WHERE event = 'ad_lead_captured' AND timestamp >= '{start}'
 ```
 
-## Output Format
-
-**CRITICAL: Output MUST be under 1950 characters total (inside the code block).**
-Count characters. If over limit, cut: unverified count line, then trim "verified but
-not returning" to just a count, then reduce most-active to top 5.
-
-Output a single code block:
+### Message 1 format (under 1950 chars)
 
 ```
 📈 Sales Retro — {date range}
-{verified} verified signups · {form_leads} form leads · {paid_conversions} paid · {topups} top-ups
+{verified} verified · {form_leads} ad leads · {paid} paid · {topups} top-ups · {cancels} cancel
 
-ACTIVATED (verified + came back)
-  {email:35}  {Nd} · quota {Nx} 🔥  ← only if quota hit
-  {email:35}  {Nd}
+ACTIVATED (verified + returned, by quota)
+  {email:35}  {Nd} · q {Nx} 🔥  ← only if quota hit
   ...
-  Sort by: quota hits desc, then active days desc.
-  Team rollouts on one line: "{domain}: {N} users, {details}"
+  Not returning ({N}): {email}, {email}, ...
 
-  Not returning: {email}, {email}, ... (one line, comma-separated)
+⚠️ {one-line note about any billing hiccup detected}
 
-💰 CONVERSIONS & TOP-UPS
-  {email}  subscribed · {email}  top-up {amount} · ... (compact, one-two lines)
+CANCELS: {domain}, {domain}, ...
 
-CANCELLATIONS
-  {domain} · {domain}(xN) · ... (one compact line)
-
-🔥 QUOTA HITS
-  {email} {Nx} · {email} {Nx} · ... (compact, one-two lines)
+🔥 EXISTING QUOTA HITTERS
+  {label} {Nx} · {label} {Nx} · ...
 
 👑 MOST ACTIVE
-  {email:35}  {Nd}  {PAID if paying}
-  ... top 8-10
-
-⚠️ DROPPING
-  {email:35}  {prev}→{curr}  {PAID/CANCELED if relevant}
-  ... top 7-9
+  {email}  {Nd}
+  ...
 
 🐋 BIG FISH
-  {Company} — {signal}
-    {email}
-  ... 3-6 entries max
+  {Company} — {email} ({signal}) {🚨 if churn-flagged}
+  ...
 
 📞 DO THIS WEEK
-  1. {verb} {email} — {why, one line}
-  ... 3-5 actions max
+  1. {VERB} {email} — {why}
+  ...
 ```
 
-**Formatting rules:**
-- Emails only, no org names (save space). Exception: Big Fish section names the company.
-- Quota hits section: compact inline format, not one-per-line.
-- Cancellations: compact inline format.
-- Conversions & top-ups: compact inline format. Include amount if available.
-- "Not returning" verified users: comma-separated on one line.
-- SALES ACTIONS: each action names a specific email and a specific reason.
-- Sort activated users by quota hits first (most hits = most urgent), then by active days.
+Sort activated users by quota hits desc, then active days desc. Verbs: CALL / WIN-BACK / SAVE / NURTURE / WELCOME / UPSELL / CHECK.
 
-## Sales Actions Priority
+---
+
+## MESSAGE 2 — Sales Team (Supabase MCP)
+
+This message draws from `mcp__claude_ai_Supabase__execute_sql` against `SUPABASE_PROJECT_ID`.
+
+### Step T1: Schema mental model
+
+- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. Sales reps as of v0.3: ludo, quang, jean-marie, zoe.
+- `attio_meetings` — calendar meetings. **`participant_emails` is often empty** — read participants from `raw->'participants'->[]->>'email_address'`. `starts_at` is meeting time. `linked_records` carries CRM links.
+- `attio_call_recordings` — `transcript_status='ok'` + `segments>0` means transcript usable.
+- `attio_call_transcript_segments` — `meeting_id`, `speaker_name`, `speech`, `start_time`, `end_time`. Long calls (segments > 1500) are usually substantive.
+- `emails` — Gmail correspondence. `direction` = inbound/outbound. `team_member_emails` lists which @leadbay.ai accounts are party.
+
+### Step T2: Per-rep meeting + email totals
+
+```sql
+WITH mp AS (
+  SELECT m.meeting_id, m.title, m.starts_at,
+         ARRAY(SELECT jsonb_array_elements(m.raw->'participants')->>'email_address') AS emails
+  FROM attio_meetings m
+  WHERE m.starts_at >= '{start}' AND m.starts_at < '{end}'
+)
+SELECT t.email, COUNT(*) AS total,
+  COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(emails) e WHERE e NOT LIKE '%@leadbay.ai' AND e <> '')) AS external
+FROM mp
+JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai')) t(email)
+  ON t.email = ANY(mp.emails)
+GROUP BY t.email;
+```
+
+Then list every external meeting per rep (title + external attendee emails) — needed for Step T3.
+
+```sql
+SELECT t.email, COUNT(*) AS sent FROM emails e
+JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai')) t(email)
+  ON t.email = ANY(e.team_member_emails) AND e.direction = 'outbound'
+WHERE e.internal_date >= '{start}' AND e.internal_date < '{end}'
+GROUP BY t.email;
+```
+
+### Step T3: Classify Ludo's external meetings (CRITICAL)
+
+Ludo is the CEO. His calendar mixes **customer**, **investor**, and **partner/program** meetings. For a SALES retro, only **customer** meetings count toward the leaderboard / wins / actions.
+
+**Investor / fundraising signals:**
+- Domain ends in `.vc` or `.fund`
+- Known angel networks: `coreangels.com`, `ycombinator.com`, `entrepreneurfirst.com`, `transposeplatform.vc`
+- Title contains "intro", "fundraising", "VC", "fund", "residency"
+- Fund/angel-sounding personal Gmail addresses participating in 1:1s with Ludo
+
+**Partner / program / legal signals:**
+- Cold-call cup, startup contest, "residency", legal counsel (`*law*`, `*nmlaw*`, `*conseil*` in legal context)
+- Known partner orgs (Swish, Indy, h-7.eu, Rennes-SB cold-call event)
+- Internal-product-style "weekly sync" with non-customer accounts
+
+**When unsure:** mark as ambiguous → exclude from customer count, don't list under top wins. Optionally surface in a one-line "ambiguous" note in GAPS so the user can correct.
+
+For Quang, Zoé, Jean-Marie: assume external = customer unless title/domain clearly says otherwise (e.g., personal-Gmail lunch with a friend, partner program). Same investor/partner filter applies if it lights up.
+
+**Do not** include investor or partner meetings in the leaderboard, wins, or actions. They are out of scope for sales retro.
+
+### Step T4: Pull notable transcripts (privacy-respecting)
+
+For each call with `transcript_status='ok'` and `segments > 1500`, pull the transcript and derive insights **without ever quoting verbatim**.
+
+```sql
+SELECT speaker_name, speech, start_time
+FROM attio_call_transcript_segments
+WHERE meeting_id = '{uuid}'
+ORDER BY segment_index;
+```
+
+**Allowed (derived insight):**
+- Topic clustering: "Product/feature questions dominated; pricing came up briefly"
+- Outcome inference: "Next-step booked" / "Objection raised" / "Champion identified"
+- Sentiment shape: "Warmer in second half" / "Skeptical opening, engaged finish"
+- Risk flags: "Champion is leaving the company" / "Procurement deadline mentioned"
+- Counts: # of decision-makers in room, # of distinct objections, # of follow-up commitments
+
+**NOT allowed:**
+- Verbatim quotes from any speaker
+- Names of internal stakeholders the customer mentioned but who are not Leadbay employees
+- Specific numbers (revenue, headcount, salary) the customer disclosed
+- Personal details (health, family, opinions about other vendors by name)
+
+If you can't derive a useful privacy-safe insight, skip the call. Better to omit than to leak.
+
+### Message 2 format (under 1950 chars)
+
+```
+🏆 Sales Team Retro — {date range}
+
+LEADERBOARD (customer-facing only)
+  Rep         Customer mtgs  Recorded  Emails
+  zoe              N             N        N
+  ludo             N             N        N
+  jean-marie       N             N        N
+  quang            N             N        N
+
+🥇 TOP WINS
+1️⃣ {Customer} — {rep} ({date}, {Nk seg}) {🐋 if big-fish}
+   {1-line context: who was in the room, why notable}
+2️⃣ ...
+3️⃣ ...
+
+OTHER CUSTOMER
+  {company} — {rep} ({brief context})
+  ...
+
+🎙️ TRANSCRIPT INSIGHTS (derived; no verbatim)
+  {Customer}: {insight, e.g. "champion identified, procurement deadline named"}
+  {Customer}: {sentiment-shape or objection-cluster note}
+
+⚠️ GAPS
+  {coverage notes: rep with 0 customer mtgs, sync lag, ambiguous classifications}
+
+📞 DO THIS WEEK
+1. {rep}: {action} — {why, anchored in data}
+2. ...
+```
+
+---
+
+## Sales Actions Priority (applies to BOTH messages)
 
 Rank actions by revenue potential:
 1. Quota hitters (want more, ready to pay)
 2. Dropping paid users (churn risk, save revenue)
-3. New paid conversions (welcome, ensure onboarding success)
-4. Top-up buyers (upsell to subscription if not already subscribed)
-5. Activated Big Fish (enterprise pipeline)
-6. High-activity freemium (nurture to convert)
+3. Hot recent customer meetings without follow-up (close the loop)
+4. New paid conversions (welcome, ensure onboarding success)
+5. Top-up buyers (upsell to subscription if not already subscribed)
+6. Activated Big Fish (enterprise pipeline)
+7. High-activity freemium (nurture to convert)
 
-Each action: specific person, specific verb (CALL/WIN-BACK/SAVE/NURTURE/WELCOME/UPSELL), specific why.
+Each action: specific person/email, specific verb (CALL / WIN-BACK / SAVE / NURTURE / WELCOME / UPSELL / CHECK), specific why anchored in the data.
 
 ## Voice
 
-Sales-focused. Every line answers "who should I call today and why?"
-No engineering jargon. Frame as revenue, churn risk, or expansion.
+Sales-focused. Every line answers "who should I call today and why?" No engineering jargon. Frame as revenue, churn risk, or expansion.
 
 ## Important Rules
 
 <!-- include: shared/discord-output.md -->
 
-- If a HogQL query fails, skip it gracefully.
-- Emails only — no org names except in Big Fish.
+- Two messages, each under 1950 chars. Print Message 1 in a code block, then Message 2 in a separate code block.
+- Message 1 — emails only (no org names except in Big Fish). Big Fish names the company.
+- Message 2 — name the company in TOP WINS / OTHER CUSTOMER / actions; never name customer-side individuals beyond the rep + the meeting attendees already in CRM.
+- Never quote transcript content verbatim. Derived insight only. When uncertain whether something is privacy-safe, omit.
+- Ludo's investor/partner meetings DO NOT belong in the sales leaderboard, wins, or actions. Exclude silently or note in GAPS.
+- If a HogQL query or Supabase query fails, skip gracefully with a one-line GAPS note.
+- Detect billing hiccups (OK→ACTION_NEEDED→OK in minutes) and call them out separately from real cancels.
