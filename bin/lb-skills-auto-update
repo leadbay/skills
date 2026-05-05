@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# lb-skills-auto-update — pull latest leadbay-skills, refresh symlinks, repair drift.
+# Designed to run unattended from launchd / cron. Safe on any branch.
+#
+# Behaviour:
+#   - Always operates on the central install at ~/.leadbay-skills (NOT on any
+#     worktree). The central install is what every Conductor workspace's
+#     ~/.claude/skills/* symlinks point at.
+#   - If on `main`: fast-forward pull. If pull fails (local changes), warn and skip.
+#   - If on a feature branch:
+#       * If that branch's upstream still exists on origin → pull it (keeps the
+#         branch fresh while a PR is open).
+#       * If the upstream is gone (branch was merged + deleted) → switch to
+#         main and pull. The merged work is now in main.
+#   - After pulling, run `setup` to repair any dangling symlinks or add new
+#     skills. This is the self-healing step that prevents the "broken symlink
+#     in ~/.claude/skills/" failure mode.
+#
+# Logs to ~/.leadbay/skills-auto-update.log
+set -euo pipefail
+
+SKILLS_HOME="${HOME}/.leadbay-skills"
+LOG="${HOME}/.leadbay/skills-auto-update.log"
+LOCK_FILE="${HOME}/.leadbay/skills-auto-update.lock"
+LOCK_DIR="${LOCK_FILE}.dir"
+LOCK_HELD=0
+LOG_MAX_BYTES=$((5 * 1024 * 1024))   # 5MB cap; truncated to 1MB tail when exceeded
+
+mkdir -p "$(dirname "$LOG")"
+
+# Truncate log if oversize (keep last 1MB so recent context is preserved)
+if [ -f "$LOG" ]; then
+  size=$(stat -f%z "$LOG" 2>/dev/null || stat -c%s "$LOG" 2>/dev/null || echo 0)
+  if [ "$size" -gt "$LOG_MAX_BYTES" ]; then
+    tail -c $((1024 * 1024)) "$LOG" > "$LOG.trim" && mv "$LOG.trim" "$LOG"
+  fi
+fi
+
+log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" | tee -a "$LOG"; }
+
+# Advisory lock to prevent concurrent runs (launchd retry race).
+# Same pattern as lb-knowledge-sync: mkdir-as-primitive + PID file.
+if [ -f "$LOCK_FILE" ]; then
+  existing_pid=$(cat "$LOCK_FILE" 2>/dev/null | head -1 | tr -cd '0-9')
+  if [ -n "$existing_pid" ] && kill -0 "$existing_pid" 2>/dev/null; then
+    log "lock held by PID $existing_pid; skipping this run"
+    exit 0
+  fi
+  rm -f "$LOCK_FILE" 2>/dev/null
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+elif [ -d "$LOCK_DIR" ]; then
+  rmdir "$LOCK_DIR" 2>/dev/null || true
+fi
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+  log "lock contention; skipping this run"
+  exit 0
+fi
+echo "$$" > "$LOCK_FILE"
+LOCK_HELD=1
+trap 'if [ "$LOCK_HELD" = "1" ]; then rm -f "$LOCK_FILE"; rmdir "$LOCK_DIR" 2>/dev/null || true; fi' EXIT INT TERM
+
+if [ ! -d "$SKILLS_HOME/.git" ]; then
+  log "ERROR: $SKILLS_HOME is not a git repo. Skipping auto-update."
+  exit 2
+fi
+
+cd "$SKILLS_HOME" || exit 2
+
+# Discover current branch and whether its upstream still exists.
+CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo main)"
+log "current branch: $CURRENT_BRANCH"
+
+# Refuse to update if there are uncommitted changes.
+if ! git diff --quiet || ! git diff --cached --quiet; then
+  log "uncommitted changes present in $SKILLS_HOME — skipping auto-update"
+  exit 0
+fi
+
+git fetch --quiet --prune origin 2>>"$LOG" || { log "fetch failed"; exit 1; }
+
+UPSTREAM_GONE=false
+if [ "$CURRENT_BRANCH" != "main" ]; then
+  if ! git rev-parse --verify --quiet "origin/$CURRENT_BRANCH" >/dev/null; then
+    UPSTREAM_GONE=true
+  fi
+fi
+
+if [ "$UPSTREAM_GONE" = "true" ]; then
+  log "upstream origin/$CURRENT_BRANCH is gone — switching to main"
+  git checkout main 2>>"$LOG" || { log "checkout main failed"; exit 1; }
+  CURRENT_BRANCH="main"
+fi
+
+# Pull pattern: under set -e, a non-zero pull would exit before the
+# diagnostic log line could fire. Use `|| { log; exit 0 }` so we get
+# both the failure recorded AND a clean tick (this isn't a permanent
+# failure — local just diverged or upstream is unreachable; tomorrow's
+# tick may succeed).
+git pull --ff-only origin "$CURRENT_BRANCH" 2>>"$LOG" || {
+  log "pull --ff-only failed on $CURRENT_BRANCH (local diverged?) — leaving as-is"
+  exit 0
+}
+log "pulled origin/$CURRENT_BRANCH (now at $(git rev-parse --short HEAD))"
+
+# Self-heal: refresh ~/.claude/skills/* symlinks. Idempotent.
+"$SKILLS_HOME/setup" 2>>"$LOG" >>"$LOG"
+log "setup re-run complete (symlinks refreshed)"

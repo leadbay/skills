@@ -1,0 +1,1078 @@
+#!/usr/bin/env bash
+# lb-knowledge-sync — consolidate local learnings.jsonl into ~/.leadbay/knowledge
+#
+# Walks ~/.leadbay/projects/<slug>/learnings.jsonl across all projects, emits
+# one journal entry per learning into ~/.leadbay/knowledge/journal/<date>/, and
+# commits the result. Optionally pushes to leadbay/knowledge:main.
+#
+# Idempotent: a content fingerprint stored in ~/.leadbay/sync-state.json
+# tracks what's already been emitted; re-running is a no-op.
+#
+# Usage:
+#   lb-knowledge-sync                       # local-only commit (no push)
+#   LB_KNOWLEDGE_SYNC_PUSH=1 lb-knowledge-sync   # commit AND push
+#   lb-knowledge-sync --dry-run             # report what would sync, write nothing
+#   lb-knowledge-sync --status              # print sync state, exit 0
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+KNOWLEDGE_DIR="$LEADBAY_HOME/knowledge"
+PROJECTS_DIR="$LEADBAY_HOME/projects"
+STATE_FILE="$LEADBAY_HOME/sync-state.json"
+
+WRITE_BIN="$SCRIPT_DIR/lb-knowledge-write"
+
+DRY_RUN=0
+SHOW_STATUS=0
+SHOW_VERDICT_JSON=0
+PUSH_OVERRIDE=0  # --push flag; falls through to LB_KNOWLEDGE_SYNC_PUSH if 0
+LOCK_FILE="$LEADBAY_HOME/sync.lock"
+LOCK_HELD=0    # 1 once we've acquired the lock; trap uses this
+STATUS_FILE="$LEADBAY_HOME/sync-status.json"
+
+log() { printf '[%s] %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
+err() { printf '[%s] ERROR: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
+
+# ------------------------------------------------------------------
+# parse_args
+# ------------------------------------------------------------------
+parse_args() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --dry-run) DRY_RUN=1; shift ;;
+      --status)  SHOW_STATUS=1; shift ;;
+      --verdict-json) SHOW_VERDICT_JSON=1; shift ;;
+      --push)    PUSH_OVERRIDE=1; shift ;;
+      -h|--help)
+        sed -n '2,15p' "$0"
+        exit 0
+        ;;
+      *)
+        err "unknown argument: $1"
+        exit 2
+        ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------------------
+# write_sync_status: write ~/.leadbay/sync-status.json atomically.
+# Args:
+#   $1 = state ("ok" | "failure" | "skipped")
+#   $2 = pending count (int)
+#   $3 = optional failure reason (when state=failure)
+# Read-modify-write so consecutive_failures accumulates across runs.
+# ------------------------------------------------------------------
+write_sync_status() {
+  local state="$1" pending="${2:-0}" reason="${3:-}"
+  local now
+  now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+  local prior='{"last_success_at":null,"last_failure_at":null,"last_failure_reason":null,"entries_pending":0,"consecutive_failures":0}'
+  if [ -f "$STATUS_FILE" ]; then
+    if prior=$(jq -e . "$STATUS_FILE" 2>/dev/null); then :; else
+      prior='{"last_success_at":null,"last_failure_at":null,"last_failure_reason":null,"entries_pending":0,"consecutive_failures":0}'
+    fi
+  fi
+
+  local new
+  case "$state" in
+    ok)
+      new=$(printf '%s' "$prior" | jq \
+        --arg now "$now" \
+        --argjson pending "$pending" \
+        '.last_success_at=$now | .entries_pending=$pending | .consecutive_failures=0 | .last_failure_reason=null')
+      ;;
+    failure)
+      local prior_count
+      prior_count=$(printf '%s' "$prior" | jq -r '.consecutive_failures // 0')
+      new=$(printf '%s' "$prior" | jq \
+        --arg now "$now" \
+        --arg reason "$reason" \
+        --argjson pending "$pending" \
+        --argjson c "$((prior_count + 1))" \
+        '.last_failure_at=$now | .last_failure_reason=$reason | .entries_pending=$pending | .consecutive_failures=$c')
+      ;;
+    skipped)
+      # Lock contention or no work — don't update success/failure timestamps
+      new=$(printf '%s' "$prior" | jq --argjson pending "$pending" '.entries_pending=$pending')
+      ;;
+  esac
+
+  local tmp
+  tmp=$(mktemp "${STATUS_FILE}.tmp.XXXXXX") || return 1
+  printf '%s' "$new" | jq . > "$tmp"
+  mv "$tmp" "$STATUS_FILE"
+}
+
+# ------------------------------------------------------------------
+# acquire_lock: take an exclusive advisory lock on $LOCK_FILE.
+# Strategy: prefer flock(1) when available (atomic); fall back to a
+# PID-file with stale-lock detection via `kill -0 $pid`.
+# Returns 0 on lock held, 1 if another process holds it (caller exits 0).
+# Sets LOCK_HELD=1 on success so the EXIT trap releases.
+# ------------------------------------------------------------------
+acquire_lock() {
+  mkdir -p "$LEADBAY_HOME"
+  local lock_dir="${LOCK_FILE}.dir"
+
+  # Stale-lock detection: if PID file exists AND its PID is dead, clean
+  # both the PID file AND the .dir mutex (no live owner).
+  if [ -f "$LOCK_FILE" ]; then
+    local existing_pid
+    existing_pid=$(cat "$LOCK_FILE" 2>/dev/null | head -1 | tr -cd '0-9')
+    if [ -n "$existing_pid" ]; then
+      if kill -0 "$existing_pid" 2>/dev/null; then
+        log "lock held by PID $existing_pid; skipping this tick"
+        return 1
+      fi
+      log "stale lock from PID $existing_pid; reclaiming"
+      rm -f "$LOCK_FILE"
+      rmdir "$lock_dir" 2>/dev/null || true
+    else
+      # Empty / malformed PID file: still attempt to clean both
+      rm -f "$LOCK_FILE"
+      rmdir "$lock_dir" 2>/dev/null || true
+    fi
+  elif [ -d "$lock_dir" ]; then
+    # .dir exists with no PID file — orphaned mutex, reclaim
+    log "orphan lock dir $lock_dir without PID file; reclaiming"
+    rmdir "$lock_dir" 2>/dev/null || true
+  fi
+
+  # Try to acquire atomically. mkdir is atomic on POSIX.
+  if ! mkdir "$lock_dir" 2>/dev/null; then
+    log "lock contention on $lock_dir; skipping this tick"
+    return 1
+  fi
+  echo "$$" > "$LOCK_FILE"
+  LOCK_HELD=1
+  trap 'release_lock' EXIT INT TERM
+  return 0
+}
+
+release_lock() {
+  if [ "$LOCK_HELD" = "1" ]; then
+    rm -f "$LOCK_FILE"
+    rmdir "${LOCK_FILE}.dir" 2>/dev/null || true
+    LOCK_HELD=0
+  fi
+}
+
+# ------------------------------------------------------------------
+# should_push: decide based on flag override + env var.
+# ------------------------------------------------------------------
+should_push() {
+  if [ "$PUSH_OVERRIDE" -eq 1 ]; then
+    return 0
+  fi
+  if [ "${LB_KNOWLEDGE_SYNC_PUSH:-0}" = "1" ]; then
+    return 0
+  fi
+  return 1
+}
+
+# ------------------------------------------------------------------
+# Pre-flight
+# ------------------------------------------------------------------
+preflight() {
+  if [ ! -d "$KNOWLEDGE_DIR" ]; then
+    err "knowledge mirror not present at $KNOWLEDGE_DIR; run \`~/.leadbay-skills/setup --with-knowledge\`"
+    exit 2
+  fi
+  if [ ! -d "$KNOWLEDGE_DIR/.git" ] && [ ! -f "$KNOWLEDGE_DIR/.git" ]; then
+    err "$KNOWLEDGE_DIR is not a git checkout"
+    exit 2
+  fi
+  if [ ! -x "$WRITE_BIN" ]; then
+    err "$WRITE_BIN missing or not executable"
+    exit 2
+  fi
+  if ! command -v jq >/dev/null 2>&1; then
+    err "jq not found in PATH; required for parsing learnings.jsonl"
+    exit 2
+  fi
+  if ! command -v shasum >/dev/null 2>&1 && ! command -v sha256sum >/dev/null 2>&1; then
+    err "neither shasum nor sha256sum found; required for fingerprinting"
+    exit 2
+  fi
+  if [ ! -d "$PROJECTS_DIR" ]; then
+    log "no $PROJECTS_DIR; nothing to sync"
+    exit 0
+  fi
+  mkdir -p "$LEADBAY_HOME"
+}
+
+# ------------------------------------------------------------------
+# fingerprint: deterministic 16-char content hash from
+#   slug + key + ts + insight
+# ------------------------------------------------------------------
+fingerprint() {
+  local slug="$1" key="$2" ts="$3" insight="$4"
+  local payload
+  payload=$(printf '%s\n%s\n%s\n%s' "$slug" "$key" "$ts" "$insight")
+  local hex
+  if command -v shasum >/dev/null 2>&1; then
+    hex=$(printf '%s' "$payload" | shasum -a 256 | awk '{print $1}')
+  else
+    hex=$(printf '%s' "$payload" | sha256sum | awk '{print $1}')
+  fi
+  printf '%s' "${hex:0:16}"
+}
+
+# ------------------------------------------------------------------
+# load_state: read sync-state.json into the global STATE variable.
+# Initialises empty if the file doesn't exist or is corrupt.
+# If state is empty after load, recover from journal/ filesystem.
+# ------------------------------------------------------------------
+STATE=""
+RECOVERED_COUNT=0
+
+# ------------------------------------------------------------------
+# migrate_state_v2: clean up corrupted journal_path values where the
+# validator's stdout chatter leaked into the field (pre-iter-12 bug).
+# Idempotent — entries with clean paths are passthroughs.
+# ------------------------------------------------------------------
+migrate_state_v2() {
+  local n_fixed=0
+  local current
+  current=$(printf '%s' "$STATE" | jq -c '.synced // {}')
+  if [ "$current" = "null" ] || [ -z "$current" ]; then
+    return 0
+  fi
+  STATE=$(printf '%s' "$STATE" | jq '
+    .synced = (.synced | with_entries(.value.journal_path |= (
+      if type == "string" and contains("[lb-knowledge-validate-all]") then
+        capture("(?<p>[a-zA-Z0-9_/.-]+\\.md)$").p // .
+      else .
+      end
+    )))
+  ')
+  # Count fixed
+  n_fixed=$(printf '%s' "$current" | jq -r '[.[] | select(.journal_path | contains("[lb-knowledge-validate-all]"))] | length')
+  if [ "$n_fixed" -gt 0 ]; then
+    log "migrated $n_fixed corrupted journal_path entries in state file"
+    save_state
+  fi
+}
+
+load_state() {
+  if [ -f "$STATE_FILE" ]; then
+    if STATE=$(jq -e . "$STATE_FILE" 2>/dev/null); then
+      :
+    else
+      err "state file $STATE_FILE is corrupt; backing up to ${STATE_FILE}.bak.$(date +%s) and starting fresh"
+      mv "$STATE_FILE" "${STATE_FILE}.bak.$(date +%s)" 2>/dev/null || true
+      STATE='{"version":1,"synced":{}}'
+    fi
+  else
+    STATE='{"version":1,"synced":{}}'
+  fi
+  # Sanity-check version
+  local v
+  v=$(printf '%s' "$STATE" | jq -r '.version // 0')
+  if [ "$v" != "1" ]; then
+    err "state file version $v is not supported (expected 1); aborting"
+    exit 2
+  fi
+
+  # If state is empty, attempt recovery from the journal/ filesystem.
+  # The "**Sync fingerprint:** XXXX" marker is embedded in every entry
+  # we've ever emitted (since iter 2), so a scan re-derives the cache.
+  local n
+  n=$(printf '%s' "$STATE" | jq -r '.synced | length')
+  if [ "$n" -eq 0 ] && [ -d "$KNOWLEDGE_DIR/journal" ]; then
+    recover_state_from_journal
+  fi
+
+  # Migrate pre-iter-12 corrupted journal_path values once, in place.
+  migrate_state_v2
+}
+
+# ------------------------------------------------------------------
+# parse_journal_entry: given a journal .md, output a TSV record
+#   <fp>\t<slug>\t<key>\t<source_ts>\t<rel_path>
+# Empty fp output means "skip" (no marker found).
+# ------------------------------------------------------------------
+parse_journal_entry() {
+  local file="$1"
+  local rel="${file#"$KNOWLEDGE_DIR"/}"
+
+  # Extract YAML frontmatter slug + first key, and body Sync fingerprint
+  # + Source ts. Uses awk: state machine for frontmatter + body.
+  awk -v rel="$rel" '
+    BEGIN { in_fm=0; fm_done=0; slug=""; key=""; fp=""; src_ts="" }
+    NR==1 && /^---$/ { in_fm=1; next }
+    in_fm && /^---$/ { in_fm=0; fm_done=1; next }
+    in_fm && /^slug:[[:space:]]/ { sub(/^slug:[[:space:]]*/, ""); slug=$0; next }
+    in_fm && /^keys:[[:space:]]*\[/ {
+      # keys: ["foo"] → strip brackets+quotes; take first
+      sub(/^keys:[[:space:]]*\[[[:space:]]*"/, "")
+      sub(/".*$/, "")
+      key=$0; next
+    }
+    fm_done && /^\*\*Sync fingerprint:\*\*[[:space:]]/ {
+      sub(/^\*\*Sync fingerprint:\*\*[[:space:]]*/, "")
+      fp=$0; next
+    }
+    fm_done && /^\*\*Source ts:\*\*[[:space:]]/ {
+      sub(/^\*\*Source ts:\*\*[[:space:]]*/, "")
+      src_ts=$0; next
+    }
+    END {
+      if (fp != "" && slug != "" && key != "") {
+        printf "%s\t%s\t%s\t%s\t%s\n", fp, slug, key, src_ts, rel
+      }
+    }
+  ' "$file"
+}
+
+# ------------------------------------------------------------------
+# recover_state_from_journal: walk journal/ and rebuild the synced map.
+# Idempotent: if a fingerprint is already in STATE, leave it alone.
+# Sets the synced_at field to "recovered" so future audits can tell.
+# ------------------------------------------------------------------
+recover_state_from_journal() {
+  local n=0 jdir="$KNOWLEDGE_DIR/journal"
+  [ -d "$jdir" ] || return 0
+
+  while IFS= read -r f; do
+    [ -f "$f" ] || continue
+    local rec fp slug key src_ts jpath
+    rec=$(parse_journal_entry "$f")
+    [ -z "$rec" ] && continue
+    fp=$(printf '%s' "$rec" | cut -f1)
+    slug=$(printf '%s' "$rec" | cut -f2)
+    key=$(printf '%s' "$rec" | cut -f3)
+    src_ts=$(printf '%s' "$rec" | cut -f4)
+    jpath=$(printf '%s' "$rec" | cut -f5)
+
+    # Skip if already in state (e.g., when called outside the empty-state path)
+    if printf '%s' "$STATE" | jq -e --arg fp "$fp" '.synced[$fp] != null' >/dev/null 2>&1; then
+      continue
+    fi
+    STATE=$(printf '%s' "$STATE" | jq \
+      --arg fp "$fp" \
+      --arg slug "$slug" \
+      --arg key "$key" \
+      --arg ts "$src_ts" \
+      --arg jpath "$jpath" \
+      '.synced[$fp] = {slug: $slug, key: $key, ts: $ts, journal_path: $jpath, synced_at: "recovered"}')
+    n=$((n + 1))
+  done < <(find "$jdir" -type f -name '*.md' 2>/dev/null)
+
+  RECOVERED_COUNT=$n
+  if [ "$n" -gt 0 ]; then
+    log "recovered $n fingerprint(s) from $jdir"
+    save_state
+  fi
+}
+
+# ------------------------------------------------------------------
+# save_state: atomic write of $STATE to $STATE_FILE.
+# ------------------------------------------------------------------
+save_state() {
+  local tmp
+  tmp=$(mktemp "${STATE_FILE}.tmp.XXXXXX")
+  printf '%s' "$STATE" | jq . > "$tmp"
+  mv "$tmp" "$STATE_FILE"
+}
+
+# ------------------------------------------------------------------
+# is_synced: 0 if fingerprint already in state, 1 otherwise.
+# ------------------------------------------------------------------
+is_synced() {
+  local fp="$1"
+  printf '%s' "$STATE" | jq -e --arg fp "$fp" '.synced[$fp] != null' >/dev/null 2>&1
+}
+
+# ------------------------------------------------------------------
+# register_synced: add fingerprint metadata to STATE.
+# ------------------------------------------------------------------
+register_synced() {
+  local fp="$1" slug="$2" key="$3" ts="$4" jpath="$5"
+  STATE=$(printf '%s' "$STATE" | jq \
+    --arg fp "$fp" \
+    --arg slug "$slug" \
+    --arg key "$key" \
+    --arg ts "$ts" \
+    --arg jpath "$jpath" \
+    --arg synced_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    '.synced[$fp] = {slug: $slug, key: $key, ts: $ts, journal_path: $jpath, synced_at: $synced_at}')
+}
+
+# ------------------------------------------------------------------
+# walk_projects: list project slugs that have a learnings.jsonl
+# ------------------------------------------------------------------
+walk_projects() {
+  local d slug jsonl
+  for d in "$PROJECTS_DIR"/*/; do
+    [ -d "$d" ] || continue
+    slug="$(basename "$d")"
+    jsonl="${d}learnings.jsonl"
+    [ -f "$jsonl" ] || continue
+    [ -s "$jsonl" ] || continue
+    printf '%s\t%s\n' "$slug" "$jsonl"
+  done
+}
+
+# ------------------------------------------------------------------
+# coerce_type: source → journal-entry-v1 enum
+# ------------------------------------------------------------------
+coerce_type() {
+  case "${1:-}" in
+    operational|architecture|pattern|pitfall) printf '%s' "$1" ;;
+    preference) printf 'operational' ;;
+    tool)       printf 'pattern' ;;
+    *)          printf 'operational' ;;
+  esac
+}
+
+# ------------------------------------------------------------------
+# safe_topic: filesystem-safe slug from key
+# ------------------------------------------------------------------
+safe_topic() {
+  printf '%s' "${1:-unknown}" | tr -c 'a-zA-Z0-9._-' '-' | sed 's/^-//; s/-$//; s/--*/-/g' | head -c 60
+}
+
+# ------------------------------------------------------------------
+# secret_scan_text: scan stdin for secret-shaped tokens.
+# Patterns mirror lb-knowledge-validate-all's SECRET_PATTERNS list so the
+# pre-write scan and the per-file validator agree. Two-layer defence: if
+# this scan misses a pattern, the per-file validator (called by
+# lb-knowledge-write) catches it AND the post-commit re-validate pass
+# in main() catches it again before push.
+# Returns 0 if clean, 1 if any pattern matches.
+# ------------------------------------------------------------------
+VALIDATOR_PY="$KNOWLEDGE_DIR/bin/lb-knowledge-validate-all"
+SECRET_SCANNER="$SCRIPT_DIR/lb-knowledge-secret-scan"
+secret_scan_text() {
+  local text="$1"
+  if [ -x "$SECRET_SCANNER" ]; then
+    printf '%s' "$text" | "$SECRET_SCANNER"
+    return $?
+  fi
+  err "secret scanner missing at $SECRET_SCANNER; refusing to emit (fail-closed)"
+  return 1
+}
+
+# ------------------------------------------------------------------
+# quarantine_entry: append the source JSONL line to a side file for
+# human review; never deletes from the source learnings.jsonl.
+# ------------------------------------------------------------------
+quarantine_entry() {
+  local source_slug="$1" line="$2" reason="$3"
+  local qfile="$PROJECTS_DIR/$source_slug/learnings.quarantine.jsonl"
+  local marker
+  marker=$(printf '{"quarantined_at":"%s","reason":%s,"source":%s}' \
+    "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$(printf '%s' "$reason" | python3 -c 'import json,sys;print(json.dumps(sys.stdin.read().strip()))')" \
+    "$line")
+  printf '%s\n' "$marker" >> "$qfile"
+  err "QUARANTINED entry slug=$source_slug to $qfile (reason: $reason)"
+}
+
+# ------------------------------------------------------------------
+# truncate_if_large: if insight exceeds 40KB, truncate at last whitespace
+# before 40KB and side-write the original to sources/oversized/.
+# Echoes the (possibly-truncated) text on stdout.
+# ------------------------------------------------------------------
+MAX_INSIGHT_BYTES=40000
+truncate_if_large() {
+  local text="$1" fp="$2"
+  local len="${#text}"
+  if [ "$len" -le "$MAX_INSIGHT_BYTES" ]; then
+    printf '%s' "$text"
+    return 0
+  fi
+  # Side-write full content to sources/oversized/<date>/<fp>.txt
+  local oversized_dir="$KNOWLEDGE_DIR/sources/oversized/$(date -u +%Y-%m-%d)"
+  mkdir -p "$oversized_dir" 2>/dev/null
+  local source_path="$oversized_dir/$fp.txt"
+  printf '%s' "$text" > "$source_path" 2>/dev/null || \
+    err "warning: could not write oversize source to $source_path"
+
+  # Truncate at last whitespace boundary before MAX
+  local truncated="${text:0:$MAX_INSIGHT_BYTES}"
+  # Walk back to last whitespace to avoid splitting words
+  local i=${#truncated}
+  while [ "$i" -gt 0 ]; do
+    local ch="${truncated:$((i-1)):1}"
+    case "$ch" in
+      ' '|$'\t'|$'\n') break ;;
+    esac
+    i=$((i - 1))
+  done
+  if [ "$i" -gt 0 ]; then
+    truncated="${truncated:0:$i}"
+  fi
+
+  # Strip trailing whitespace to keep `git diff --check` happy
+  truncated="${truncated%"${truncated##*[![:space:]]}"}"
+  printf '%s\n\n[truncated at %s bytes; full content in sources/oversized/%s/%s.txt]' \
+    "$truncated" "$i" "$(date -u +%Y-%m-%d)" "$fp"
+}
+
+# ------------------------------------------------------------------
+# emit_journal_for_entry: take one JSONL line, call lb-knowledge-write
+# with the source project's slug. Sets LB_SLUG_OVERRIDE / LB_ACTOR_OVERRIDE
+# so attribution matches origin (not the runner's cwd).
+# Returns 0 on success, 1 on emit failure. Records new fingerprint in STATE.
+# ------------------------------------------------------------------
+emit_journal_for_entry() {
+  local source_slug="$1"
+  local line="$2"
+
+  local skill type key insight confidence ts files actor fp
+  skill=$(printf '%s' "$line"      | jq -r '.skill // "unknown"')
+  type=$(printf '%s' "$line"       | jq -r '.type  // "operational"')
+  key=$(printf '%s' "$line"        | jq -r '.key   // "unknown"')
+  insight=$(printf '%s' "$line"    | jq -r '.insight // ""')
+  confidence=$(printf '%s' "$line" | jq -r '.confidence // 5')
+  ts=$(printf '%s' "$line"         | jq -r '.ts // ""')
+  files=$(printf '%s' "$line"      | jq -r '(.files // []) | join(", ")')
+  actor=$(printf '%s' "$line"      | jq -r '.actor // ""')
+
+  if [ -z "$insight" ] || [ "$insight" = "null" ]; then
+    return 0
+  fi
+
+  fp=$(fingerprint "$source_slug" "$key" "$ts" "$insight")
+
+  if is_synced "$fp"; then
+    SKIPPED_COUNT=$((SKIPPED_COUNT + 1))
+    return 0
+  fi
+
+  # Truncate large insights and side-write full content to sources/oversized/.
+  # Fingerprint is computed against the ORIGINAL insight so re-syncing the
+  # same large content is still a no-op.
+  insight=$(truncate_if_large "$insight" "$fp")
+
+  # Pre-write secret scan: refuse to write a journal entry if the source
+  # learning contains a secret-shaped token. Quarantine for human review.
+  local scan_input
+  scan_input=$(printf '%s\nfiles: %s' "$insight" "$files")
+  if ! secret_scan_text "$scan_input"; then
+    quarantine_entry "$source_slug" "$line" "secret pattern in insight or files"
+    QUARANTINED_COUNT=$((QUARANTINED_COUNT + 1))
+    return 0  # not an emit failure; it's a deliberate skip
+  fi
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] would emit fp=$fp slug=$source_slug key=$key"
+    PENDING_COUNT=$((PENDING_COUNT + 1))
+    return 0
+  fi
+
+  local journal_type
+  journal_type="$(coerce_type "$type")"
+  local topic
+  topic="$(safe_topic "$key")"
+
+  local body
+  body=$(cat <<EOF
+$insight
+
+---
+**Captured by:** $skill
+**Source slug:** $source_slug
+**Source key:** $key
+**Source ts:** $ts
+**Source confidence:** $confidence
+**Sync fingerprint:** $fp
+$( [ -n "$files" ] && [ "$files" != "" ] && printf '**Source files:** %s\n' "$files" )
+$( [ -n "$actor" ] && [ "$actor" != "" ] && [ "$actor" != "null" ] && printf '**Source actor:** %s\n' "$actor" )
+
+_Synced from \$LEADBAY_HOME/projects/$source_slug/learnings.jsonl_
+EOF
+)
+
+  # Emit. Env vars are prefixed on the writer (consumer side of the pipe).
+  # LB_SKIP_DUAL_WRITE=1 prevents lb-knowledge-write from also calling
+  # lb-learnings-log — sync is itself a learnings.jsonl consumer; allowing
+  # the writer to dual-write would create a cwd-derived-slug pollution loop.
+  local journal_path
+  journal_path=$(printf '%s' "$body" | \
+    LB_SLUG_OVERRIDE="$source_slug" \
+    LB_ACTOR_OVERRIDE="$(hostname -s)-sync" \
+    LB_RUN_ID="$RUN_ID" \
+    LB_SKILL="$skill" \
+    LB_SKIP_DUAL_WRITE=1 \
+    "$WRITE_BIN" journal \
+      --topic "$topic" \
+      --type "$journal_type" \
+      --keys "$key" \
+      --skill "$skill" \
+      --confidence "$confidence" 2>/dev/null) || {
+    err "lb-knowledge-write failed for fp=$fp slug=$source_slug key=$key"
+    return 1
+  }
+
+  # Strip absolute prefix for portability of state file
+  journal_path="${journal_path#"$KNOWLEDGE_DIR"/}"
+  register_synced "$fp" "$source_slug" "$key" "$ts" "$journal_path"
+  EMITTED_COUNT=$((EMITTED_COUNT + 1))
+  return 0
+}
+
+# ------------------------------------------------------------------
+# commit_pending: stage journal/ changes and commit if non-empty.
+# ------------------------------------------------------------------
+commit_pending() {
+  local n_files n_added msg
+  cd "$KNOWLEDGE_DIR" || return 2
+
+  git add journal/ 2>/dev/null || true
+
+  if git diff --cached --quiet; then
+    return 1
+  fi
+
+  n_files=$(git diff --cached --name-only | wc -l | tr -d ' ')
+  n_added=$(git diff --cached --shortstat | grep -oE '[0-9]+ insertion' | head -1 | grep -oE '[0-9]+' || echo "0")
+
+  msg="sync: $n_files journal file(s), $n_added line(s)
+
+Auto-synced by lb-knowledge-sync from local learnings.jsonl across
+\$LEADBAY_HOME/projects/. See files for source slug + key + fingerprint."
+
+  git commit -m "$msg" >/dev/null
+  log "committed $n_files file(s), $n_added line(s)"
+  return 0
+}
+
+# ------------------------------------------------------------------
+# do_push: fetch + pull --rebase --autostash + push.
+# Retries once on conflict / non-FF / network blip.
+# Exit codes:
+#   0 — pushed (or nothing to push)
+#   1 — transient failure (rebase conflict, network); next tick may recover
+#   2 — permanent failure (auth, wrong branch, bad remote)
+# ------------------------------------------------------------------
+do_push() {
+  cd "$KNOWLEDGE_DIR" || return 2
+
+  # Branch sanity
+  local branch
+  branch=$(git symbolic-ref --short HEAD 2>/dev/null) || branch=""
+  if [ "$branch" != "main" ]; then
+    err "knowledge clone is not on main (HEAD=$branch); refusing to push"
+    return 2
+  fi
+
+  # Remote sanity
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    err "no 'origin' remote configured on $KNOWLEDGE_DIR"
+    return 2
+  fi
+
+  # Working-tree sanity
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    err "knowledge clone has uncommitted changes; refusing to push"
+    return 2
+  fi
+
+  local attempt=0 max_attempts=3 fetch_rc rebase_rc push_rc
+  while [ "$attempt" -lt "$max_attempts" ]; do
+    attempt=$((attempt + 1))
+    if [ "$attempt" -gt 1 ]; then
+      # Exponential backoff with ±25% jitter to avoid thundering-herd
+      # if multiple machines retry against the same origin at once.
+      local base=$((1 << (attempt - 2)))
+      local jittered
+      jittered=$(python3 -c "
+import random, sys
+base = float(sys.argv[1])
+delta = base * 0.25 * (random.random() * 2 - 1)
+v = max(0.5, base + delta)
+print(f'{v:.2f}')
+" "$base" 2>/dev/null) || jittered="$base"
+      log "push attempt $attempt/$max_attempts: backing off ${jittered}s (base=${base}s ±25% jitter)"
+      sleep "$jittered"
+    fi
+    log "push attempt $attempt/$max_attempts: fetch origin main"
+
+    local fetch_stderr fetch_rc=0
+    fetch_stderr=$(git fetch origin main 2>&1) || fetch_rc=$?
+    if [ "$fetch_rc" -ne 0 ]; then
+      err "git fetch failed (rc=$fetch_rc): $fetch_stderr"
+      case "$fetch_stderr" in
+        *Authentication*|*"403"*|*"401"*|*"Permission denied"*|*"could not read Username"*)
+          err "AUTH_FAILURE_DETECTED on fetch — refusing to retry; check gh auth"
+          return 2
+          ;;
+      esac
+      if [ "$attempt" -ge "$max_attempts" ]; then
+        return 1
+      fi
+      continue
+    fi
+
+    # Anything to rebase onto?
+    local local_ahead remote_ahead
+    local_ahead=$(git rev-list --count origin/main..HEAD 2>/dev/null || echo 0)
+    remote_ahead=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo 0)
+    log "local_ahead=$local_ahead remote_ahead=$remote_ahead"
+
+    if [ "$local_ahead" -eq 0 ]; then
+      log "PUSH_OK (already in sync; nothing to push)"
+      return 0
+    fi
+
+    if [ "$remote_ahead" -gt 0 ]; then
+      log "remote diverged ($remote_ahead commit(s) ahead); rebasing"
+      if ! git pull --rebase --autostash origin main 2>/dev/null; then
+        rebase_rc=$?
+        err "git pull --rebase failed (rc=$rebase_rc); aborting rebase"
+        git rebase --abort 2>/dev/null || true
+        if [ "$attempt" -ge "$max_attempts" ]; then
+          return 1
+        fi
+        continue
+      fi
+    fi
+
+    local push_stderr push_rc=0
+    push_stderr=$(git push origin main 2>&1) || push_rc=$?
+    if [ "$push_rc" -eq 0 ]; then
+      log "PUSH_OK (pushed $local_ahead commit(s))"
+      return 0
+    fi
+    err "git push failed (rc=$push_rc): $push_stderr"
+    # Distinguish auth failure (permanent — retry won't help) from
+    # network/non-FF (transient — retry).
+    case "$push_stderr" in
+      *Authentication*|*"403"*|*"401"*|*"Permission denied"*|*"could not read Username"*)
+        err "AUTH_FAILURE_DETECTED — refusing to retry; check gh auth"
+        return 2
+        ;;
+    esac
+    if [ "$attempt" -ge "$max_attempts" ]; then
+      return 1
+    fi
+  done
+
+  err "push failed after $max_attempts attempts; giving up"
+  return 1
+}
+
+# ------------------------------------------------------------------
+# compute_verdict: single source of truth for the OK/STALE/FAILING
+# verdict, derived from sync-status.json. Echoes verdict + age_hours
+# as TSV: "VERDICT\tAGE_HOURS\tLAST_SUCCESS\tLAST_FAILURE\tREASON\tCONSECUTIVE"
+#
+# Verdict rules (epoch-numeric, no fragile ISO-string lexical comparison):
+#   OK       — last_success within 2 hours, no failure newer than success
+#   STALE    — last_success 2-24 hours ago
+#   FAILING  — failure newer than success, OR last_success >24h, OR
+#              consecutive_failures >= 3
+# ------------------------------------------------------------------
+compute_verdict() {
+  local last_success last_failure reason consecutive
+  if [ -f "$STATUS_FILE" ]; then
+    last_success=$(jq -r '.last_success_at // ""' "$STATUS_FILE" 2>/dev/null)
+    last_failure=$(jq -r '.last_failure_at // ""' "$STATUS_FILE" 2>/dev/null)
+    reason=$(jq -r '.last_failure_reason // ""' "$STATUS_FILE" 2>/dev/null)
+    consecutive=$(jq -r '.consecutive_failures // 0' "$STATUS_FILE" 2>/dev/null)
+  else
+    last_success=""; last_failure=""; reason=""; consecutive=0
+  fi
+
+  local verdict="UNKNOWN" age_hours=0
+  local now success_epoch=0 failure_epoch=0
+  now=$(date -u +%s)
+
+  iso_to_epoch() {
+    python3 -c "
+import datetime, sys
+s = sys.argv[1]
+if not s:
+    print(0)
+else:
+    try:
+        print(int(datetime.datetime.fromisoformat(s.replace('Z','+00:00')).timestamp()))
+    except Exception:
+        print(0)
+" "$1" 2>/dev/null || echo 0
+  }
+
+  if [ -n "$last_success" ]; then
+    success_epoch=$(iso_to_epoch "$last_success")
+    age_hours=$(( (now - success_epoch) / 3600 ))
+  fi
+  if [ -n "$last_failure" ]; then
+    failure_epoch=$(iso_to_epoch "$last_failure")
+  fi
+
+  if [ "$success_epoch" -gt 0 ]; then
+    if [ "$consecutive" -ge 3 ]; then verdict="FAILING"
+    elif [ "$failure_epoch" -gt "$success_epoch" ]; then verdict="FAILING"
+    elif [ "$age_hours" -le 2 ]; then verdict="OK"
+    elif [ "$age_hours" -le 24 ]; then verdict="STALE"
+    else verdict="FAILING"
+    fi
+  elif [ -n "$last_failure" ]; then
+    verdict="FAILING"
+  fi
+
+  if [ "$SHOW_VERDICT_JSON" = "1" ]; then
+    jq -nc \
+      --arg v "$verdict" \
+      --argjson age "$age_hours" \
+      --arg ls "$last_success" \
+      --arg lf "$last_failure" \
+      --arg r "$reason" \
+      --argjson c "$consecutive" \
+      '{verdict:$v, age_hours:$age, last_success:$ls, last_failure:$lf, last_failure_reason:$r, consecutive_failures:$c}'
+  else
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$verdict" "$age_hours" "$last_success" "$last_failure" "$reason" "$consecutive"
+  fi
+}
+
+# ------------------------------------------------------------------
+# do_status: human-readable status. Uses compute_verdict for the
+# verdict so lb-knowledge-find and any other consumer agree.
+# ------------------------------------------------------------------
+do_status() {
+  load_state
+  local n_synced
+  n_synced=$(printf '%s' "$STATE" | jq -r '.synced | length')
+
+  # Get verdict from compute_verdict's JSON form (avoids bash read's
+  # quirky handling of consecutive empty TSV fields).
+  local saved_flag="$SHOW_VERDICT_JSON"
+  SHOW_VERDICT_JSON=1
+  local verdict_json
+  verdict_json=$(compute_verdict)
+  SHOW_VERDICT_JSON="$saved_flag"
+
+  local verdict age_hours last_success last_failure failure_reason consecutive
+  verdict=$(printf '%s' "$verdict_json" | jq -r '.verdict')
+  age_hours=$(printf '%s' "$verdict_json" | jq -r '.age_hours')
+  last_success=$(printf '%s' "$verdict_json" | jq -r '.last_success')
+  last_failure=$(printf '%s' "$verdict_json" | jq -r '.last_failure')
+  failure_reason=$(printf '%s' "$verdict_json" | jq -r '.last_failure_reason')
+  consecutive=$(printf '%s' "$verdict_json" | jq -r '.consecutive_failures')
+
+  # Pending count
+  local n_pending=0
+  while IFS=$'\t' read -r slug jsonl; do
+    [ -z "$slug" ] && continue
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      local key insight ts fp
+      key=$(printf '%s' "$line" | jq -r '.key // "unknown"' 2>/dev/null)
+      insight=$(printf '%s' "$line" | jq -r '.insight // ""' 2>/dev/null)
+      ts=$(printf '%s' "$line" | jq -r '.ts // ""' 2>/dev/null)
+      [ -z "$insight" ] || [ "$insight" = "null" ] && continue
+      fp=$(fingerprint "$slug" "$key" "$ts" "$insight")
+      if ! is_synced "$fp"; then
+        n_pending=$((n_pending + 1))
+      fi
+    done < "$jsonl"
+  done < <(walk_projects)
+
+  printf 'lb-knowledge-sync — %s\n' "$verdict"
+  printf '  state-file:    %s\n' "$STATE_FILE"
+  printf '  status-file:   %s\n' "$STATUS_FILE"
+  printf '  synced count:  %s\n' "$n_synced"
+  printf '  pending:       %s\n' "$n_pending"
+  if [ -n "$last_success" ]; then
+    printf '  last success:  %s (%sh ago)\n' "$last_success" "$age_hours"
+  else
+    printf '  last success:  (never)\n'
+  fi
+  if [ -n "$last_failure" ]; then
+    printf '  last failure:  %s — %s\n' "$last_failure" "$failure_reason"
+    printf '  consecutive:   %s\n' "$consecutive"
+  fi
+  if [ -d "$KNOWLEDGE_DIR" ]; then
+    cd "$KNOWLEDGE_DIR"
+    printf '  knowledge HEAD: %s\n' "$(git log -1 --format='%h %s' 2>/dev/null || echo unknown)"
+  fi
+  exit 0
+}
+
+# ------------------------------------------------------------------
+# main
+# ------------------------------------------------------------------
+main() {
+  parse_args "$@"
+
+  if [ "$SHOW_VERDICT_JSON" -eq 1 ]; then
+    # Don't preflight or load state — just compute the verdict from the
+    # status file. Cheap and called from lb-knowledge-find on every prompt.
+    compute_verdict
+    return 0
+  fi
+
+  if [ "$SHOW_STATUS" -eq 1 ]; then
+    preflight
+    do_status
+    return 0
+  fi
+
+  preflight
+
+  # Acquire advisory lock; on contention exit 0 (another sync is running).
+  if ! acquire_lock; then
+    exit 0
+  fi
+
+  load_state
+
+  RUN_ID="$(date +%s)-$$"
+  EMITTED_COUNT=0
+  SKIPPED_COUNT=0
+  PENDING_COUNT=0
+  FAILED_COUNT=0
+  QUARANTINED_COUNT=0
+
+  log "lb-knowledge-sync RUN_ID=$RUN_ID dry_run=$DRY_RUN"
+
+  local n_seen=0 slug jsonl line
+  while IFS=$'\t' read -r slug jsonl; do
+    [ -z "$slug" ] && continue
+    log "scan $slug ($jsonl)"
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      n_seen=$((n_seen + 1))
+      if ! emit_journal_for_entry "$slug" "$line"; then
+        FAILED_COUNT=$((FAILED_COUNT + 1))
+      fi
+    done < "$jsonl"
+  done < <(walk_projects)
+
+  log "scanned=$n_seen emitted=$EMITTED_COUNT skipped=$SKIPPED_COUNT failed=$FAILED_COUNT pending=$PENDING_COUNT quarantined=$QUARANTINED_COUNT"
+
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "DRY_RUN: would emit $PENDING_COUNT entries; nothing written"
+    exit 0
+  fi
+
+  local committed=0
+  if [ "$EMITTED_COUNT" -gt 0 ]; then
+    if commit_pending; then
+      save_state
+      log "SYNC_OK (committed $EMITTED_COUNT new entries; state saved)"
+      committed=1
+    else
+      rc=$?
+      if [ "$rc" -eq 1 ]; then
+        # Wrote files but git diff was empty — likely the files already
+        # existed identically. Save state anyway so we don't redo this.
+        save_state
+        log "SYNC_OK (files written but no git delta; state saved)"
+      else
+        err "git commit failed"
+        exit 1
+      fi
+    fi
+  else
+    log "SYNC_OK (0 new entries)"
+  fi
+
+  # Post-commit self-evaluation: re-validate the entire repo. If the
+  # validator catches anything (schema, lane, size, secret, filename),
+  # hard-reset HEAD~1 to undo our commit and exit 2 (permanent failure).
+  if [ "$committed" -eq 1 ] && [ -x "$VALIDATOR_PY" ]; then
+    cd "$KNOWLEDGE_DIR" || true
+    if ! python3 "$VALIDATOR_PY" --lane hot >/tmp/lb-validate-out.$$ 2>&1; then
+      err "POST_COMMIT_VALIDATION_FAILED — rolling back HEAD~1"
+      cat /tmp/lb-validate-out.$$ >&2
+      git reset --hard HEAD~1 >/dev/null 2>&1 || {
+        err "git reset --hard HEAD~1 also failed; MANUAL INTERVENTION REQUIRED"
+        rm -f /tmp/lb-validate-out.$$
+        write_sync_status failure 0 "post-commit validation failed AND rollback failed"
+        exit 2
+      }
+      log "rolled back to baseline; aborting"
+      rm -f /tmp/lb-validate-out.$$
+      write_sync_status failure 0 "post-commit validation failed (rolled back)"
+      exit 2
+    fi
+
+    # Additional self-eval: git diff --check on the new commit catches
+    # whitespace + conflict markers that the schema validator would miss.
+    if git rev-parse --verify HEAD~1 >/dev/null 2>&1; then
+      if ! git diff --check HEAD~1..HEAD >/tmp/lb-diff-check.$$ 2>&1; then
+        err "GIT_DIFF_CHECK_FAILED — rolling back HEAD~1"
+        cat /tmp/lb-diff-check.$$ >&2
+        git reset --hard HEAD~1 >/dev/null 2>&1 || true
+        rm -f /tmp/lb-diff-check.$$ /tmp/lb-validate-out.$$
+        write_sync_status failure 0 "git diff --check failed (whitespace/conflict markers)"
+        exit 2
+      fi
+      rm -f /tmp/lb-diff-check.$$
+    fi
+
+    # git fsck — catches storage-level corruption schema validation can't see.
+    # Only abort on `error:` lines; `dangling`/`warning:` are usually
+    # benign for our use case.
+    if [ "${LB_SKIP_VERIFY:-0}" != "1" ]; then
+      if git fsck --no-progress 2>&1 | grep -q '^error'; then
+        err "GIT_FSCK_FAILED — rolling back HEAD~1"
+        git fsck --no-progress 2>&1 | grep '^error' >&2
+        git reset --hard HEAD~1 >/dev/null 2>&1 || true
+        rm -f /tmp/lb-validate-out.$$
+        write_sync_status failure 0 "git fsck failed"
+        exit 2
+      fi
+    fi
+
+    log "POST_COMMIT_VALIDATE_OK"
+    rm -f /tmp/lb-validate-out.$$
+  fi
+
+  # Push gate: opt-in via env var or --push flag.
+  # Always check; even with 0 new entries we may have stuck local commits
+  # from a prior sync where push failed.
+  if should_push; then
+    cd "$KNOWLEDGE_DIR" || true
+    local local_only
+    local_only=$(git rev-list --count "@{u}..HEAD" 2>/dev/null || echo 0)
+    if [ "$local_only" -gt 0 ] || [ "$committed" -eq 1 ]; then
+      log "push gate: ON (LB_KNOWLEDGE_SYNC_PUSH or --push); $local_only local-only commit(s)"
+      local push_rc=0
+      do_push || push_rc=$?
+      if [ "$push_rc" -ne 0 ]; then
+        err "push returned $push_rc"
+        local push_reason
+        case "$push_rc" in
+          2) push_reason="permanent (auth/branch/dirty)" ;;
+          1) push_reason="transient (network/rebase-conflict)" ;;
+          *) push_reason="unknown rc=$push_rc" ;;
+        esac
+        write_sync_status failure "$local_only" "push failed: $push_reason"
+        # Don't reset state — the journal commits ARE in the local clone;
+        # next tick will try to push them again.
+        exit "$push_rc"
+      fi
+    else
+      log "push gate: ON but no local-only commits; nothing to push"
+    fi
+  else
+    cd "$KNOWLEDGE_DIR" || true
+    local local_only
+    local_only=$(git rev-list --count "@{u}..HEAD" 2>/dev/null || echo 0)
+    if [ "$local_only" -gt 0 ]; then
+      log "push gate: OFF — $local_only local-only commit(s) NOT pushed; set LB_KNOWLEDGE_SYNC_PUSH=1 or use --push to push"
+    fi
+  fi
+
+  if [ "$FAILED_COUNT" -gt 0 ]; then
+    err "$FAILED_COUNT entries failed; non-zero exit"
+    write_sync_status failure 0 "$FAILED_COUNT entries failed to emit"
+    exit 1
+  fi
+
+  # Compute pending count post-run for status. With the state file fresh
+  # after this run, pending should be 0 (everything either synced or quarantined).
+  write_sync_status ok 0
+  exit 0
+}
+
+main "$@"
