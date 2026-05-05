@@ -272,6 +272,57 @@ for tmpl in "$SKILLS_HOME"/*/SKILL.md.tmpl; do
   fi
 done
 
+# --- install daily auto-update launchd job (Darwin only, skipped in --ci) ---
+# This is what makes the install "forever": as the team ships new skills,
+# this Mac picks them up daily without manual `setup --update`. Also self-
+# heals any symlink drift that accumulates from worktree churn.
+# Refuses to install the plist if the auto-update binary is missing.
+if [ "$CI_MODE" = "false" ] && [ "$(uname -s)" = "Darwin" ]; then
+  AUTO_PLIST="${HOME}/Library/LaunchAgents/ai.leadbay.skills-auto-update.plist"
+  AUTO_BIN="$SKILLS_HOME/bin/lb-skills-auto-update"
+  if [ -x "$AUTO_BIN" ]; then
+    mkdir -p "$(dirname "$AUTO_PLIST")"
+    cat > "$AUTO_PLIST" <<EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>ai.leadbay.skills-auto-update</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$AUTO_BIN</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>17</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>${HOME}/.leadbay/skills-auto-update.out</string>
+  <key>StandardErrorPath</key>
+  <string>${HOME}/.leadbay/skills-auto-update.err</string>
+</dict>
+</plist>
+EOF
+    launchctl unload "$AUTO_PLIST" 2>/dev/null || true
+    launchctl load "$AUTO_PLIST" 2>/dev/null || true
+    echo "  Daily auto-update timer installed: $AUTO_PLIST"
+  else
+    echo "  WARNING: skipping daily auto-update plist — $AUTO_BIN missing or not executable" >&2
+    # Remove any stale plist that points at a missing binary
+    if [ -f "$AUTO_PLIST" ]; then
+      launchctl unload "$AUTO_PLIST" 2>/dev/null || true
+      rm -f "$AUTO_PLIST"
+      echo "  Removed stale plist $AUTO_PLIST" >&2
+    fi
+  fi
+fi
+
 # ============================================================================
 # --gstack-interop bridge
 # ============================================================================
@@ -421,6 +472,21 @@ PY
     UNAME=$(uname -s)
     SYNC_BIN="$SKILLS_HOME/bin/lb-knowledge-sync"
 
+    # Refuse to install plists / units that point at a missing binary.
+    # This is the bug we shipped in v0.4.0: lb-knowledge-sync was deleted but
+    # the plist install kept happening. Check before installing.
+    if [ ! -x "$SYNC_BIN" ]; then
+      echo "  WARNING: skipping knowledge-sync timer — $SYNC_BIN missing or not executable" >&2
+      # Remove any stale plist that points at the missing binary
+      STALE_PLIST="${HOME}/Library/LaunchAgents/ai.leadbay.knowledge-sync.plist"
+      if [ -f "$STALE_PLIST" ]; then
+        launchctl unload "$STALE_PLIST" 2>/dev/null || true
+        rm -f "$STALE_PLIST"
+        echo "  Removed stale plist $STALE_PLIST" >&2
+      fi
+      UNAME=__skip__   # short-circuit the case below
+    fi
+
     case "$UNAME" in
       Darwin)
         PLIST="${HOME}/Library/LaunchAgents/ai.leadbay.knowledge-sync.plist"
@@ -439,7 +505,12 @@ PY
   <key>StartInterval</key>
   <integer>1800</integer>
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LB_KNOWLEDGE_SYNC_PUSH</key>
+    <string>1</string>
+  </dict>
   <key>StandardOutPath</key>
   <string>${HOME}/.leadbay/sync.log</string>
   <key>StandardErrorPath</key>
@@ -449,7 +520,7 @@ PY
 EOF
         launchctl unload "$PLIST" 2>/dev/null || true
         launchctl load "$PLIST" 2>/dev/null || true
-        echo "  launchd timer installed: $PLIST"
+        echo "  launchd timer installed: $PLIST (push=on)"
         ;;
       Linux)
         UNIT_DIR="${HOME}/.config/systemd/user"
@@ -499,4 +570,26 @@ elif [ "$WITH_KNOWLEDGE" = "skipped" ]; then
   echo "Knowledge mirror: NOT installed (clone failed; check repo access)."
 fi
 echo ""
+
+# ============================================================================
+# Diagnostic summary — verify launchd plists actually point at extant binaries
+# ============================================================================
+if [ "$CI_MODE" = "false" ] && [ "$(uname -s)" = "Darwin" ]; then
+  echo "Launchd plist self-test:"
+  for label in ai.leadbay.knowledge-sync ai.leadbay.skills-auto-update; do
+    plist="${HOME}/Library/LaunchAgents/${label}.plist"
+    if [ ! -f "$plist" ]; then
+      echo "  [-] $label: not installed"
+      continue
+    fi
+    bin_path=$(/usr/libexec/PlistBuddy -c 'Print :ProgramArguments:0' "$plist" 2>/dev/null || echo unknown)
+    if [ -x "$bin_path" ]; then
+      echo "  [+] $label -> $bin_path"
+    else
+      echo "  [!] $label -> $bin_path (MISSING OR NOT EXECUTABLE)" >&2
+    fi
+  done
+  echo ""
+fi
+
 echo "Update anytime: ~/.leadbay-skills/setup --update"

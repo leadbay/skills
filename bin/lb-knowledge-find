@@ -433,4 +433,37 @@ if [[ "$HAS_CONTENT" == "false" ]]; then
   echo ""
 fi
 
+# Sync status warning — single source of truth from lb-knowledge-sync's
+# --verdict-json mode (avoids duplicating verdict logic across binaries).
+# Only emitted when sync is non-OK so the brief stays clean during
+# normal operation. Fails soft if helper missing or jq absent.
+SYNC_BIN="$SCRIPT_DIR/lb-knowledge-sync"
+if [[ -x "$SYNC_BIN" ]] && command -v jq >/dev/null 2>&1; then
+  _ss_json=$("$SYNC_BIN" --verdict-json 2>/dev/null || echo '{"verdict":"UNKNOWN"}')
+  _ss_verdict=$(printf '%s' "$_ss_json" | jq -r '.verdict // "UNKNOWN"')
+  if [[ "$_ss_verdict" != "OK" && "$_ss_verdict" != "UNKNOWN" ]]; then
+    _ss_last_success=$(printf '%s' "$_ss_json" | jq -r '.last_success // ""')
+    _ss_last_failure=$(printf '%s' "$_ss_json" | jq -r '.last_failure // ""')
+    _ss_reason=$(printf '%s' "$_ss_json" | jq -r '.last_failure_reason // ""')
+    _ss_consec=$(printf '%s' "$_ss_json" | jq -r '.consecutive_failures // 0')
+    _ss_age=$(printf '%s' "$_ss_json" | jq -r '.age_hours // 0')
+    echo "### Knowledge sync status: ${_ss_verdict}"
+    echo ""
+    if [[ "$_ss_verdict" == "FAILING" ]]; then
+      echo "Knowledge-sync pipeline is FAILING. Recent learnings are NOT flowing to leadbay/knowledge."
+      echo ""
+      echo "- Last success: ${_ss_last_success:-(never)}"
+      [[ -n "$_ss_last_failure" ]] && echo "- Last failure: $_ss_last_failure — $_ss_reason"
+      echo "- Consecutive failures: $_ss_consec"
+    else
+      echo "Knowledge-sync hasn't run successfully in ${_ss_age}h. The wiki may be stale."
+      echo ""
+      echo "- Last success: $_ss_last_success"
+    fi
+    echo ""
+    echo "Run \`~/.leadbay-skills/bin/lb-knowledge-sync --status\` for details."
+    echo ""
+  fi
+fi
+
 echo "$KNOWLEDGE_PROTOCOL_INSTRUCTIONS"

@@ -29,10 +29,23 @@ if [[ ! -d "$KNOWLEDGE_DIR" ]]; then
   exit 2
 fi
 
-eval "$("$SCRIPT_DIR/lb-slug" 2>/dev/null)"
-SLUG="${SLUG:-unknown}"
+# Slug + actor derivation:
+# By default, infer SLUG from the current git repo via lb-slug. Cross-repo
+# callers (notably lb-knowledge-sync, which walks ~/.leadbay/projects/*/
+# and emits journal entries attributed to each project's slug, not the
+# caller's cwd) override via LB_SLUG_OVERRIDE / LB_ACTOR_OVERRIDE.
+if [[ -n "${LB_SLUG_OVERRIDE:-}" ]]; then
+  SLUG="$LB_SLUG_OVERRIDE"
+else
+  eval "$("$SCRIPT_DIR/lb-slug" 2>/dev/null)"
+  SLUG="${SLUG:-unknown}"
+fi
 
-LB_ACTOR="${LB_ACTOR:-$(whoami)}"
+if [[ -n "${LB_ACTOR_OVERRIDE:-}" ]]; then
+  LB_ACTOR="$LB_ACTOR_OVERRIDE"
+else
+  LB_ACTOR="${LB_ACTOR:-$(whoami)}"
+fi
 LB_RUN_ID="${LB_RUN_ID:-${GITHUB_RUN_ID:-$(date +%s)}}"
 TIMESTAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 DATE="$(date -u +%Y-%m-%d)"
@@ -48,7 +61,10 @@ write_file() {
   local target="$1" payload="$2"
   mkdir -p "$(dirname "$target")"
   printf '%s' "$payload" > "$target"
-  if "$SCRIPT_DIR/lb-knowledge-validate" --file "$target" --lane hot; then
+  # Validator stdout goes to stderr so it doesn't pollute our path output
+  # (consumers like lb-knowledge-sync capture stdout and would mix the
+  # validator's "OK ..." chatter into journal_path values).
+  if "$SCRIPT_DIR/lb-knowledge-validate" --file "$target" --lane hot >&2; then
     echo "$target"
   else
     rm -f "$target"
@@ -105,8 +121,11 @@ EOF
 
     write_file "$FNAME" "$PAYLOAD"
 
-    # Dual-write a compact learning to the local jsonl for read-time search
-    if [[ -x "$SCRIPT_DIR/lb-learnings-log" ]]; then
+    # Dual-write a compact learning to the local jsonl for read-time search.
+    # Skipped when LB_SKIP_DUAL_WRITE=1 (set by lb-knowledge-sync to avoid a
+    # cwd-derived-slug feedback loop where sync's emits get re-appended to
+    # whichever project lb-slug resolves from the runner's cwd).
+    if [[ -x "$SCRIPT_DIR/lb-learnings-log" ]] && [[ "${LB_SKIP_DUAL_WRITE:-0}" != "1" ]]; then
       INSIGHT_LINE=$(printf '%s' "$BODY" | grep -v '^---' | grep -v '^$' | head -1 | head -c 280 || true)
       [[ -z "$INSIGHT_LINE" ]] && INSIGHT_LINE="see $FNAME"
       ALLOWED_TYPE="$TYPE"
