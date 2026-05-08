@@ -44,7 +44,7 @@ description: |
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 7.1.0
+version: 7.2.0
 allowed-tools:
   - Bash
   - Read
@@ -280,6 +280,7 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | v4 still allowed PROCEED while improvement was possible: 3-of-5 plateau leaves 2 of the last 5 having IMPROVED (= room to improve still exists), and one CLEAN second-opinion might be a single subagent being lucky/cursory. The user's clarification: "Pass IF AND ONLY IF any further improvement is actually impossible." | v5 tightens the bar: (1) iteration floor raised to 15; (2) `attempts-exhausted` requires ALL 5 of last 5 to be NO_MOVEMENT/REGRESSED (was 3-of-5) — if even one IMPROVED, gradient is alive; (3) NEW `second-opinions-consistent` gate requires ≥2 second-opinion files (`99-second-opinion-NN.md`), both CLEAN/EXTERNAL_ONLY, with ≥5 iterations between them. The second subagent receives the first's findings + verifies each was addressed before adding new ones. Two independent reviewers across time agreeing nothing's fixable is the operational definition of "further improvement is actually impossible." |
 | v5's hardcoded `iteration-count: 15` floor was prescriptive about something we can't know in advance. A tiny task might honestly converge in ~8 iterations; a complex one may need 80+. Imposing a fixed minimum either wastes iterations on small tasks (degrading quality with make-work) or under-specifies for big ones. The user's clarification: "we might be overprescriptive about the minimal number of iterations for things we have no clue how many iterations they will take." | v6 drops the auto-call to `iteration-count` from the exit gates. The other gates are work-based and organically require a window of iterations to pass honestly: `q-saturated` needs 5 iters of plateau, `attempts-exhausted 5-of-5` needs 5 iters of NO_MOVEMENT outcomes, `second-opinions-consistent` needs ≥2 opinions ≥3 iters apart. Together they impose a natural floor of ~6–8 iterations for the smallest honest task, scaling organically up to 80+ for complex ones. The work tells you when you're done; we don't. The `iteration-count` subcommand is kept for diagnostic use only. |
 | v6's per-iteration plan + self-review (4a-iii) had the shape of an engineering review without the substance. The `plan-reviewed` gate just checked header presence; an agent could write "DRY: nothing to reuse, looks clean" under each heading and pass. No file-path evidence required, no enumerated edge cases, no actual grep cited. | v7 adds two new required plan sections: `## Functions / methods to add or modify` (≥1 entry shaped like `<file.ext>:<name>: ADD\|MODIFY`) and `## Edge cases this slice must handle` (≥3 enumerated). New `plan-substantive` gate (run after `plan-reviewed`) checks: (a) ≥1 path-shaped function entry, (b) ≥3 edge-case bullets, (c) DRY check cites either a `Searched: <pattern>` line OR a path-with-extension, (d) Coupling check names a module path. Self-review sub-sections updated with evidence-required wording. Style-guide check sub-section now reads `wiki/style/<repo>.md` (or invokes `/distill-style` first if missing) and cites at least one applicable rule. |
+| For LLM-driven pipelines, /relentless reviewed validators/code in isolation but never the actual outputs the validators are supposed to filter. Five fresh-context second-opinion subagents read `validators.ts`, test files, and SKILL.md prose — none read a single proposed plan body, capability_map artefact, or research artefact. Verdict: subagent #4 and #5 CLEAN because the validators are correct *against constructed adversarial fixtures*. Then the user demanded "show me a real plan" and immediately surfaced THREE bugs the validators+subagents had not caught: (a) `style_check` orchestrator silently skipped the sign-off check on touchpoint 3 (validator code correct, prompt wiring wrong); (b) `capability_map` was hallucinating LinkedIn slugs from training-data priors and asserting `discovered_via: composio_list_tools_by_toolkit` when Composio's catalog never returned them — an R-1.0 violation with no deterministic backstop; (c) plan touchpoint bodies had operator-voice slips ("I work with field operations teams on...") and pitchy follow-ups that plan_review only borderline-flagged at D6=7/D9=6 — no deterministic validator existed for R-operator-pitch. Code-only review of an LLM agent's filters is shallower than it looks: a validator that passes 100% of its own unit tests can still let real LLM output through because the LLM doesn't emit the fixture-shaped inputs the validator was tested against. | v7.2 adds a mandatory **end-to-end output review** sub-phase. (1) Phase 2c MUST include ≥1 B-row of shape `B: end-to-end agent run produces an artefact bundle (plan + validation + plan_review + capability_map + at least one style/* artefact)` and ≥1 Q-row scoring `the actual proposed plan body — would a critical human reader find any defect a validator would let through?`. (2) New phase 4a-viii-bis: after the deterministic eval, the agent MUST trigger an end-to-end agent run against the smallest representative scenario, dump the resulting artefacts to `iter-NN-evidence/agent-run/`, and read each artefact body line-by-line for defects the validators didn't catch. Findings are logged in iter-NN.md under `## Output review (4a-viii-bis)` with one `bug` line per defect citing artefact + line + which validator should have caught it. (3) Second-opinion subagent prompts (Phase 4a-xiv) MUST include actual artefact bodies in the materials block, not just code. Specifically the prompt template requires lines: `=== LATEST PLAN BODY ===`, `=== LATEST CAPABILITY_MAP ===`, `=== LATEST PLAN_REVIEW VERDICT ===`. A subagent prompt that contains only file paths (or only `validators.ts` + tests) is a Phase-4a-xiv violation; the gate `second-opinion-substantive` checks the materials list for ≥3 artefact-body sections. (4) New gate `output-review-present` at iter-NN.md: refuses PROCEED if no `## Output review (4a-viii-bis)` section exists for the latest iteration with ≥1 `bug` line OR `bug-free: confirmed by reading artefact bodies` (forcing a deliberate read, not silent skip). The principle: validators against fixtures prove the validator works; validators against real LLM output prove the *system* works. /relentless on an LLM-driven pipeline must do both. |
 
 ---
 
@@ -2046,17 +2047,36 @@ Materials:
 === LATEST ITERATION (iter-NN.md) ===
 <paste latest iter file, including its Eval table and scores>
 
+=== LATEST AGENT-RUN ARTEFACTS (LLM-driven pipelines only) ===
+<paste actual artefact bodies for the smallest representative
+ end-to-end run — e.g. for a planner pipeline:
+   - plan body (full touchpoints + rationale)
+   - capability_map current
+   - validation report
+   - plan_review verdict + dimensions
+   - any style/* artefacts the system trained
+ v7.2-required for LLM-driven systems: code-only review misses
+ LLM output bugs; you MUST critique what the system actually
+ emits. The `second-opinion-substantive` gate checks for ≥3
+ `=== ... ===` artefact-body sections in this materials block.>
+
 Task: name 5 concrete things still wrong with this work, ranked by
 impact. For each, state:
-- WHAT is wrong (concrete, observable)
-- WHY a brilliant human would notice it (tied to the mission or to a
-  specific Q-criterion)
-- WHETHER it's fixable in this session (vs an external blocker like
-  a third-party stub or another team's repo)
+- WHAT is wrong (concrete, observable — cite line/seq/field)
+- WHY a brilliant human would notice it (tied to the mission, a
+  specific Q-criterion, or a defect in the artefact body itself)
+- WHETHER it's fixable in this session (vs an external blocker)
+- For LLM-driven systems: which validator SHOULD have caught it
+  (and why didn't it — orchestrator wiring vs. fixture mismatch
+  vs. missing rule)
 
 No compliments. No rationalizations. No "I notice you've already
 addressed X." The team's been deep in this for hours and is
-self-justifying — be the antidote.
+self-justifying — be the antidote. CRITICAL for LLM-driven
+pipelines: read the artefact bodies line-by-line. A validator
+that passes its own unit tests can still let real LLM output
+through because the LLM doesn't emit the fixture-shaped inputs
+the validator was tested against. Find those.
 
 Output format (verbatim):
 
@@ -2064,12 +2084,15 @@ SECOND OPINION #1 (independent reviewer) — <feature-slug> — <UTC ts>
 ═══════════════════════════════════════════════════════════════════
 Reviewer: fresh-context Agent subagent (no conversation history)
 Iteration when called: <NN>
-Materials reviewed: 02a-mission.md, 02b-criteria.md, iter-NN.md
+Materials reviewed: 02a-mission.md, 02b-criteria.md, iter-NN.md,
+                    plan/<sid>, capability_map/current,
+                    plan_review/<sid>, validation/<sid>, style/email
 ═══════════════════════════════════════════════════════════════════
 
 ## Findings (most-impactful first)
 1. <finding>
    Why a brilliant human would notice: <one sentence>
+   Validator that should have caught it: <name or "none — needs new validator">
    Fixable here: YES | EXTERNAL_BLOCKER (<name the blocker>)
 2. ...
 3. ...
