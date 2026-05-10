@@ -29,7 +29,7 @@ Each message MUST be under 1950 characters. Cut content to fit; never split a se
 
 ```
 SUPABASE_PROJECT_ID=pzhjwclpluxbfopctyot
-SALES_REPS=ludo@leadbay.ai,quang@leadbay.ai,jean-marie@leadbay.ai,zoe@leadbay.ai
+SALES_REPS=ludo@leadbay.ai,quang@leadbay.ai,jean-marie@leadbay.ai,zoe@leadbay.ai,mael@leadbay.ai
 ```
 
 Verify roster against `team_members` if the org grows. Founders (Milan/Maxime) appear in `team_members` but are NOT on the sales scoreboard.
@@ -172,11 +172,36 @@ This message draws from `mcp__claude_ai_Supabase__execute_sql` against `SUPABASE
 
 ### Step T1: Schema mental model
 
-- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. Sales reps as of v0.3: ludo, quang, jean-marie, zoe.
+- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. Sales reps as of v0.13.3: ludo, quang, jean-marie, zoe, mael (new-hire — onboarded May 3-10 week, expect ramp-up before customer-facing volume kicks in).
 - `attio_meetings` — calendar meetings. **`participant_emails` is often empty** — read participants from `raw->'participants'->[]->>'email_address'`. `starts_at` is meeting time. `linked_records` carries CRM links.
 - `attio_call_recordings` — `transcript_status='ok'` + `segments>0` means transcript usable.
 - `attio_call_transcript_segments` — `meeting_id`, `speaker_name`, `speech`, `start_time`, `end_time`. Long calls (segments > 1500) are usually substantive.
 - `emails` — Gmail correspondence. `direction` = inbound/outbound. `team_member_emails` lists which @leadbay.ai accounts are party.
+
+### Step T2a: Milan founder-led automated outbound
+
+`milstan@leadbay.ai` is the founder, not a sales rep. He runs an **automated nurture pipeline** that sends templated emails to engaged customers (recent verified signups, quota hitters, returning users). These are NOT rep-led 1:1 outbound and should NOT count toward the rep leaderboard, but they ARE customer-facing engagement and deserve a dedicated section.
+
+```sql
+WITH milan AS (
+  SELECT * FROM emails
+  WHERE 'milstan@leadbay.ai' = ANY(team_member_emails)
+    AND direction = 'outbound'
+    AND internal_date >= '{start}' AND internal_date < '{end}'
+)
+SELECT
+  COUNT(*) AS sent,
+  COUNT(DISTINCT thread_id) AS threads,
+  (SELECT COUNT(DISTINCT r) FROM milan, unnest(recipients) r
+     WHERE r NOT LIKE '%@leadbay.ai') AS distinct_external_recipients
+FROM milan;
+```
+
+Then list subjects + recipients to identify:
+- **Automated batch fingerprint** — many emails sent within seconds of each other with templated subjects ("Quick check-in", "votre setup", "wishlist Leadbay") targeting different recipients = automated nurture run.
+- **Manual founder outreach** — investor/partner emails (Transpose VC, etc.) and bespoke customer threads (multi-recipient HomeSpirit follow-up).
+
+Render as a dedicated `🤖 MILAN AUTOMATED OUTBOUND` section: total sent, distinct recipients, batch date, top customer targets that overlap with this week's quota-hitters or verified-signups (cross-reference Message 1). Exclude investor replies (e.g., `*.vc` recipients) — those belong to the fundraise track, not sales.
 
 ### Step T2: Per-rep meeting + email totals
 
@@ -190,7 +215,7 @@ WITH mp AS (
 SELECT t.email, COUNT(*) AS total,
   COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(emails) e WHERE e NOT LIKE '%@leadbay.ai' AND e <> '')) AS external
 FROM mp
-JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai')) t(email)
+JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
   ON t.email = ANY(mp.emails)
 GROUP BY t.email;
 ```
@@ -199,7 +224,7 @@ Then list every external meeting per rep (title + external attendee emails) — 
 
 ```sql
 SELECT t.email, COUNT(*) AS sent FROM emails e
-JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai')) t(email)
+JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
   ON t.email = ANY(e.team_member_emails) AND e.direction = 'outbound'
 WHERE e.internal_date >= '{start}' AND e.internal_date < '{end}'
 GROUP BY t.email;
@@ -215,9 +240,13 @@ Ludo is the CEO. His calendar mixes **customer**, **investor**, and **partner/pr
 - Title contains "intro", "fundraising", "VC", "fund", "residency"
 - Fund/angel-sounding personal Gmail addresses participating in 1:1s with Ludo
 
-**Partner / program / legal signals:**
+**Partner / program / legal / service-provider signals:**
 - Cold-call cup, startup contest, "residency", legal counsel (`*law*`, `*nmlaw*`, `*conseil*` in legal context)
 - Known partner orgs (Swish, Indy, h-7.eu, Rennes-SB cold-call event)
+- Known service providers / agencies: `bulldozer-collective.com` (+ `lmgiudicenti@gmail.com`)
+- Sales-coaching / GTM webinars (`salescraft.fr`, `salesconversionpartners.com`, `richconsulting-group.com`, `elriclegloire.com`)
+- Press / network (`maddyness.fr`, `frenchfounders.com`)
+- Peer-tooling networks (`atrios.com`, `heypastel.com`, `ziphq.com`, `klark.ai`, `firstdegree.io`, `earleads.com`)
 - Internal-product-style "weekly sync" with non-customer accounts
 
 **When unsure:** mark as ambiguous → exclude from customer count, don't list under top wins. Optionally surface in a one-line "ambiguous" note in GAPS so the user can correct.
@@ -230,25 +259,41 @@ For Quang, Zoé, Jean-Marie: assume external = customer unless title/domain clea
 
 For each call with `transcript_status='ok'` and `segments > 1500`, pull the transcript and derive insights **without ever quoting verbatim**.
 
-```sql
-SELECT speaker_name, speech, start_time
-FROM attio_call_transcript_segments
-WHERE meeting_id = '{uuid}'
-ORDER BY segment_index;
-```
+**NEVER expose "segments" in the output.** That's an Attio internal data-model term — sales people don't know what it means. Translate it into sales-native language:
 
-**Allowed (derived insight):**
-- Topic clustering: "Product/feature questions dominated; pricing came up briefly"
-- Outcome inference: "Next-step booked" / "Objection raised" / "Champion identified"
-- Sentiment shape: "Warmer in second half" / "Skeptical opening, engaged finish"
-- Risk flags: "Champion is leaving the company" / "Procurement deadline mentioned"
-- Counts: # of decision-makers in room, # of distinct objections, # of follow-up commitments
+- **Duration in minutes** — sum `(end_time - start_time)` across segments → real call length. Sales people book in minutes.
+- **Stakeholder count** — count distinct customer-side `speaker_name`. "1:1" / "small (2–3)" / "buyer team (4+)" / "exec room (6+)".
+- **Stage label** — infer from meeting title + recurrence + participant mix:
+  - **discovery** — first call, single contact, generic title ("Meet X", "Quick chat")
+  - **demo / pitch** — "Présentation", "Demo", multi-DM first-time room
+  - **multi-DM pitch** — buyer team or exec room, presentation-shape
+  - **deep-dive** — long, technical title ("Data architecture", "Mise à plat", "Validation Intégration")
+  - **negotiation** — pricing / commercial / contract titles, recurring contact
+  - **save / debrief** — "Debrief / next steps", "Catch up", post-incident
+  - **kickoff / onboarding** — "Onboarding", "Kickoff", new admin in attendance
+  - **follow-up** — "Suivi", recurring weekly with same contact
+- **Heat tier** — based on quota hits + recurrence + stakeholder count: 🔥 hot / 🔶 warm / cool. Don't emit cool calls in TOP WINS.
+
+**Allowed derived insight (privacy-safe):**
+- Topic clustering ("Product/feature questions dominated; pricing came up briefly")
+- Outcome inference ("Next-step booked" / "Objection raised" / "Champion identified")
+- Sentiment shape ("Warmer in second half" / "Skeptical opening, engaged finish")
+- Risk flags ("Champion is leaving the company" / "Procurement deadline mentioned")
+- Counts (decision-makers in room, distinct objections, follow-up commitments)
+- Talk-time ratio ("rep-led ~63%" / "balanced") — derived from speaker_name aggregation
 
 **NOT allowed:**
 - Verbatim quotes from any speaker
 - Names of internal stakeholders the customer mentioned but who are not Leadbay employees
 - Specific numbers (revenue, headcount, salary) the customer disclosed
 - Personal details (health, family, opinions about other vendors by name)
+
+```sql
+SELECT speaker_name, speech, start_time
+FROM attio_call_transcript_segments
+WHERE meeting_id = '{uuid}'
+ORDER BY segment_index;
+```
 
 If you can't derive a useful privacy-safe insight, skip the call. Better to omit than to leak.
 
@@ -265,7 +310,7 @@ LEADERBOARD (customer-facing only)
   quang            N             N        N
 
 🥇 TOP WINS
-1️⃣ {Customer} — {rep} ({date}, {Nk seg}) {🐋 if big-fish}
+1️⃣ {Customer} — {rep} ({date}, {stage}, {scope}, {N min}) {🐋 if big-fish}
    {1-line context: who was in the room, why notable}
 2️⃣ ...
 3️⃣ ...
@@ -273,6 +318,12 @@ LEADERBOARD (customer-facing only)
 OTHER CUSTOMER
   {company} — {rep} ({brief context})
   ...
+
+🤖 MILAN AUTOMATED OUTBOUND
+  {N} emails to {M} customers ({date}) — top targets: {top 3-5
+    that overlap with verified signups / quota hitters from Msg 1}
+  + {few-line summary of any bespoke founder threads, e.g. multi-DM
+     HomeSpirit follow-up}
 
 🎙️ TRANSCRIPT INSIGHTS (derived; no verbatim)
   {Customer}: {insight, e.g. "champion identified, procurement deadline named"}
@@ -285,6 +336,10 @@ OTHER CUSTOMER
 1. {rep}: {action} — {why, anchored in data}
 2. ...
 ```
+
+**Stage**: discovery / demo / multi-DM pitch / deep-dive / negotiation / save / kickoff / follow-up
+**Scope**: 1:1 / small (2–3) / buyer team (4+) / exec room (6+)
+**Duration**: real minutes (sum of `end_time - start_time` across segments). Round to 5-min increments. Use "deep-dive day" or "multi-session" if same customer recurred 3+ times in one day.
 
 ---
 
