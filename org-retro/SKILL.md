@@ -170,12 +170,28 @@ SIGNALS
 
 ## Output contract
 
-This skill emits **TWO Discord-sized code blocks** in one response:
+This skill has **two output modes**:
+
+### Default mode — Discord (two text messages)
+
+Emits **TWO Discord-sized code blocks** in one response:
 
 1. **Message 1 — Engineering** (commits, releases, repos, infra moves — produced by Step 3 above)
 2. **Message 2 — Data Coverage** (lead inventory state + 7d delta across FR + US — produced by Step 4 below)
 
 Each message MUST be under 1950 characters. Print as separate code blocks; never merge.
+
+### Landscape HTML mode — screenshot-friendly single page
+
+When the user asks for a **"beautiful HTML output"**, **"screenshot-friendly"**, **"share with the team as an image"**, or **"landscape"** version: render via the template at `~/.leadbay-skills/org-retro/landscape.html.tmpl`.
+
+Steps:
+1. Run all data-gathering Steps 1-4 the same way.
+2. Read the HTML template and replace every `{{TOKEN}}`.
+3. Write to `.context/eng-retro-<date-range>.html` in the current workspace.
+4. `open` the file so the user sees it in a browser.
+
+The HTML mode combines Engineering + Data Coverage into one 3-column landscape page. NOT a replacement for the Discord mode — it's a screenshot-grade alternative.
 
 ### Step 4: Data coverage (FR + US)
 
@@ -184,7 +200,8 @@ For each region, query the prod backend DB:
 **Schema notes (verified May 2026):**
 - `leads` columns: `website`, `linkedin`, `facebook`, `twitter`, `instagram`, `last_worldview_import`. No `created_at` on leads. `id` is `uuid`.
 - `lead_web_fetches` (Ranty mirror): `lead_id`, `content` (json), `last_fetch_at`. "Has Ranty" = distinct lead_id with `content IS NOT NULL`.
-- `lead_contacts` no `created_at` — use `contact_enrichments.created_at` as 7d delta proxy.
+- `lead_contacts` (a.k.a. `paid_contacts` in code) — the **buyable contact pool** per lead. "Has contacts" = distinct lead_id in this table. **This is the primary coverage metric** — it shows leads where there's *something to enrich*, not what's been purchased.
+- `contact_enrichments` — the **purchase log**. Each row = one contact bought (email or phone token spent). Has `created_at`. Use for "enrichments purchased this week" delta — but DO NOT confuse this with "has contacts" coverage. Enrichment volume reflects sales-side spend, not data-pool size.
 - US `lead_contacts` is too large for exact COUNT (1.5B-row planner estimate). Use a bounded sample (`SELECT id FROM leads ORDER BY id LIMIT 100000` joined to `lead_contacts`) and report as estimate.
 
 **Per-region queries** (run against FR `prod` and US `us_staging`):
@@ -207,11 +224,15 @@ FROM lead_web_fetches;
 
 For FR contacts (fast):
 ```sql
+-- "Has contacts" (primary): leads with paid_contacts available to enrich
 SELECT COUNT(DISTINCT lead_id) FROM lead_contacts;
+-- "Enrichments purchased this week" (secondary; reflects sales spend)
 SELECT COUNT(DISTINCT lc.lead_id) FROM lead_contacts lc
   JOIN contact_enrichments ce ON ce.lead_contact_id = lc.id
  WHERE ce.created_at >= now() - interval '7 days';
 ```
+
+**Render in Message 2 as ONE row: "Has contacts (paid pool)"**, with state = total distinct lead_ids in lead_contacts, and delta = "+N enriched" or "+N leads (M enriched)". Do NOT render "Contacts enriched" as a primary row — the user will read that as coverage shrinking when in fact it's just sales-side purchase volume.
 
 For US contacts (sample-estimate; full COUNT times out):
 ```sql

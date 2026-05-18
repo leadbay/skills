@@ -1,0 +1,307 @@
+<!--
+  Sales Retro — landscape HTML template.
+
+  Output mode: screenshot-friendly single-page HTML (3-column landscape).
+  Use this template when the user asks for a "beautiful HTML output", "I want to screenshot", "share with the team as an image".
+
+  How to use:
+    1. Gather data via Steps U1-U8 + T1-T4 in SKILL.md.
+    2. Replace every {{TOKEN}} below with the actual value.
+    3. Write the rendered HTML to `.context/sales-retro-<date-range>.html`.
+    4. `open` the file so the user sees it in a browser.
+
+  Tokens use {{double-curly}} so the agent can find-and-replace verbatim.
+  Lists use repeating <!-- ROW: ... --> blocks the agent expands.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Leadbay Sales Retro — {{DATE_RANGE_SHORT}}</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --card: #181a20;
+    --card-2: #20232c;
+    --ink: #e9ecf1;
+    --muted: #8e95a4;
+    --line: #2a2e3a;
+    --brand: #ff7a00;
+    --brand-2: #ffb259;
+    --gold: #ffd166;
+    --silver: #c0c8d2;
+    --bronze: #d29263;
+    --good: #2ecc71;
+    --bad: #ff5470;
+    --hot: #ff3860;
+    --info: #5ea0ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 20px 26px;
+    max-width: 1480px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 12.5px; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 12px;
+  }
+  .stat .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .value { font-size: 22px; font-weight: 700; margin-top: 1px; letter-spacing: -0.02em; }
+  .stat .delta { font-size: 11px; color: var(--muted); }
+  .stat.win .value { color: var(--gold); }
+  .stat.win .delta { color: var(--gold); }
+  .stat.money .value { color: var(--good); }
+  .stat.money .delta { color: var(--good); }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr 1fr;
+    gap: 12px;
+  }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  section h2 {
+    margin: 0 0 8px 0;
+    font-size: 13.5px;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  section h2 .tag { color: var(--muted); font-size: 11px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 6px; border-bottom: 1px dashed var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace; font-size: 11.5px; }
+  .right { text-align: right; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .lb tr td:first-child { font-weight: 600; font-size: 13.5px; }
+  .lb .medal { width: 24px; text-align: center; font-size: 15px; }
+  .lb .note { color: var(--muted); font-size: 11px; font-weight: 400; }
+  .lb .alert { color: var(--bad); font-size: 11.5px; font-weight: 600; }
+
+  .win-card {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: var(--card-2);
+    border-radius: 6px;
+    border-left: 3px solid var(--brand);
+    font-size: 12px;
+  }
+  .win-card:last-child { margin-bottom: 0; }
+  .win-card.gold   { border-left-color: var(--gold); }
+  .win-card.silver { border-left-color: var(--silver); }
+  .win-card.bronze { border-left-color: var(--bronze); }
+  .win-card.money  { border-left-color: var(--good); background: rgba(46,204,113,0.07); }
+  .win-card .title { font-weight: 600; margin-bottom: 1px; font-size: 12.5px; }
+  .win-card .title .badge {
+    color: var(--good); font-size: 9.5px; padding: 1px 6px; border-radius: 999px;
+    background: rgba(46,204,113,0.15); border: 1px solid var(--good); margin-left: 4px; vertical-align: middle;
+  }
+  .win-card .meta { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+  .win-card .meta b { color: var(--ink); }
+
+  .founder-card {
+    background: rgba(94,160,255,0.06);
+    border-left: 3px solid var(--info);
+    padding: 7px 10px;
+    border-radius: 6px;
+    margin-bottom: 5px;
+    font-size: 11.5px;
+  }
+  .founder-card:last-child { margin-bottom: 0; }
+  .founder-card .who { color: var(--info); font-weight: 600; font-size: 11.5px; }
+  .founder-card .what { color: var(--muted); margin-top: 1px; line-height: 1.4; }
+  .founder-card .what b { color: var(--ink); }
+
+  .footnote {
+    background: rgba(255,209,102,0.06);
+    border-left: 3px solid var(--gold);
+    padding: 6px 10px;
+    border-radius: 6px;
+    margin-top: 6px;
+    font-size: 11px;
+    color: var(--muted);
+  }
+  .footnote b { color: var(--gold); }
+
+  .actions { counter-reset: a; }
+  .actions .action {
+    counter-increment: a;
+    padding: 5px 0 5px 28px;
+    position: relative;
+    border-bottom: 1px dashed var(--line);
+    font-size: 11.8px;
+    line-height: 1.4;
+  }
+  .actions .action::before {
+    content: counter(a);
+    position: absolute;
+    left: 0;
+    top: 6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--brand);
+    color: #1a1a1a;
+    text-align: center;
+    line-height: 20px;
+    font-weight: 700;
+    font-size: 11px;
+  }
+  .actions .action:last-child { border-bottom: 0; }
+  .actions .verb { font-weight: 700; color: var(--brand); margin-right: 4px; font-size: 11px; }
+
+  .context-block {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 11.5px;
+    color: var(--muted);
+  }
+  .context-block .label { color: var(--ink); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 3px; }
+  .context-block b { color: var(--ink); }
+
+  .footer-note { color: var(--muted); font-size: 10.5px; margin-top: 12px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🚀 Leadbay Sales Retro</h1>
+  <div class="sub"><b>{{DATE_RANGE_LONG}}</b> · Customers · Pipeline · Team</div>
+</header>
+
+<!-- Headline stats: 5 cards. Use stat.money for $$ wins, stat.win for milestones. -->
+<div class="stats">
+  <div class="stat money">
+    <div class="label">💰 Paid conversion</div>
+    <div class="value">{{N_PAID_CONVERSIONS}}</div>
+    <div class="delta">{{PAID_CONVERSION_HIGHLIGHT}}</div>
+  </div>
+  <div class="stat win">
+    <div class="label">Customer kickoffs</div>
+    <div class="value">{{N_KICKOFFS}}</div>
+    <div class="delta">{{KICKOFF_HIGHLIGHT}}</div>
+  </div>
+  <div class="stat">
+    <div class="label">Customer mtgs</div>
+    <div class="value">{{N_CUSTOMER_MEETINGS}}</div>
+    <div class="delta">reps + founder-led</div>
+  </div>
+  <div class="stat">
+    <div class="label">Verified signups</div>
+    <div class="value">{{N_VERIFIED_SIGNUPS}}</div>
+    <div class="delta">+{{N_AD_LEADS}} ad-form leads</div>
+  </div>
+  <div class="stat">
+    <div class="label">Cancellations</div>
+    <div class="value">{{N_CANCELS}}</div>
+    <div class="delta">{{CANCEL_HIGHLIGHT}}</div>
+  </div>
+</div>
+
+<div class="cols">
+
+  <!-- LEFT: Rep Scoreboard + Top Wins -->
+  <div>
+    <section>
+      <h2>🏆 Rep Scoreboard <span class="tag">customer-facing only</span></h2>
+      <table class="lb">
+        <thead>
+          <tr><th></th><th>Rep</th><th class="right">Mtgs</th><th>What shipped</th></tr>
+        </thead>
+        <tbody>
+          <!-- ROW per rep. Reps are: zoe, jean-marie, mael, quang (Ludo is founder-led, NOT here). -->
+          <!-- ROW: <tr><td class="medal">{{MEDAL}}</td><td>{{REP}}</td><td class="right num">{{N}}</td><td>{{HIGHLIGHT}}</td></tr> -->
+          {{REP_SCOREBOARD_ROWS}}
+        </tbody>
+      </table>
+    </section>
+
+    <section style="margin-top:12px;">
+      <h2>🥇 Top wins</h2>
+      <!-- 3-5 win cards. Use win-card.money for paid conversions, .gold/.silver/.bronze for ranking. -->
+      {{TOP_WINS_CARDS}}
+    </section>
+  </div>
+
+  <!-- MIDDLE: Founder-led (Ludo) + Big Fish -->
+  <div>
+    <section>
+      <h2>👑 Founder-led sales (Ludo) <span class="tag">not on rep score</span></h2>
+      {{FOUNDER_LED_CARDS}}
+      <!-- Add LCL-style footnote ONLY for company-milestone-but-not-sales events (loans, fundraise). -->
+      {{FOUNDER_FOOTNOTE_IF_ANY}}
+    </section>
+
+    <section style="margin-top:12px;">
+      <h2>🐋 Big Fish on the radar</h2>
+      {{BIG_FISH_CARDS}}
+    </section>
+  </div>
+
+  <!-- RIGHT: Actions + Context -->
+  <div>
+    <section>
+      <h2>🎯 Do this week</h2>
+      <div class="actions">
+        <!-- 5-9 actions. Each: REPLICATE / RECOVER / CLOSE / CALL / WIN-BACK / EXPAND / PUSH / EXECUTE / ESCALATE -->
+        <!-- ROW: <div class="action"><span class="verb">{{VERB}}</span> {{ASSIGNEE}}: <b>{{TARGET}}</b> — {{REASON}}.</div> -->
+        {{ACTIONS_LIST}}
+      </div>
+    </section>
+
+    <section style="margin-top:12px;">
+      <h2>📡 Context</h2>
+      <div class="context-block" style="margin-bottom:8px;">
+        <div class="label">🤖 Milan founder outbound</div>
+        {{MILAN_OUTBOUND_SUMMARY}}
+      </div>
+      <div class="context-block">
+        <div class="label">🎙️ Call signal (privacy-safe, no verbatim)</div>
+        {{TRANSCRIPT_INSIGHTS}}
+      </div>
+    </section>
+  </div>
+
+</div>
+
+<div class="footer-note">
+  Sources: PostHog, Attio (meetings + transcripts), Gmail mirror · Excluded from customer counts: {{EXCLUSION_NOTES}}
+</div>
+
+</body>
+</html>

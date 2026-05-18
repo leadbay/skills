@@ -18,18 +18,36 @@ When the user types `/sales-retro`, run this skill.
 
 ## Output contract
 
-This skill emits **TWO Discord-sized code blocks** in one response:
+This skill has **two output modes**:
+
+### Default mode — Discord (two text messages)
+
+Emits **TWO Discord-sized code blocks** in one response:
 
 1. **Message 1 — Users** (signups, activation, quota, churn, big fish — sourced from PostHog)
 2. **Message 2 — Sales Team** (meetings, customer calls, transcript-derived insights — sourced from the Supabase MCP `pzhjwclpluxbfopctyot`)
 
 Each message MUST be under 1950 characters. Cut content to fit; never split a section across messages.
 
+### Landscape HTML mode — screenshot-friendly single page
+
+When the user asks for a **"beautiful HTML output"**, **"screenshot-friendly"**, **"share with the team as an image"**, or **"landscape"** version: render via the template at `~/.leadbay-skills/sales-retro/landscape.html.tmpl`.
+
+Steps:
+1. Run all data-gathering Steps below (U1-U8 + T1-T4) the same way.
+2. Read the HTML template and replace every `{{TOKEN}}`.
+3. Write to `.context/sales-retro-<date-range>.html` in the current workspace.
+4. `open` the file so the user sees it in a browser.
+
+The HTML mode is NOT a replacement for the Discord output — it's a screenshot-grade alternative. Combine Users + Sales Team into a single 3-column landscape page (no redundancy across the two messages; merge actions into one list).
+
 ## Configuration
 
 ```
 SUPABASE_PROJECT_ID=pzhjwclpluxbfopctyot
-SALES_REPS=ludo@leadbay.ai,quang@leadbay.ai,jean-marie@leadbay.ai,zoe@leadbay.ai,mael@leadbay.ai
+SALES_REPS=quang@leadbay.ai,jean-marie@leadbay.ai,zoe@leadbay.ai,mael@leadbay.ai
+FOUNDER_LED=ludo@leadbay.ai
+FOUNDER_OUTBOUND=milstan@leadbay.ai
 ```
 
 Verify roster against `team_members` if the org grows. Founders (Milan/Maxime) appear in `team_members` but are NOT on the sales scoreboard.
@@ -80,7 +98,7 @@ GROUP BY distinct_id, properties.resource_type, properties.window_type
 ORDER BY hits DESC
 ```
 
-### Step U4: Cancellations
+### Step U4: Billing status transitions (conversions + cancels + payment issues)
 
 ```sql
 SELECT distinct_id as email, properties.old_billing_status as old,
@@ -91,7 +109,17 @@ FROM events WHERE event = 'billing_status_changed' AND timestamp >= '{start}'
 ORDER BY timestamp DESC
 ```
 
-Only show transitions TO canceled/NOT_SET_UP (true cancels) or ACTION_NEEDED (payment issues). **Detect transient hiccups:** if a cohort goes OK→ACTION_NEEDED→OK within minutes (Stripe retry/dunning glitch), call it out as a hiccup not a cancellation.
+Classify each transition explicitly — **DO NOT lump them all as "cancellations"**:
+
+- **💰 PAID CONVERSION**: `old=NOT_SET_UP, new=OK, stripe_status=active` — freemium → paid. **TOP-WIN-WORTHY.** Count toward "Paid conversions" headline (NOT into cancels). If a rep met the customer the same day, that's a playbook moment — surface it as the conversion playbook.
+- **CANCELLATION**: `old=OK, new=NOT_SET_UP, stripe_status=canceled` — count toward cancels headline.
+- **PAYMENT ISSUE**: `old=OK, new=ACTION_NEEDED, stripe_status=past_due` — note as watch-list, not a cancel.
+- **TRANSIENT HICCUP**: if a cohort goes `OK → ACTION_NEEDED → OK` within minutes (same email, two events <5 min apart), it's a Stripe retry/dunning glitch — call it out separately, not as a save or cancel.
+- **REAL SAVE**: `ACTION_NEEDED → OK` over hours/days — rep recovered the account.
+
+### Step U5: Paid conversions and top-ups (combine sources)
+
+The headline "Paid conversions" stat MUST combine BOTH sources (Stripe's own event AND the billing_status_changed flip), deduplicated by email:
 
 ### Step U5: Paid conversions and top-ups
 
@@ -172,7 +200,7 @@ This message draws from `mcp__claude_ai_Supabase__execute_sql` against `SUPABASE
 
 ### Step T1: Schema mental model
 
-- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. Sales reps as of v0.13.3: ludo, quang, jean-marie, zoe, mael (new-hire — onboarded May 3-10 week, expect ramp-up before customer-facing volume kicks in).
+- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. **Sales reps** (graded on scoreboard): zoe, jean-marie, mael (ramping new-hire), quang. **Founder-led** (separate section, not on rep scoreboard): ludo (CEO — runs high-touch customer deals + partnerships + investor track). **Founder outbound** (info-only): milstan (founder, automated nurture batches). Milan and Ludo are NOT compared to reps.
 - `attio_meetings` — calendar meetings. **`participant_emails` is often empty** — read participants from `raw->'participants'->[]->>'email_address'`. `starts_at` is meeting time. `linked_records` carries CRM links.
 - `attio_call_recordings` — `transcript_status='ok'` + `segments>0` means transcript usable.
 - `attio_call_transcript_segments` — `meeting_id`, `speaker_name`, `speech`, `start_time`, `end_time`. Long calls (segments > 1500) are usually substantive.
@@ -215,7 +243,7 @@ WITH mp AS (
 SELECT t.email, COUNT(*) AS total,
   COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(emails) e WHERE e NOT LIKE '%@leadbay.ai' AND e <> '')) AS external
 FROM mp
-JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
+JOIN (VALUES ('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
   ON t.email = ANY(mp.emails)
 GROUP BY t.email;
 ```
@@ -224,7 +252,7 @@ Then list every external meeting per rep (title + external attendee emails) — 
 
 ```sql
 SELECT t.email, COUNT(*) AS sent FROM emails e
-JOIN (VALUES ('ludo@leadbay.ai'),('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
+JOIN (VALUES ('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
   ON t.email = ANY(e.team_member_emails) AND e.direction = 'outbound'
 WHERE e.internal_date >= '{start}' AND e.internal_date < '{end}'
 GROUP BY t.email;
@@ -232,7 +260,9 @@ GROUP BY t.email;
 
 ### Step T3: Classify Ludo's external meetings (CRITICAL)
 
-Ludo is the CEO. His calendar mixes **customer**, **investor**, and **partner/program** meetings. For a SALES retro, only **customer** meetings count toward the leaderboard / wins / actions.
+Ludo is the CEO/boss — **not on the rep scoreboard**. His customer activity is **founder-led sales** and gets its own dedicated `👑 Founder-led sales` section in Message 2, similar in spirit to Milan's `🤖 Founder outbound` block (but for high-touch real conversations, not automated email).
+
+His calendar also mixes **investor**, **partner/program**, **press**, **financing/bank**, and personal meetings. Filter aggressively: only **real customer** meetings show up under Founder-led sales.
 
 **Investor / fundraising signals:**
 - Domain ends in `.vc` or `.fund`
@@ -240,13 +270,14 @@ Ludo is the CEO. His calendar mixes **customer**, **investor**, and **partner/pr
 - Title contains "intro", "fundraising", "VC", "fund", "residency"
 - Fund/angel-sounding personal Gmail addresses participating in 1:1s with Ludo
 
-**Partner / program / legal / service-provider signals:**
+**Partner / program / legal / service-provider / financing signals:**
 - Cold-call cup, startup contest, "residency", legal counsel (`*law*`, `*nmlaw*`, `*conseil*` in legal context)
-- Known partner orgs (Swish, Indy, h-7.eu, Rennes-SB cold-call event)
+- Known partner orgs (Swish, Indy, h-7.eu, Rennes-SB cold-call event, Deel Pitch sponsorship event)
 - Known service providers / agencies: `bulldozer-collective.com` (+ `lmgiudicenti@gmail.com`)
 - Sales-coaching / GTM webinars (`salescraft.fr`, `salesconversionpartners.com`, `richconsulting-group.com`, `elriclegloire.com`)
-- Press / network (`maddyness.fr`, `frenchfounders.com`)
-- Peer-tooling networks (`atrios.com`, `heypastel.com`, `ziphq.com`, `klark.ai`, `firstdegree.io`, `earleads.com`)
+- Press / network (`maddyness.fr`, `frenchtechjournal.com`, `cfnews.net`, `ccmbenchmark.com` (JDN), `frenchfounders.com`)
+- Peer-tooling networks (`atrios.com`, `heypastel.com`, `ziphq.com`, `klark.ai`, `firstdegree.io`, `earleads.com`, `runploy.com`, `acquisitionandconsulting.com`)
+- **Banks / financing for Leadbay** (NOT customers — they're giving Leadbay loans/financing): `lcl.fr` (Crédit Lyonnais, see `aurelien.mercier@lcl.fr` on May 12 loan signature). If notable, surface as a small "📌 Outside sales — company milestone" footnote, not a customer win.
 - Internal-product-style "weekly sync" with non-customer accounts
 
 **When unsure:** mark as ambiguous → exclude from customer count, don't list under top wins. Optionally surface in a one-line "ambiguous" note in GAPS so the user can correct.
@@ -318,6 +349,12 @@ LEADERBOARD (customer-facing only)
 OTHER CUSTOMER
   {company} — {rep} ({brief context})
   ...
+
+👑 FOUNDER-LED SALES (Ludo — not on rep scoreboard)
+  {N} customer meetings: {company A}, {company B}, ... (1-line each)
+  📌 Outside sales — company milestone: {LCL loan signature, etc.}
+  (separate from rep scoreboard; founder-led activity has real
+  customer-pipeline impact but is graded differently than rep volume)
 
 🤖 MILAN AUTOMATED OUTBOUND
   {N} emails to {M} customers ({date}) — top targets: {top 3-5

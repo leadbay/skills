@@ -1,0 +1,295 @@
+<!--
+  Org / Engineering Retro — landscape HTML template.
+
+  Output mode: screenshot-friendly single-page HTML (3-column landscape).
+  Use this template when the user asks for a "beautiful HTML output", "I want to screenshot", "share with the team as an image".
+
+  How to use:
+    1. Gather data via Steps 1-4 in SKILL.md (GitHub commits + releases + DB coverage).
+    2. Replace every {{TOKEN}} below with the actual value.
+    3. Write the rendered HTML to `.context/eng-retro-<date-range>.html`.
+    4. `open` the file so the user sees it in a browser.
+
+  Tokens use {{double-curly}} so the agent can find-and-replace verbatim.
+  Lists use repeating <!-- ROW: ... --> blocks the agent expands.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Leadbay Eng Retro — {{DATE_RANGE_SHORT}}</title>
+<style>
+  :root {
+    --bg: #0e0f12;
+    --card: #181a20;
+    --card-2: #20232c;
+    --ink: #e9ecf1;
+    --muted: #8e95a4;
+    --line: #2a2e3a;
+    --brand: #ff7a00;
+    --brand-2: #ffb259;
+    --gold: #ffd166;
+    --silver: #c0c8d2;
+    --bronze: #d29263;
+    --good: #2ecc71;
+    --bad: #ff5470;
+    --hot: #ff3860;
+    --info: #5ea0ff;
+    --infra: #b388ff;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--ink); }
+  body {
+    font-family: ui-sans-serif, -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    font-size: 13px;
+    line-height: 1.45;
+    padding: 20px 26px;
+    max-width: 1480px;
+    margin: 0 auto;
+  }
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 10px;
+    margin-bottom: 14px;
+  }
+  h1 { margin: 0; font-size: 22px; font-weight: 700; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 12.5px; }
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+    margin-bottom: 14px;
+  }
+  .stat {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 8px 12px;
+  }
+  .stat .label { color: var(--muted); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .stat .value { font-size: 22px; font-weight: 700; margin-top: 1px; letter-spacing: -0.02em; }
+  .stat .delta { font-size: 11px; color: var(--muted); }
+  .stat.win .value { color: var(--gold); }
+  .stat.win .delta { color: var(--gold); }
+  .stat.infra .value { color: var(--infra); }
+  .stat.infra .delta { color: var(--infra); }
+  .stat.code .value { color: var(--info); }
+  .stat.code .delta { color: var(--info); }
+
+  .cols {
+    display: grid;
+    grid-template-columns: 1.05fr 1fr 1fr;
+    gap: 12px;
+  }
+  section {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  section h2 {
+    margin: 0 0 8px 0;
+    font-size: 13.5px;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+  }
+  section h2 .tag { color: var(--muted); font-size: 11px; font-weight: 400; text-transform: uppercase; letter-spacing: 0.05em; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 6px 6px; border-bottom: 1px dashed var(--line); vertical-align: top; }
+  tr:last-child td { border-bottom: 0; }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Monaco, monospace; font-size: 11.5px; }
+  .right { text-align: right; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  .lb tr td:first-child { font-weight: 600; font-size: 13.5px; }
+  .lb .medal { width: 24px; text-align: center; font-size: 15px; }
+  .lb .note { color: var(--muted); font-size: 11px; font-weight: 400; }
+
+  .repo-card {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: var(--card-2);
+    border-radius: 6px;
+    border-left: 3px solid var(--brand);
+    font-size: 12px;
+  }
+  .repo-card:last-child { margin-bottom: 0; }
+  .repo-card.gold   { border-left-color: var(--gold); }
+  .repo-card.silver { border-left-color: var(--silver); }
+  .repo-card.bronze { border-left-color: var(--bronze); }
+  .repo-card.infra  { border-left-color: var(--infra); }
+  .repo-card.code   { border-left-color: var(--info); }
+  .repo-card .title { font-weight: 600; margin-bottom: 1px; font-size: 12.5px; }
+  .repo-card .title .badge {
+    color: var(--ink); font-size: 9.5px; padding: 1px 6px; border-radius: 999px;
+    background: var(--card); border: 1px solid var(--line); margin-left: 4px; vertical-align: middle;
+  }
+  .repo-card .meta { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+  .repo-card .meta b { color: var(--ink); }
+
+  .table-data { width: 100%; border-collapse: collapse; font-size: 11.5px; margin-bottom: 8px; }
+  .table-data th { font-size: 9.5px; padding: 3px 4px; }
+  .table-data td { padding: 4px 4px; border-bottom: 1px dashed var(--line); }
+  .table-data .num { font-variant-numeric: tabular-nums; }
+  .table-data .pct { color: var(--muted); font-size: 10.5px; }
+  .table-data .delta-pos { color: var(--good); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .table-data .delta-neg { color: var(--bad); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .table-data .delta-flat { color: var(--muted); font-size: 11px; }
+
+  .observations {
+    font-size: 11.5px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .observations b { color: var(--ink); }
+  .observations .item {
+    padding: 4px 0;
+    border-bottom: 1px dashed var(--line);
+  }
+  .observations .item:last-child { border-bottom: 0; }
+  .observations .warn { color: var(--bad); font-weight: 600; }
+  .observations .good { color: var(--good); font-weight: 600; }
+
+  .footer-note { color: var(--muted); font-size: 10.5px; margin-top: 12px; text-align: center; }
+
+  .top-wins {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🛠️ Leadbay Engineering Retro</h1>
+  <div class="sub"><b>{{DATE_RANGE_LONG}}</b> · Code · Infra · Data Pipeline</div>
+</header>
+
+<!-- Headline stats: 5 cards. Tag a card .win for a milestone, .infra for infra news, .code for code volume. -->
+<div class="stats">
+  <div class="stat code">
+    <div class="label">Active builders</div>
+    <div class="value">{{N_BUILDERS}}</div>
+    <div class="delta">{{BUILDER_NAMES}}</div>
+  </div>
+  <div class="stat win">
+    <div class="label">Releases shipped</div>
+    <div class="value">{{N_RELEASES}}</div>
+    <div class="delta">{{RELEASE_SUMMARY}}</div>
+  </div>
+  <div class="stat code">
+    <div class="label">Commits</div>
+    <div class="value">{{N_COMMITS}}</div>
+    <div class="delta">{{N_REPOS}} repos active</div>
+  </div>
+  <div class="stat infra">
+    <div class="label">{{INFRA_LABEL}}</div>
+    <div class="value">{{INFRA_VALUE}}</div>
+    <div class="delta">{{INFRA_DELTA}}</div>
+  </div>
+  <div class="stat">
+    <div class="label">{{PIPELINE_LABEL}}</div>
+    <div class="value">{{PIPELINE_VALUE}}</div>
+    <div class="delta">{{PIPELINE_DELTA}}</div>
+  </div>
+</div>
+
+<div class="cols">
+
+  <!-- LEFT: Builder leaderboard + Top wins -->
+  <div>
+    <section>
+      <h2>🏆 Builder Scoreboard</h2>
+      <table class="lb">
+        <thead>
+          <tr><th></th><th>Builder</th><th class="right">Commits</th><th>Where</th></tr>
+        </thead>
+        <tbody>
+          <!-- Apply identity-merge BEFORE this table (milstan, amaury/kinrar, nicolas/jenecomprendpas, etc.). -->
+          <!-- Include dependabot as separate 🤖 row if it has ≥3 PRs. -->
+          <!-- ROW: <tr><td class="medal">{{MEDAL}}</td><td>{{NAME}}</td><td class="right num">{{N}}</td><td>{{WHERE}}</td></tr> -->
+          {{BUILDER_ROWS}}
+        </tbody>
+      </table>
+    </section>
+
+    <section style="margin-top:12px;">
+      <h2>🥇 Top wins</h2>
+      <div class="top-wins">
+        <!-- 3-5 repo-cards. Use .gold/.silver/.bronze for ranking, .infra for infra-track wins. -->
+        {{TOP_WINS_CARDS}}
+      </div>
+    </section>
+  </div>
+
+  <!-- MIDDLE: Releases + Repo activity -->
+  <div>
+    <section>
+      <h2>🚢 Releases &amp; Repos <span class="tag">{{N_REPOS}} active</span></h2>
+      <!-- 6-10 repo-cards summarizing each active repo. -->
+      <!-- Class hint: .code for code-heavy repos, .infra for infra/ops, default brand for misc. -->
+      {{REPO_CARDS}}
+    </section>
+  </div>
+
+  <!-- RIGHT: Data Coverage tables + Observations -->
+  <div>
+    <section>
+      <h2>📦 Data Coverage <span class="tag">FR · state · Δ 7d</span></h2>
+      <table class="table-data">
+        <thead><tr><th></th><th class="right">State</th><th class="right">Δ 7d</th></tr></thead>
+        <tbody>
+          <tr><td>Has website</td><td class="right num">{{FR_WEBSITE_N}} <span class="pct">{{FR_WEBSITE_PCT}}</span></td><td class="right delta-flat">—</td></tr>
+          <tr><td>Has web OR social</td><td class="right num">{{FR_WEBSOCIAL_N}} <span class="pct">{{FR_WEBSOCIAL_PCT}}</span></td><td class="right delta-pos">+{{FR_WEBSOCIAL_DELTA}}</td></tr>
+          <tr><td>Has Ranty data</td><td class="right num">{{FR_RANTY_N}} <span class="pct">{{FR_RANTY_PCT}}</span></td><td class="right delta-pos">+{{FR_RANTY_FETCH}} fetched</td></tr>
+          <!-- "Has contacts" = distinct lead_id in lead_contacts (PRIMARY metric for paid pool coverage). -->
+          <!-- Delta = enrichments purchased this week (sales-side spend signal). -->
+          <tr><td>Has contacts <span class="pct">(paid pool)</span></td><td class="right num">{{FR_CONTACTS_N}} <span class="pct">{{FR_CONTACTS_PCT}}</span></td><td class="right delta-pos">+{{FR_ENRICHED}} enriched</td></tr>
+          <tr><td>Worldview imports</td><td class="right num">—</td><td class="right {{FR_IMPORT_CLASS}}">+{{FR_IMPORTS}}{{FR_IMPORT_WARN}}</td></tr>
+        </tbody>
+      </table>
+      <div class="sub" style="margin-top:4px; font-size:11px;">FR total: <b>{{FR_TOTAL}}</b></div>
+    </section>
+
+    <section style="margin-top:12px;">
+      <h2>📦 Data Coverage <span class="tag">US · state · Δ 7d</span></h2>
+      <table class="table-data">
+        <thead><tr><th></th><th class="right">State</th><th class="right">Δ 7d</th></tr></thead>
+        <tbody>
+          <tr><td>Has website</td><td class="right num">{{US_WEBSITE_N}} <span class="pct">{{US_WEBSITE_PCT}}</span></td><td class="right delta-flat">—</td></tr>
+          <tr><td>Has web OR social</td><td class="right num">{{US_WEBSOCIAL_N}} <span class="pct">{{US_WEBSOCIAL_PCT}}</span></td><td class="right delta-pos">+{{US_WEBSOCIAL_DELTA}}</td></tr>
+          <tr><td>Has Ranty data</td><td class="right num">{{US_RANTY_N}} <span class="pct">{{US_RANTY_PCT}}</span></td><td class="right delta-pos">+{{US_RANTY_FETCH}} fetched</td></tr>
+          <tr><td>Has contacts <span class="pct">(paid pool, est)</span></td><td class="right num">{{US_CONTACTS_EST}} <span class="pct">{{US_CONTACTS_PCT_EST}}</span></td><td class="right delta-pos">+{{US_ENRICHED}} enriched</td></tr>
+          <tr><td>Worldview imports</td><td class="right num">—</td><td class="right {{US_IMPORT_CLASS}}">+{{US_IMPORTS}}{{US_IMPORT_WARN}}</td></tr>
+        </tbody>
+      </table>
+      <div class="sub" style="margin-top:4px; font-size:11px;">US total: <b>{{US_TOTAL}}</b> · contacts via sample (full COUNT times out on 1.5B rows)</div>
+    </section>
+
+    <section style="margin-top:12px;">
+      <h2>🔍 Observations &amp; Risks</h2>
+      <div class="observations">
+        <!-- 3-5 bullets. Lead with milestones (good), flag warnings (warn). -->
+        <!-- ROW: <div class="item"><span class="good">✓</span> {{TEXT}}</div>  OR <span class="warn">⚠️</span> -->
+        {{OBSERVATIONS}}
+      </div>
+    </section>
+  </div>
+
+</div>
+
+<div class="footer-note">
+  Sources: GitHub (commits + releases), FR prod + US staging Postgres, lead_web_fetches, contact_enrichments · "Has contacts" = distinct lead_id in lead_contacts (paid pool); enrichment delta = purchases via contact_enrichments.created_at · US lead_contacts total too large for exact COUNT
+</div>
+
+</body>
+</html>
