@@ -199,7 +199,12 @@ For each region, query the prod backend DB:
 
 **Schema notes (verified May 2026):**
 - `leads` columns: `website`, `linkedin`, `facebook`, `twitter`, `instagram`, `last_worldview_import`. No `created_at` on leads. `id` is `uuid`.
-- `lead_web_fetches` (Ranty mirror): `lead_id`, `content` (json), `last_fetch_at`. "Has Ranty" = distinct lead_id with `content IS NOT NULL`.
+
+**Ranty / content coverage — pick the right table:** the Ranty pipeline writes to three different tables for different stages. The **primary "Has Ranty data" coverage** metric is **`lead_descriptions` with `ai_description IS NOT NULL`** (AI-summarized per-language summary, broadest meaningful coverage). The two other tables are narrower and were misused as the primary signal in retros before May 18, 2026:
+- `lead_descriptions` — Ranty's per-language AI summary. `ai_description`, `ai_short_description`, `description`, `wise_tide_description`. PRIMARY Ranty signal: `COUNT(DISTINCT lead_id) FILTER (WHERE ai_description IS NOT NULL)`. Reference numbers (May 18, 2026): FR 260,154 / US 7,500,328.
+- `website_properties` — Ranty's extracted property bag (`product_features`, `value_proposition`, etc.). 1.83M rows FR / 378k US; ~165k distinct FR leads, ~28k US. Nicolas reports ingestion at ~500k chunks/day starting May 17, 2026 (this table is the chunk sink). No timestamp column — daily delta hard to query; approximate via `id` (bigint sequence).
+- `lead_web_fetches` — raw HTML cache. `lead_id`, `content` (json), `last_fetch_at`. NARROW: 66k FR / 16k US. Use only as a fetch-recency proxy (via `last_fetch_at`), not as the coverage metric. **Prior retros mistakenly used this as the headline Ranty number — don't repeat that.**
+
 - `lead_contacts` (a.k.a. `paid_contacts` in code) — the **buyable contact pool** per lead. "Has contacts" = distinct lead_id in this table. **This is the primary coverage metric** — it shows leads where there's *something to enrich*, not what's been purchased.
 - `contact_enrichments` — the **purchase log**. Each row = one contact bought (email or phone token spent). Has `created_at`. Use for "enrichments purchased this week" delta — but DO NOT confuse this with "has contacts" coverage. Enrichment volume reflects sales-side spend, not data-pool size.
 - US `lead_contacts` is too large for exact COUNT (1.5B-row planner estimate). Use a bounded sample (`SELECT id FROM leads ORDER BY id LIMIT 100000` joined to `lead_contacts`) and report as estimate.
@@ -216,11 +221,20 @@ SELECT
   COUNT(*) FILTER (WHERE last_worldview_import >= now() - interval '7 days') AS imported_7d
 FROM leads;
 
+-- PRIMARY Ranty coverage: AI-summarized leads (broadest meaningful coverage)
 SELECT
-  COUNT(DISTINCT lead_id) FILTER (WHERE content IS NOT NULL) AS has_ranty,
+  COUNT(DISTINCT lead_id) FILTER (WHERE ai_description IS NOT NULL) AS has_ai_description
+FROM lead_descriptions;
+
+-- SECONDARY Ranty signals
+SELECT COUNT(DISTINCT lead_id) AS has_extracted_properties FROM website_properties;
+SELECT
+  COUNT(DISTINCT lead_id) FILTER (WHERE content IS NOT NULL) AS raw_html_cached,
   COUNT(DISTINCT lead_id) FILTER (WHERE last_fetch_at >= now() - interval '7 days') AS fetched_7d
 FROM lead_web_fetches;
 ```
+
+**Render in Message 2 as: "Has Ranty AI description" as the primary row (use `lead_descriptions.ai_description`).** Use the lead_web_fetches.last_fetch_at as the 7d fetch-activity delta. Don't surface lead_web_fetches counts as the headline — that's the raw-cache narrow signal, not the meaningful coverage.
 
 For FR contacts (fast):
 ```sql
