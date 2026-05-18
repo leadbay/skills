@@ -155,12 +155,39 @@ The HTML mode combines Engineering + Data Coverage into one 3-column landscape p
 For each region, query the prod backend DB:
 
 **Schema notes (verified May 2026):**
-- `leads` columns: `website`, `linkedin`, `facebook`, `twitter`, `instagram`, `last_worldview_import`. No `created_at` on leads. `id` is `uuid`.
+- `leads` columns: `website`, `linkedin`, `facebook`, `twitter`, `instagram`, `last_worldview_import`, `worldview_id`. No `created_at` on leads. `id` is `uuid`.
 
-**Ranty / content coverage — pick the right table:** the Ranty pipeline writes to three different tables for different stages. The **primary "Has Ranty data" coverage** metric is **`lead_descriptions` with `ai_description IS NOT NULL`** (AI-summarized per-language summary, broadest meaningful coverage). The two other tables are narrower and were misused as the primary signal in retros before May 18, 2026:
-- `lead_descriptions` — Ranty's per-language AI summary. `ai_description`, `ai_short_description`, `description`, `wise_tide_description`. PRIMARY Ranty signal: `COUNT(DISTINCT lead_id) FILTER (WHERE ai_description IS NOT NULL)`. Reference numbers (May 18, 2026): FR 260,154 / US 7,500,328.
-- `website_properties` — Ranty's extracted property bag (`product_features`, `value_proposition`, etc.). 1.83M rows FR / 378k US; ~165k distinct FR leads, ~28k US. Nicolas reports ingestion at ~500k chunks/day starting May 17, 2026 (this table is the chunk sink). No timestamp column — daily delta hard to query; approximate via `id` (bigint sequence).
-- `lead_web_fetches` — raw HTML cache. `lead_id`, `content` (json), `last_fetch_at`. NARROW: 66k FR / 16k US. Use only as a fetch-recency proxy (via `last_fetch_at`), not as the coverage metric. **Prior retros mistakenly used this as the headline Ranty number — don't repeat that.**
+**Ranty coverage — query Qdrant directly, NOT backend tables.** Ranty is a separate service (Qdrant-backed vector store) keyed on `worldview_id`. The right "Has Ranty data" metric is:
+
+> count of distinct `worldview_id`s in Ranty's chunks index, split by FR vs US via cross-reference against backend `leads.worldview_id`.
+
+Do NOT use any of these as the primary Ranty signal (they are downstream backend mirrors with lag, partial-update gaps, and stage-mapping confusion):
+- ~~`lead_descriptions.ai_description`~~ — AI summaries, lagging mirror
+- ~~`website_properties`~~ — Ranty's extracted property bag mirrored back
+- ~~`lead_web_fetches`~~ — raw HTML cache (narrowest, was wrongly used as headline in retros < v0.14.1)
+
+**How to query Ranty (Qdrant @ `http://10.156.0.2:6333`):**
+```python
+# Scroll chunks_v3_qwen_3_06b, collect distinct payload.worldview_id
+# 6.1M points; partial scans (1-2M points) give a representative sample for
+# Δ-week trend; for full coverage budget ~30 min and retry on timeouts.
+POST /collections/chunks_v3_qwen_3_06b/points/scroll
+  { "limit": 4000, "with_payload": ["worldview_id"], "with_vector": false }
+```
+
+Then cross-reference against backend:
+```sql
+-- FR (10.0.1.8/prod) and US (10.2.0.4/us_staging)
+COPY (SELECT DISTINCT worldview_id FROM leads WHERE worldview_id IS NOT NULL) TO STDOUT;
+```
+
+Intersect in Python: `FR ∩ Ranty` and `US ∩ Ranty` give the per-region "leads Ranty has analyzed". Ids in Ranty but not FR/US are likely `website`-type worldview entities or stale — surface as a separate "other" bucket if relevant.
+
+Reference numbers (May 18, 2026, partial 8% Qdrant scan, ~78k Ranty wv-ids sampled):
+- FR ∩ Ranty: **537 leads** (will be ~5-10× higher on full scan)
+- US ∩ Ranty: **42,273 leads** (will be ~5-10× higher on full scan)
+
+For ongoing retros: persist `/tmp/ranty_worldview_ids.txt` between runs (or schedule a nightly full-scroll) to avoid redoing the 30-min scan each week. The `id` set is stable enough that a delta of the last full scan + a fresh partial-week scroll is a good incremental signal.
 
 - `lead_contacts` (a.k.a. `paid_contacts` in code) — the **buyable contact pool** per lead. "Has contacts" = distinct lead_id in this table. **This is the primary coverage metric** — it shows leads where there's *something to enrich*, not what's been purchased.
 - `contact_enrichments` — the **purchase log**. Each row = one contact bought (email or phone token spent). Has `created_at`. Use for "enrichments purchased this week" delta — but DO NOT confuse this with "has contacts" coverage. Enrichment volume reflects sales-side spend, not data-pool size.
@@ -178,20 +205,15 @@ SELECT
   COUNT(*) FILTER (WHERE last_worldview_import >= now() - interval '7 days') AS imported_7d
 FROM leads;
 
--- PRIMARY Ranty coverage: AI-summarized leads (broadest meaningful coverage)
-SELECT
-  COUNT(DISTINCT lead_id) FILTER (WHERE ai_description IS NOT NULL) AS has_ai_description
-FROM lead_descriptions;
+-- Note: do NOT use these as "Has Ranty data". They are downstream mirrors.
+-- For the real Ranty coverage signal see the Qdrant cross-reference recipe
+-- in the Schema notes section above.
 
--- SECONDARY Ranty signals
-SELECT COUNT(DISTINCT lead_id) AS has_extracted_properties FROM website_properties;
-SELECT
-  COUNT(DISTINCT lead_id) FILTER (WHERE content IS NOT NULL) AS raw_html_cached,
-  COUNT(DISTINCT lead_id) FILTER (WHERE last_fetch_at >= now() - interval '7 days') AS fetched_7d
-FROM lead_web_fetches;
+-- Useful supporting query: backend counts of leads with a worldview_id at all
+SELECT COUNT(*) FILTER (WHERE worldview_id IS NOT NULL) AS leads_with_wv FROM leads;
 ```
 
-**Render in Message 2 as: "Has Ranty AI description" as the primary row (use `lead_descriptions.ai_description`).** Use the lead_web_fetches.last_fetch_at as the 7d fetch-activity delta. Don't surface lead_web_fetches counts as the headline — that's the raw-cache narrow signal, not the meaningful coverage.
+**Render in Message 2: "Has Ranty data" = leads-region ∩ Ranty's Qdrant worldview_id set** (one row per region). Show the count and the percent of `leads_with_wv` (not the percent of all leads — that conflates wv-coverage with Ranty-coverage).
 
 For FR contacts (fast):
 ```sql

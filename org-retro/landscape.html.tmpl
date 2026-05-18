@@ -250,7 +250,8 @@
         <tbody>
           <tr><td>Has website</td><td class="right num">{{FR_WEBSITE_N}} <span class="pct">{{FR_WEBSITE_PCT}}</span></td><td class="right delta-flat">—</td></tr>
           <tr><td>Has web OR social</td><td class="right num">{{FR_WEBSOCIAL_N}} <span class="pct">{{FR_WEBSOCIAL_PCT}}</span></td><td class="right delta-pos">+{{FR_WEBSOCIAL_DELTA}}</td></tr>
-          <tr><td>Has Ranty data</td><td class="right num">{{FR_RANTY_N}} <span class="pct">{{FR_RANTY_PCT}}</span></td><td class="right delta-pos">+{{FR_RANTY_FETCH}} fetched</td></tr>
+          <!-- Has Ranty data = FR worldview_ids ∩ Qdrant chunks_v3_qwen_3_06b.payload.worldview_id. NOT lead_descriptions / lead_web_fetches / website_properties (downstream mirrors). -->
+          <tr><td>Has Ranty data <span class="pct">(wv-ids ∩ Qdrant)</span></td><td class="right num">{{FR_RANTY_N}} <span class="pct">{{FR_RANTY_PCT}}</span></td><td class="right delta-pos">+{{FR_RANTY_DELTA}}</td></tr>
           <!-- "Has contacts" = distinct lead_id in lead_contacts (PRIMARY metric for paid pool coverage). -->
           <!-- Delta = enrichments purchased this week (sales-side spend signal). -->
           <tr><td>Has contacts <span class="pct">(paid pool)</span></td><td class="right num">{{FR_CONTACTS_N}} <span class="pct">{{FR_CONTACTS_PCT}}</span></td><td class="right delta-pos">+{{FR_ENRICHED}} enriched</td></tr>
@@ -267,7 +268,7 @@
         <tbody>
           <tr><td>Has website</td><td class="right num">{{US_WEBSITE_N}} <span class="pct">{{US_WEBSITE_PCT}}</span></td><td class="right delta-flat">—</td></tr>
           <tr><td>Has web OR social</td><td class="right num">{{US_WEBSOCIAL_N}} <span class="pct">{{US_WEBSOCIAL_PCT}}</span></td><td class="right delta-pos">+{{US_WEBSOCIAL_DELTA}}</td></tr>
-          <tr><td>Has Ranty data</td><td class="right num">{{US_RANTY_N}} <span class="pct">{{US_RANTY_PCT}}</span></td><td class="right delta-pos">+{{US_RANTY_FETCH}} fetched</td></tr>
+          <tr><td>Has Ranty data <span class="pct">(wv-ids ∩ Qdrant)</span></td><td class="right num">{{US_RANTY_N}} <span class="pct">{{US_RANTY_PCT}}</span></td><td class="right delta-pos">+{{US_RANTY_DELTA}}</td></tr>
           <tr><td>Has contacts <span class="pct">(paid pool, est)</span></td><td class="right num">{{US_CONTACTS_EST}} <span class="pct">{{US_CONTACTS_PCT_EST}}</span></td><td class="right delta-pos">+{{US_ENRICHED}} enriched</td></tr>
           <tr><td>Worldview imports</td><td class="right num">—</td><td class="right {{US_IMPORT_CLASS}}">+{{US_IMPORTS}}{{US_IMPORT_WARN}}</td></tr>
         </tbody>
