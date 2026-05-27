@@ -5,8 +5,7 @@ description: |
   Reads contracts directly from WORKFLOWS.md, spawns a session subagent
   against the real Leadbay API, judges the result with a fresh-context
   judge subagent, writes structured JSON to .context/evals/, and prints
-  a scorecard. The HTML dashboard can be regenerated at any time with
-  `pnpm --filter @leadbay/mcp run eval:report`.
+  a scorecard, and generates an HTML dashboard at `.context/evals/eval-report.html`.
 
   Usage:
     /eval --workflow 1
@@ -220,7 +219,7 @@ From the stream-json output, extract:
 - **final_message**: the `result` field from the `type=result` line
 - **tokens**: `usage` from the `type=result` line (`input_tokens`, `cache_read_input_tokens`, `output_tokens`)
 
-Filter tool calls to only those whose `name` starts with `leadbay_`.
+Filter tool calls to only those whose `name` contains `leadbay_` (the actual stream-json names are prefixed: `mcp__leadbay-live__leadbay_xxx`).
 
 Return a structured JSON summary:
 ```json
@@ -248,7 +247,8 @@ If present → `INVARIANT FAIL: leadbay_xxx was called (forbidden)`.
 
 **required_byproducts**: If set, verify each phrase appears in `agent_prose` or `final_message`.
 
-Record each as `PASS` or `FAIL` with reason.
+Record each as an object `{"name": "check-description", "pass": true|false, "reason": "..."}`.
+Use exactly these field names — the dashboard schema (`report.ts`) expects `name`, `pass`, `reason`.
 
 ---
 
@@ -421,9 +421,28 @@ Then print the summary table:
   Judge tokens:   N in / N out
   ─────────────────────────────────────────────────
   Grand total:    N in (incl. cache) / N out
-
-Dashboard: pnpm --filter @leadbay/mcp run eval:view
 ```
+
+After printing the summary, generate the HTML dashboard yourself by reading all JSON files in `.context/evals/` and writing `eval-report.html`.
+
+**Dashboard generation:**
+
+```bash
+ls "$REPO_ROOT/.context/evals/"*.json 2>/dev/null
+```
+
+Read every `.json` file in `.context/evals/` (skip `eval-report.html`). For each run file, extract its `entries` array. Build a self-contained HTML file at `$REPO_ROOT/.context/evals/eval-report.html` with:
+
+- A header showing total runs, pass rate, date range
+- One section per run (grouped by `run_id`), showing `branch`, `git_sha`, `started_at`
+- Per-entry cards showing: workflow name, PASS/FAIL badge (green/red), scores (MM/IA/NF/TSF as 1–5 colored pills), tool call list, per-criterion checklist (✓/✗), judge reasoning, token counts
+- A summary bar chart or table across all runs for trend visibility
+- Dark-mode-friendly color scheme: background `#0d1117`, card `#161b22`, text `#e6edf3`, green `#22c55e`, red `#ef4444`, accent `#58a6ff`
+- No external dependencies — fully inline CSS + vanilla JS only
+
+Write the file using the Write tool directly. Then print:
+
+`Dashboard saved → file://$REPO_ROOT/.context/evals/eval-report.html`
 
 ---
 
@@ -433,4 +452,4 @@ Dashboard: pnpm --filter @leadbay/mcp run eval:view
 2. **Filter tool calls.** Only count tool calls whose name starts with `leadbay_`. ToolSearch, WebFetch, Bash etc. from leaked superpowers are noise — exclude them from all invariant checks and the judge prompt.
 3. **Judge is always a fresh-context subagent.** Never judge in the same context as the session runner — the judge must be blind to the session's "feel" and reason only from the evidence passed to it.
 4. **WORKFLOWS.md is the only contract source.** Never hardcode workflow metadata in this skill. Always re-read WORKFLOWS.md for every run.
-5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so `pnpm eval:report` can render it. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
+5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly (the skill reads it back in Phase 7 to generate the HTML dashboard). If the schema needs to evolve, update the skill template and `evidence.ts` in the eval-framework repo.
