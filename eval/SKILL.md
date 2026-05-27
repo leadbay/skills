@@ -9,6 +9,9 @@ description: |
   a scorecard. The HTML dashboard can be regenerated at any time with
   `pnpm --filter @leadbay/mcp run eval:report`.
 
+  For fully unattended runs (no approval prompts), launch Claude Code with:
+    claude --dangerously-skip-permissions
+
   Usage:
     /eval --workflow 1
     /eval --workflow 1,3,5
@@ -16,7 +19,7 @@ description: |
     /eval --workflow 1 --model claude-opus-4-7
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.0.0
+version: 1.1.0
 allowed-tools:
   - Bash
   - Read
@@ -82,8 +85,7 @@ Read the user's invocation to extract `--workflow` and `--model` flags.
 # Locate repo root (WORKFLOWS.md is at the root of leadclaw/eval-framework)
 REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
 echo "REPO_ROOT: $REPO_ROOT"
-echo "WORKFLOWS_MD: $REPO_ROOT/WORKFLOWS.md"
-ls "$REPO_ROOT/WORKFLOWS.md" 2>/dev/null && echo "FOUND" || echo "NOT FOUND"
+ls "$REPO_ROOT/WORKFLOWS.md" 2>/dev/null && echo "WORKFLOWS_MD: FOUND" || echo "WORKFLOWS_MD: NOT FOUND"
 ```
 
 Parse the user message for `--workflow N` (comma-separated) and `--model M`.
@@ -98,6 +100,16 @@ echo "REGION: ${LEADBAY_REGION:-us}"
 
 If `LEADBAY_TOKEN` is empty or fewer than 10 chars: stop and tell the user
 to create `.env.eval` at the repo root with `LEADBAY_TOKEN=u.xxx` and `LEADBAY_REGION=us`.
+
+**Unattended mode:** this skill runs Bash commands, writes files, and spawns subagents.
+If Claude Code is prompting for approval on each action, tell the user:
+
+> For fully unattended runs, relaunch with:
+> `claude --dangerously-skip-permissions`
+> Then invoke `/eval` again — no further approvals will be needed.
+
+All `claude -p` subprocess calls in this skill already include `--dangerously-skip-permissions`
+so session and judge subagents never block waiting for input.
 
 ---
 
