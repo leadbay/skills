@@ -96,14 +96,48 @@ like today?"* Bugs answer it with a user encounter. Features answer it
 with a workflow + need. Either is fine; missing either is not.
 
 ### Iron Law 3 — DESCRIBE THE WORKFLOW AND THE EXPECTATION
-You must answer four questions in plain language, in this order:
-1. **What was the user trying to accomplish?** (the goal — not the click)
-2. **What did they expect to happen?** (the model in their head)
-3. **What actually happened?** (the observable outcome)
-4. **Why did this hurt?** (lost time, lost trust, blocked workflow, looked bad to their customer)
+You must answer four questions in plain language, in this order — and
+each answer must be **substantive**, not slot-filling. A sentence that
+fills the slot but tells the engineer nothing about a human doing real
+work is a fail. Sin 9 and Gate 6 below exist because this Iron Law
+gets gamed by issues that *technically* answer all four but read like
+the user-facing copy of a Sentry alert.
 
-If you cannot answer any of these four, the issue is not ready to file.
-Ask the reporter. Do not invent.
+1. **What was the user trying to accomplish — for whom?** Not just "the
+   goal". Name *who the user is doing this work for*: a named customer,
+   prospect, campaign, deal. State *what they owe that beneficiary*.
+   "Prepping outreach" is jargon. "Selling FF&E (furniture, fixtures,
+   equipment) on behalf of HomeSpirit to buyers at hospitality groups
+   like Barrière and Marriott Opera" is a goal a triager can weigh.
+
+2. **What did they expect to happen, AND why?** Not just the system
+   behavior they wanted — their *mental model*, plus *where that model
+   came from*. "He expected emails to resolve" tells us nothing. "His
+   theory was that `leadbay_import_leads` adds contacts to the
+   candidate pool and `leadbay_enrich_titles` then fills emails for
+   any matching title — because the tool descriptions imply they
+   chain" tells the engineer where the gap is (implementation? tool
+   description? doc?).
+
+3. **What actually happened — AND what did the user do next?** The
+   system outcome is half the answer. The other half is: *did they
+   work around it (how)? Abandon? Proceed with imperfect data?* "Got
+   `enrichable_contacts: 0`" is the system event. "Got 0, fell back to
+   Apollo/Hunter manually for the 9 contacts, postponed half the
+   outreach to next morning" is the encounter.
+
+4. **What did this cost in the user's currency?** Not a system
+   observation ("forces a parallel Apollo pass"). Concrete units in
+   the user's world: minutes per lead × leads per batch, deal slipped,
+   wrong message shipped to a real customer, half the outreach
+   postponed, trust with a named account broken. If you cannot quote
+   units, ask the reporter — don't paper over with adjectives.
+
+If you cannot answer any of these four **substantively**, the issue is
+not ready to file. Ask the reporter. Do not invent. Slot-filling with
+technical particulars (API names, status codes, UUIDs, field names) is
+not a substitute for the human story — it just makes the slop harder
+to detect.
 
 ### Iron Law 4 — KEEP IT SHORT
 Hard caps on the issue body (not counting image links):
@@ -118,7 +152,7 @@ dyslexic. Long structured documents do not get read.
 
 ---
 
-## The Seven Deadly Sins
+## The Ten Deadly Sins
 
 These are the specific failure modes you MUST actively detect and refuse
 to ship. Each one has produced real ignored issues. Examples taken from
@@ -237,6 +271,197 @@ distinct user pains, file five issues. A meta-issue listing them is fine
 ONLY if it links to the five and contains nothing else.
 
 **Test:** Count distinct user complaints in the draft. If > 1, split.
+
+### Sin 8 — The Non-English Body
+The reporter writes in French (or any non-English language) because
+that's how the customer call happened, that's how the Slack thread
+read, that's how their head talks. The draft lands in GitHub with the
+title and narrative in French: *"L'utilisateur Actis n'arrive pas à
+distinguer les filtres Leadbay des champs personnalisés CRM…"*.
+
+The organization does NOT accept non-English content in issues. The
+title, the prose explanation, the gate blocks — all of it must be in
+English. The only exception is **verbatim quotes**: pasted UI labels,
+literal user transcripts, screenshots, error messages, customer
+quotes. Those stay in their original language because translating
+them would destroy the evidence. Wrap them in quotes or backticks and
+make it obvious they're a quote.
+
+**Why it kills the issue:** Issues are read by engineers, the CTO,
+contractors, and increasingly LLM triage agents across multiple time
+zones and languages. A French body excludes half the readers, breaks
+grep across the issue tracker, and silently degrades over the long
+tail as the codebase scales beyond the original FR-speaking core.
+Translating later costs more than writing in English first.
+
+**Test:** Read the draft. Is the *narrative* — the goal, expectation,
+actual, pain, evidence — in English? Are non-English fragments only
+appearing as *quoted evidence* (UI label in backticks, customer
+sentence in quotes, error message in a code block)? If a sentence
+explaining the user's situation is in French, rewrite it in English.
+If a UI label in the screenshot says `Toujours en cours`, you keep
+that string verbatim and explain *in English* what the user thought
+it meant vs what it actually meant.
+
+**Fix:**
+- ❌ Title: *"L'utilisateur Actis ne peut pas distinguer les filtres Leadbay des champs CRM"*
+- ✅ Title: *"Actis user can't tell Leadbay filters from CRM custom fields"*
+- ❌ Body sentence: *"Le commercial a cliqué sur 'Toujours en cours' en pensant que ça voulait dire 'still active'."*
+- ✅ Body sentence: *"The rep clicked `Toujours en cours` thinking it meant 'still active' — it actually meant 'still in progress'."*
+
+If the source material is exclusively non-English (a French customer
+call, a FR-only Slack thread), translate it as you draft. Keep one or
+two key phrases as quoted evidence; explain everything else in
+English.
+
+### Sin 9 — The Engineer-Shaped User Body
+
+Technically precise: named user, named moment, API names, status codes,
+field names, UUIDs, error strings. Every literal box is ticked — but
+strip the technical particulars and there's no story of a human doing
+real work for a real beneficiary. The body reads like the user-facing
+copy of a Sentry alert with a username on top, not a user encounter.
+
+This is the most insidious sin of the post-Eight-Sins era, because it
+satisfies every literal gate (concrete user ✅, four questions
+answered ✅, no proposed solution ✅, in English ✅) while still
+failing the only thing that matters: telling the engineer the story
+of a human doing work for someone, what they thought, what they got,
+what they did next, and what it cost them in their world.
+
+Real examples (filed 2026-05-27, both passing the Eight-Sins literal
+check, both failing the substance bar):
+
+- `leadbay/product#3676`: title names Ludo dogfooding HomeSpirit, body
+  lists `enrichable_contacts: 0`, `source: org`, `enrichment_done:
+  true`, contact-import field names, lead UUIDs. **But** the goal
+  ("prepping HomeSpirit acheteurs FF&E outreach") is jargon — what
+  does HomeSpirit *sell*, to *whom*, on what timeline? The expectation
+  ("expecting email resolution") names the system action without the
+  mental model — *why* did Ludo think import_leads + enrich_titles
+  chain that way? The pain ("forces a parallel Apollo/Hunter pass")
+  is a system observation, not a cost: how many minutes? Did he send
+  the outreach anyway? Did HomeSpirit lose ground?
+- `leadbay/product#3675`: title names a Homespirit user and a LinkedIn
+  detour, body says he "has firstname, lastname and company for a
+  person he wants to reach". **But** who is "a person"? Reaching them
+  for what — sell what to what? What did he click before falling back
+  to LinkedIn (UI path? MCP tool? Where did the product imply this
+  would work)? "Every known person therefore needs one manual
+  LinkedIn detour" — how many people, in what kind of week, costing
+  how many minutes?
+
+**Why it kills the issue:** Engineering reads the API call shape and
+triages on that — fixes the API, never understands what the user was
+trying to ACCOMPLISH for whom. The fix lands; the underlying friction
+stays; six weeks later the same user files a near-identical issue
+against a different surface.
+
+**The two diagnostics:**
+
+1. **The Strip Test:** Delete every API name, field name, status code,
+   UUID, error string, tool name, endpoint path. Read what remains.
+   Does it still tell a story of a human doing real work for a real
+   beneficiary, with a real cost when blocked? If what's left reads
+   like *"the user did some workflow thing and it didn't work and
+   they were sad"* — FAIL.
+
+2. **The Beneficiary Test:** In one sentence, who is the user doing
+   this work for (named customer, prospect, campaign, deal) and what
+   do they owe that beneficiary? If the beneficiary is missing or
+   generic ("their outreach", "their work"), the cost cannot be
+   measured and triage cannot prioritize.
+
+**Fix:** Rewrite around the beneficiary and the mental model. Keep
+technical particulars at the END as a one-line repro hint
+("Repro: lead IDs X, Y, Z; tool=enrich_titles") — not as the body
+itself.
+
+**Worked rewrite (the human-story version #3676 should have been):**
+
+> *Ludo (ludo+homespiritadmin@leadbay.ai, FR prod, 2026-05-27 ~21h
+> CET) is running outreach on behalf of HomeSpirit — a FF&E vendor
+> selling furniture / fixtures / equipment to hotel groups. His
+> targets are buyers (`acheteurs`) at hospitality giants: Groupe
+> Barrière, Disneyland Paris, Marriott Opera. Leadbay's native
+> candidate pool didn't surface those buyers, so he sourced 9
+> perfect-fit names manually from web/LinkedIn/podcasts (e.g.
+> Philippe Emprin, Directeur des Achats Groupe Barrière) and pushed
+> them onto the leads via `leadbay_import_leads` with name + title
+> + LinkedIn URL. His mental model — set by the tool descriptions
+> — was that import adds them to the candidate pool, then
+> `leadbay_enrich_titles` fills emails for any matching title.
+> Called enrich_titles; got `enrichable_contacts: 0`. Imported
+> contacts showed up on the leads but tagged `enrichment_done:
+> true` with empty emails — the system marked them as enriched-and-
+> empty rather than as new candidates to enrich. Ludo fell back to
+> Apollo/Hunter manually for the 9 contacts: ~20 min/lead, broke
+> his pipeline rhythm, postponed half the HomeSpirit campaign to
+> next morning. Repro: lead IDs 3b4e22b0 (Barrière), a450e257
+> (Marriott Opera).*
+
+Beneficiary named (HomeSpirit, FF&E vendor → hotel groups). Mental
+model named (import + enrich chain, set by tool descriptions). Next
+action named (Apollo/Hunter fallback). Cost in user currency (~20
+min/lead, postponed half the campaign). Technical particulars moved
+to a one-line repro tail.
+
+### Sin 10 — The Unexamined Evidence
+
+The body attaches or references a screenshot, network response, log
+file, DB row, Sentry link, or any other piece of evidence — but never
+SAYS in prose what that evidence reveals. The reader has to open the
+attachment and study it to learn what's actually broken. The prose
+stops at the surface symptom (a badge label, an error toast, a
+spinner that never resolves); the cause-adjacent data that's right
+there in the same evidence (empty fields, a stack frame, a 4xx in the
+network tab) is left unexamined.
+
+This is the inverse of Sin 9. Sin 9 = technical particulars hide the
+absence of a human story. Sin 10 = a human-sounding sentence and an
+attached screenshot together hide the absence of any data-layer
+observation. Both fail the engineer; neither overlaps with the other.
+
+**Real example:** `leadbay/product#3672` — title *"Many Monitor rows
+on homespirit show '+0 contacts to enrich' — no human to reach"*.
+Body reports the badge text and attaches a Monitor screenshot. The
+screenshot reveals the actual cause: the contact rows associated with
+those accounts have empty `firstName` / `lastName` fields, which is
+why they don't count as enrichable identities. The body never
+mentions firstName / lastName. An engineer would have to download
+the screenshot, find the contacts table, and notice the empty name
+cells before knowing what to triage. Likely outcome: the badge gets
+"fixed" (relabel to "no enrichable contacts found") while the
+real bug — contacts ingested without names — stays in the data.
+
+**Why it kills the issue:** Reproduces the writer's confusion onto
+the reader. The writer saw the screenshot, half-recognized the cause,
+but reported the symptom and gestured at the attachment instead of
+naming the data condition. The team triages on the symptom and ships
+a surface fix. The user keeps hitting the same wall against a
+different surface.
+
+**Test:** For every attached / linked / referenced piece of evidence
+(screenshot, log, response, Sentry, DB row), the body must say in
+prose **what that evidence reveals about the underlying data
+condition** — not just describe the UI artifact that the condition
+produced. If the only thing the prose adds beyond "attached" is the
+UI label text, you have not examined the evidence.
+
+**Fix:** Read the evidence. Write the data-layer observation into the
+body. The screenshot stays as confirmation, not as the only source.
+
+- ❌ Body: *"Monitor rows show '+0 contacts to enrich'. Screenshot attached."*
+- ✅ Body: *"Monitor rows show a '+0 contacts to enrich' badge — the
+  attached screenshot reveals why: the contact rows on those accounts
+  (BP2Z, HOTEL ATLANVILLE) have empty `firstName` and `lastName`
+  fields. The system counts them as zero enrichable identities
+  because no human name is attached, even though contact rows exist
+  in the data."*
+
+If you cannot find the data-layer condition in the evidence — ask the
+reporter to walk you through what they see. Don't ship a body that
+points at a screenshot the reader has to decode alone.
 
 ---
 
@@ -616,6 +841,181 @@ FAIL if: more than 1 markdown header.
 FAIL if: title is solution-shaped (starts with verb like "Add",
 "Enable", "Allow", "Implement", or names a UI component to build).
 
+### Gate 5 — English-only narrative
+
+The organization does not accept non-English content in issues (Sin 8).
+Title and explanation MUST be in English. Verbatim UI labels, error
+strings, and direct user quotes can stay in their source language —
+but ONLY when wrapped as quoted evidence (backticks, quotes, or code
+blocks).
+
+```
+GATE 5 — English-only narrative
+TITLE LANGUAGE:           english / non-english
+NON-ENGLISH FRAGMENTS:    [list each fragment in body, e.g.
+                           `Toujours en cours` (UI label, quoted) — OK
+                           "Le commercial a cliqué…" (narrative) — FAIL]
+EACH FRAGMENT IS:         verbatim-quote / narrative-prose
+STATUS:                   PASS / FAIL — [explain]
+```
+
+FAIL if: title contains non-English narrative (a quoted UI label inside
+the title is acceptable only if it's clearly the evidence, not the
+sentence structure).
+FAIL if: any narrative sentence (goal / expected / actual / pain /
+evidence framing) is in a language other than English.
+FAIL if: a non-English fragment appears bare in the prose without
+quotes/backticks/code-block markers making it obvious it's evidence.
+
+PASS examples:
+- *"The rep clicked `Toujours en cours` thinking it meant 'still active'."*
+  (UI label quoted, explanation in English.)
+- *"Customer said on the call: 'Je n'arrive pas à trier par région.' The
+  rep had to stop the demo to filter manually."* (Quote preserved,
+  framing in English.)
+
+FAIL examples:
+- *"L'utilisateur Actis n'arrive pas à distinguer les filtres."* (Narrative in French.)
+- Title: *"Le commercial perd les leads supprimés"* (Title in French.)
+
+If the source is entirely non-English, translate as you draft. Keep
+the one or two highest-signal phrases as quoted evidence; everything
+else explains them in English.
+
+### Gate 6 — Substantive human story (the Strip Test)
+
+This is the gate that catches Sin 9 — issues that satisfy every
+literal box but tell no human story underneath. The previous gates
+test for *presence* of a goal/expected/actual/pain sentence. This gate
+tests for *substance*.
+
+**Protocol:**
+
+1. Copy the body.
+2. Delete every API name, MCP tool name, endpoint path, field name,
+   status code, UUID, error string, JSON snippet, lens/lead ID.
+3. Read what remains.
+
+If the remainder still tells a coherent story of *who the user is
+doing work for, what they expected and why, what they got, what they
+did next, and what it cost them in their world*, the issue is
+substantive. If the remainder is a hollow scaffold — *"the user did
+some workflow, it didn't work, they were sad"* — the body is
+engineer-shaped slop.
+
+Output this block verbatim, filled in:
+
+```
+GATE 6 — Substantive human story
+BENEFICIARY:        [who the user is doing this work FOR — a named
+                    customer, prospect, campaign, or deal. NOT generic
+                    "their work" / "their outreach" / workflow jargon.]
+USER GOAL:          [what the user owes the beneficiary, in plain
+                    language a non-Leadbay reader can weigh]
+MENTAL MODEL:       [the user's theory of how the product would behave,
+                    AND where that theory came from — tool description,
+                    UI label, doc, prior experience]
+NEXT ACTION:        [what the user did after hitting this — worked
+                    around it (how), abandoned, proceeded with bad
+                    data, asked for help]
+COST IN USER CURRENCY: [minutes per lead × leads per batch / deal
+                       slipped / wrong message shipped / outreach
+                       postponed / trust with a named account broken.
+                       Units, not adjectives.]
+STRIP-TEST RESIDUE: "<paste the body with all technical particulars
+                    deleted — what remains>"
+STRIP-TEST VERDICT: PASS (residue still tells a human story) /
+                    FAIL (residue is a hollow scaffold)
+STATUS:             PASS / FAIL — [explain]
+```
+
+FAIL if any of BENEFICIARY / USER GOAL / MENTAL MODEL / NEXT ACTION /
+COST IN USER CURRENCY is missing, generic, or jargon-only.
+FAIL if the strip-test verdict is FAIL.
+FAIL if the body needs the technical particulars to make the
+beneficiary or the cost legible — engineering must be able to TRIAGE
+this without parsing API names.
+
+**Common ways this gate catches slop:**
+
+- *"Prepping outreach"* / *"running enrichment"* / *"doing prospecting"*
+  → workflow jargon. Who is the user selling to? On behalf of whom?
+  About what? Beneficiary missing.
+- *"He expected emails to resolve"* → system action, not mental model.
+  Why did he expect that? What in the product set the expectation?
+- *"Forces a parallel Apollo pass"* → system observation. How many
+  minutes? Per how many leads? Did anything actually break in his
+  customer-facing work?
+- *"Every known person needs a LinkedIn detour"* with an
+  `(inferred — confirm)` flag → flagging an extrapolation is honest
+  but doesn't replace the missing concrete cost. Ask the reporter
+  how often, how many minutes, whether anyone got dropped.
+
+If Gate 6 fails, you do NOT advance. You go back to Phase 1 with the
+reporter and probe for the beneficiary, the mental model, the next
+action, the units of cost. Do not invent any of these — ask.
+
+### Gate 7 — Evidence read into prose
+
+This gate catches Sin 10 — attached evidence that the body never
+actually examines. Screenshots, network responses, logs, Sentry
+links, DB rows are *data points*; the body must extract what they
+reveal about the underlying state, not just gesture at them.
+
+For every piece of attached or linked evidence, the prose must say
+*what that evidence shows about the data layer* — not just describe
+the UI artifact the evidence captures. The evidence stays as
+confirmation; the body explains what it confirms.
+
+Output this block verbatim, filled in:
+
+```
+GATE 7 — Evidence read into prose
+ATTACHED EVIDENCE:    [list each: "Monitor screenshot",
+                       "Sentry link XYZ", "import response JSON",
+                       "DB query result", or "NONE"]
+EVIDENCE → PROSE:     [for each attached piece, the data-layer
+                      observation now stated in the body — e.g.
+                      "screenshot shows contact rows with empty
+                      firstName/lastName fields on the affected
+                      accounts"]
+DELEGATION PHRASES:   [count occurrences of "see screenshot",
+                      "attached", "see attached", "in the
+                      screenshot", "as shown" with no surrounding
+                      data-layer summary — must be 0]
+STATUS:               PASS / FAIL — [explain]
+```
+
+PASS if there is no attached evidence (some issues genuinely have
+none — a user-research note, a customer quote without artifacts).
+PASS if every attached piece has been read into prose form, with the
+data-layer observation stated.
+
+FAIL if any piece of evidence is referenced ("see screenshot",
+"attached", "as shown") without prose stating what it shows at the
+data layer.
+FAIL if the body only describes the UI symptom and the attached
+evidence reveals a data-layer condition that the body never mentions.
+
+**Common ways this gate catches slop:**
+
+- A Monitor screenshot is attached, the body says "rows show
+  '+0 contacts to enrich'", but the screenshot also reveals the
+  contact rows have empty `firstName`/`lastName` — and that's never
+  in the prose. FAIL.
+- A Sentry link is included, the body says "user hit an error", but
+  the stack frame / breadcrumbs visible in Sentry are not summarized
+  in prose. FAIL.
+- A network response is referenced, the body says "got an empty
+  result", but the response shape that explains *why* it's empty (the
+  field that's null, the array that's `[]`, the 200 with empty data)
+  is not in prose. FAIL.
+
+If you cannot extract the data-layer observation from the evidence
+yourself, ask the reporter to walk you through what they see. Do not
+ship a body that requires the reader to download an attachment and
+decode it alone.
+
 ---
 
 ## Protocol
@@ -634,23 +1034,41 @@ The reporter usually arrives with one of:
 Then read what the reporter has and ask AT MOST three of the gate
 questions they haven't already answered. Use the AskUserQuestion format.
 
-**If BUG, examples of good questions:**
+**If BUG, examples of good questions** (each one targets a Gate 6
+field — beneficiary, mental model, next action, cost):
 - "Which user account hit this and when? I need an email or org name and
   a rough timestamp — without those I can't file."
-- "What were they trying to do BEFORE they hit this? (Not the click —
-  the actual sales/CS goal.)"
-- "Why did this matter to them? Did they lose data, lose face in front
-  of their own customer, get blocked from finishing something? One
-  sentence."
+- "Who was the user doing this work FOR? Name the customer / prospect
+  / campaign / deal. *Not* 'their work' — a real beneficiary the
+  engineer can weigh."
+- "What were they trying to ACCOMPLISH for that beneficiary? Sell what
+  to whom, by when, to land what outcome? (Not the click — the actual
+  sales/CS goal.)"
+- "What did they BELIEVE would happen — and *why* did they believe it?
+  Did a tool description, UI label, doc, or prior experience set the
+  expectation? That tells me whether the gap is in the build, the
+  surface, or the doc."
+- "After they hit this, what did they DO? Work around it (how — Apollo,
+  manual LinkedIn, called the prospect cold)? Abandon? Send the
+  outreach anyway with imperfect data? The 'what they did next' is
+  half the signal."
+- "What did this COST them — in their currency? Minutes per lead times
+  leads per batch? Did a deal slip? Did the wrong message ship to a
+  named customer? Did they postpone half the campaign?"
 - "Is this on FR prod, US prod, staging, wow.leadbay.ai, or the mobile
   app?"
 
-**If FEATURE / STRATEGIC NOTE, examples of good questions:**
-- "Who does this work today, and what do they do *right now* to get
-  through it without this feature? Walk me through one concrete recent
-  example."
-- "What part of that current workflow is genuinely costly — what slows
-  them down, what fails them, what step do they skip and regret?"
+**If FEATURE / STRATEGIC NOTE, examples of good questions** (same
+substance bar, asked of the workflow rather than a single moment):
+- "Who does this work today, and *who are they doing it FOR*? Name the
+  end beneficiary — the customer they're serving, the campaign,
+  the deal."
+- "Walk me through ONE concrete recent example. What did they do
+  step-by-step? What did they expect at each step, and what did they
+  get?"
+- "What part of that current workflow is genuinely costly — and how
+  costly, in their currency? Minutes? Lost deals? Wrong message?
+  Step they skip and regret?"
 - "Where is the evidence for this need coming from — a specific customer
   call, your own dogfooding, a repeated escalation? Name the source."
 
@@ -665,15 +1083,24 @@ Never ask "what severity / priority". The team decides priority.
 
 Goal: 600–900 chars. One paragraph. Plain sentences. No headers.
 
+Each draft must carry the five Gate 6 substance elements — beneficiary,
+user goal, mental model, next action, cost in user currency — woven
+through prose, not as labelled fields. Technical particulars (API
+names, IDs, status codes) go to a short repro tail at the end.
+
 Template (this is a SCAFFOLD, not a template the user fills in — you
 write it as natural prose using these elements in this order):
 
-> User `<email or name>` on `<date / context>` was trying to
-> `<goal in plain language>`. They expected `<expectation>` but
-> `<what actually happened>`. This `<concrete pain — lost time /
-> polluted data / blocked workflow / looked bad to their customer>`.
-> `<One optional sentence of evidence: file attached, screenshot,
-> Sentry link, account ID.>`
+> User `<email or name>` on `<date / context>` was running
+> `<work>` on behalf of `<beneficiary — named customer / prospect /
+> campaign>`. They needed to `<goal owed to the beneficiary>`. They
+> expected `<expectation>` — because `<where that expectation came
+> from: tool description, UI label, doc, prior experience>`. Instead
+> `<what actually happened>`. They `<what the user did next: worked
+> around how / abandoned / proceeded anyway>`. Cost: `<units in user
+> currency — minutes/lead × leads, deal slipped, wrong message
+> shipped, postponed outreach, broken trust>`. `<Optional repro
+> tail: lead IDs, screenshot, Sentry link.>`
 
 Examples (from rewriting real issues):
 
@@ -872,6 +1299,38 @@ Then say that: "Customer call on 2026-05-XX, name on file with $REPORTER,
 not yet attributed to a specific seat." That is honest and filable.
 Naming "a user" is not.
 
+> *"The customer call was in French — can I just file it in French?"*
+
+No. The narrative goes in English (Sin 8). Keep the highest-signal
+French phrases as quoted evidence (UI labels in backticks, customer
+sentences in quotes); explain everything else in English. The non-FR
+readers and grep-based triage depend on it.
+
+> *"But I named the user, named the moment, wrote a goal sentence and
+> a pain sentence — I checked all the boxes."*
+
+Then run the Strip Test. Delete every API name, MCP tool name, field
+name, status code, UUID from your body. Read what's left. If the
+residue says *"the user did some workflow and it didn't work and they
+were sad"*, you wrote engineer-shaped slop (Sin 9). Boxes ticked,
+substance zero. Go back to the reporter and ask: who is the user
+doing this work FOR, what did they BELIEVE would happen and WHY, what
+did they DO NEXT after it failed, what did it COST them in their
+world (minutes, deal, message, trust)? Those four answers, woven into
+prose with the API names demoted to a one-line repro tail, are the
+issue.
+
+> *"I attached a screenshot — the bug is obvious in the screenshot."*
+
+Then write what the screenshot shows. The engineer should not have
+to download an attachment and decode it to know what's broken (Sin
+10). The screenshot is *confirmation*, not the source. If the badge
+says "+0" because the contact rows have empty firstName/lastName,
+the body has to SAY that — the screenshot only confirms it. If the
+prose can stand alone without the attachment, file it. If it can't,
+go re-read the evidence and put the data-layer observation into the
+body.
+
 ---
 
 ## Output format the reporter will see
@@ -894,6 +1353,9 @@ GATE 3.5 — Checklist (Q1..Q7 forced yes/no): PASS (rewrote N times)
 GATE 3.7 — Severity-honest framing: PASS (no register escalation, or justified)
 GATE 3.9 — Signal-to-noise ratio: PASS (SNR=<N>%; signal="<sentence>")
 GATE 4 — Brevity + problem-shaped title: PASS (title=<N>c, body=<N>c)
+GATE 5 — English-only narrative: PASS (non-English fragments quoted as evidence only)
+GATE 6 — Substantive human story (Strip Test): PASS (beneficiary=<who>, cost=<units>)
+GATE 7 — Evidence read into prose: PASS (N attachments, each summarized into the data-layer observation)
 
 File now? (y/n) — or paste edits to refine.
 ```
@@ -916,8 +1378,26 @@ On `y`, run the `gh issue create` and print the URL.
 - [ ] Is the body ≤ 1500 chars, ≤ 1 header?
 - [ ] If the reporter had multiple complaints, did I split into multiple issues?
 - [ ] Did I refuse to add a "Proposed Solution" / "More generally" tail?
+- [ ] Are the title and narrative in English, with any non-English text
+      appearing only as quoted UI labels / user quotes / error strings?
+- [ ] Did I name the BENEFICIARY (customer / prospect / campaign / deal)
+      the user is doing this work for — not generic "their work"?
+- [ ] Did I name the user's MENTAL MODEL — *why* they expected what they
+      expected, traced back to a tool description / UI label / doc /
+      prior experience?
+- [ ] Did I describe what the user DID NEXT — workaround, abandonment,
+      proceeded with imperfect data?
+- [ ] Is the COST in the user's currency (units, not adjectives) —
+      minutes/lead × leads, deal slipped, wrong message shipped?
+- [ ] Did the body PASS the Strip Test — if I delete every API name /
+      field name / status code / UUID, does the residue still tell a
+      coherent human story?
+- [ ] For every attached/linked piece of evidence (screenshot, log,
+      Sentry, response, DB row), did I summarize in prose what that
+      evidence reveals about the DATA LAYER — not just describe the
+      UI artifact it captures?
 
-If you can answer yes to all ten, file it. Otherwise loop.
+If you can answer yes to all seventeen, file it. Otherwise loop.
 
 ---
 
