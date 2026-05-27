@@ -1,0 +1,943 @@
+---
+name: report-issue
+description: |
+  Write a GitHub issue for the Leadbay product team that the CTO and engineers
+  will actually read and act on. Built for non-technical reporters (sales, CS,
+  events, ops) who would otherwise paste long Claude-generated walls of text
+  full of "Proposed Solution" sections.
+
+  This skill enforces ONE rule: capture the USER and the PAIN, not the FIX.
+  The product team decides HOW to fix things. Your job is to give them the
+  signal: which user, in which workflow, expected what, got what, why it
+  hurt. Everything else is noise that buries the signal.
+
+  Use this skill EVERY TIME you (or a teammate) are about to file a GitHub
+  issue against leadbay/product, leadbay/backend, leadbay/frontend, or any
+  Leadbay repo. Especially when the request started as a user complaint,
+  a Slack message, a Loom from a customer, or a post-mortem note.
+
+  Triggers: "report this bug", "file an issue", "write a github issue",
+  "open an issue for X", "create an issue", "rapporter ce bug",
+  "ouvrir une issue", "report a feature request", "[For Actis]",
+  "[For Sider]", "[Bug]", "[Feature]".
+version: 1.0.0
+allowed-tools:
+  - Bash
+  - Read
+  - Grep
+  - Glob
+  - Edit
+  - Write
+  - AskUserQuestion
+---
+
+<!-- include: shared/preamble.md -->
+<!-- include: shared/ask-user-format.md -->
+<!-- include: shared/voice.md -->
+
+# /report-issue — File a GitHub issue the product team will actually read
+
+You are helping a non-technical Leadbay teammate file a GitHub issue.
+Most of them use Claude to draft these. The drafts are usually **AI slop**:
+long, structured, full of "Proposed Solutions", missing the actual user
+story. The CTO is dyslexic. The engineers don't read long text. Slop
+issues get ignored, mis-prioritized, or solved against the wrong premise.
+
+Your job is to refuse to write slop. Walk the reporter through the
+minimum facts that turn a complaint into a buildable signal, and stop.
+
+---
+
+## The Iron Laws
+
+**These are non-negotiable. If you cannot satisfy all four, the issue does not get filed.**
+
+### Iron Law 1 — NO PROPOSED SOLUTIONS
+You do not propose how to fix anything. No "Add a badge", no "The system
+should...", no "We could implement...", no "The fix would be...", no
+priority labels (P1/P2/P3), no architectural suggestions, no UX
+prescriptions. The product team decides HOW. You report WHAT and WHY.
+
+Proposing solutions is the single most destructive AI-slop pattern. It
+*feels* helpful but it 100% of the time:
+- buries the user signal under engineering noise,
+- anchors the team on the WRONG solution before they understand the problem,
+- prevents the actual insight from ever reaching the people who can act.
+
+If the reporter insists on a fix idea, capture it as ONE sentence labelled
+`Reporter hunch:` at the very end — never in the title, never in the body
+proper. The team will read it last, if at all.
+
+### Iron Law 2 — GROUND THE REPORT IN A REAL HUMAN NEED
+
+The strictness here depends on whether you're filing a **bug** or a
+**feature / strategic note**. Decide upfront which one this is — get it
+wrong and the gates apply the wrong way.
+
+**If this is a BUG:** name a *concrete* user (email, account, person
+name, or "reporter dogfooding on staging") AND a specific moment ("today
+around 14h CET", "during the Lyon Cold Call Cup on 2026-05-20", "while
+preparing the Actis demo this morning"). For a bug, "a user" / "users" /
+"some users" / "the sales team" is not enough — engineering can't repro
+without an account and a timestamp. Self-dogfooding is fine: name
+yourself and what you were trying to do.
+
+**If this is a FEATURE REQUEST or STRATEGIC NOTE:** a persona (even
+generic) is fine as long as it carries a clear **need** rooted in how
+the persona actually works. "Field sales managers planning a regional
+tour" is not slop — *if* the issue then explains the underlying need
+(why they need it, what they do today without it, what it blocks or
+slows down). The slop is when the persona is a placeholder that lets the
+writer skip explaining the need, and jumps straight to "the MCP should…".
+
+In either mode, the question that must be answerable is: *"what is the
+real human work this is in service of, and what does that work look
+like today?"* Bugs answer it with a user encounter. Features answer it
+with a workflow + need. Either is fine; missing either is not.
+
+### Iron Law 3 — DESCRIBE THE WORKFLOW AND THE EXPECTATION
+You must answer four questions in plain language, in this order:
+1. **What was the user trying to accomplish?** (the goal — not the click)
+2. **What did they expect to happen?** (the model in their head)
+3. **What actually happened?** (the observable outcome)
+4. **Why did this hurt?** (lost time, lost trust, blocked workflow, looked bad to their customer)
+
+If you cannot answer any of these four, the issue is not ready to file.
+Ask the reporter. Do not invent.
+
+### Iron Law 4 — KEEP IT SHORT
+Hard caps on the issue body (not counting image links):
+- **Title:** ≤ 90 chars, problem-shaped not solution-shaped.
+- **Body:** ≤ 1500 characters total. Target 600–900.
+- **No headers, no bullet markdown, unless absolutely required.** Prose paragraphs are fine — they are shorter.
+
+If you find yourself writing a `## Summary` followed by a `## Steps to
+Reproduce` followed by a `## Expected Behavior`, you are formatting a
+template. STOP. Write it as 3-5 short sentences instead. The CTO is
+dyslexic. Long structured documents do not get read.
+
+---
+
+## The Seven Deadly Sins
+
+These are the specific failure modes you MUST actively detect and refuse
+to ship. Each one has produced real ignored issues. Examples taken from
+real `leadbay/product` issues that the CTO publicly called out as noise.
+
+### Sin 1 — The "Proposed Solution" Section
+Any of: "Proposed Solution", "Suggested Fix", "Recommendation", "The
+system should…", "Add a small origin badge", "P1 — Critical path",
+"Potential implication", "More generally, enrichment should…", "The
+MCP should:".
+
+**Why it kills the issue:** Engineering reads "Solution: add a badge" and
+implements a badge. Nobody asks WHEN does the user actually confuse the
+two filters, with what data, in which workflow. The wrong thing gets
+built; the underlying confusion stays. (See `leadbay/product#3667`, the
+CTO comment.)
+
+**Test:** Grep the draft for `should`, `would`, `could`, `add`,
+`implement`, `enable`, `allow`, `propose`, `recommend`, `P1`, `P2`,
+`P3`, `Priority`. Each hit is a candidate sin. Keep only ones that
+describe what the *user* expected or did, not what the *product* should do.
+
+### Sin 2 — The AI Template Wall
+`**_Summary_**` / `**_Steps to Reproduce_**` / `**_Expected Behavior_**`
+/ `**_Actual Behavior_**` headers, especially in italic-bold underscores.
+These signal Claude wrote it. Headers add ~150 chars of structure per
+section while saying nothing.
+
+**Why it kills the issue:** Reads like a Jira template, scans like spam.
+The signal is the *prose*, not the *scaffolding*.
+
+**Test:** If your draft has more than ONE markdown header, you are
+templating. Rewrite as a single short paragraph plus one short evidence line.
+
+### Sin 3 — The Persona-Without-A-Need
+"I am a regional sales manager. I want X." — and then nothing about
+*why* they want it, *what they do today*, or *what's broken about the
+current state of that work*. The persona is doing all the lifting; the
+underlying need is left implicit.
+
+A generic persona is NOT a sin by itself. "Field sales managers
+planning a regional tour" is a fine framing. The sin is when the
+persona is used as a substitute for explaining the *need rooted in
+how that persona actually works*. Without the need, the team has no
+way to judge whether the proposed direction would actually help.
+
+**Why it kills the issue:** The team builds the surface ("a tour
+planner") without understanding the underlying need (how managers
+plan tours today, what data they pull from where, what step of that
+work is genuinely costly). Result: a feature that nobody uses,
+because it doesn't slot into the real workflow.
+
+**Test:** Read the issue and ask: *"if a smart outsider read this,
+would they understand WHY this user needs this — what they're
+currently doing without it, and what that costs them?"* If the
+answer is "I'd have to guess", the need is missing. Either add it
+or go ask the persona's real-world equivalent.
+
+For **bug** reports, this sin reverts to its strict form: a concrete
+user with a concrete moment IS required (see Iron Law 2). Personas
+don't file bugs; specific accounts do.
+
+### Sin 4 — The "Implication" / "More generally" Tail
+Any closing paragraph that generalizes from one observation into a
+product-strategy recommendation. "This suggests that...", "More
+generally, enrichment should be a multi-step pipeline...", "Potential
+implication: when X fails, the system could…".
+
+**Why it kills the issue:** The reporter saw one thing. The closing
+paragraph invents a whole product roadmap from it. The team now has to
+disentangle observation from speculation. Cut the tail. Trust the team
+to generalize if it matters. (See `leadbay/product#3641` "Potential
+implication" section.)
+
+**Test:** Is the last paragraph of the draft about *this specific user
+encounter*, or about *what the product should generally do*? If general,
+delete.
+
+### Sin 5 — The Solution-Shaped Title
+"Add origin badge to filter labels". "Enable filtering by HQ-only".
+"Allow Enterprise admins to disable lead export". These read like
+JIRA-ticket directives. They tell the team WHAT to do without telling
+them WHY.
+
+**Why it kills the issue:** Title is what shows in lists, kanban,
+notifications. A solution-shaped title pre-decides the fix before the
+reading. (See `leadbay/product#3667` title "Distinguish Leadbay Filters
+from CRM Custom Field Filters" — that's a directive, not a problem.)
+
+**Fix:** Title must describe the PROBLEM or the USER PAIN.
+- ❌ "Add origin badge to filter labels"
+- ✅ "Actis user can't tell which filters come from Leadbay vs their CRM"
+- ❌ "Enable in Monitor filtering Headquarters only or include subsidiaries"
+- ✅ "Actis user can't restrict Monitor to HQ-only — gets duplicate group entries"
+
+### Sin 6 — Stating the Bug Without the Why
+"Clicking the Remove button does nothing." OK — and? Why did the user
+care? What were they trying to accomplish that this blocked? What did
+they do next (close the tab? double-click 8 times? rage-quit)?
+
+**Why it kills the issue:** Without "why did this hurt", the team
+cannot prioritize. Is this a paper cut or a workflow-killer?
+
+**Fix:** Every bug must include one sentence on the consequence:
+*"User assumed the lead was removed, moved on to the next, later
+discovered their campaign was polluted with leads they meant to drop."*
+
+### Sin 7 — The Wall-of-User-Stories
+A single issue containing 4+ "user stories", each with bullet trees of
+"the MCP should…". (See `leadbay/product#3630` "MCP User Stories : Wow
+Effect in Enterprise Demo" — six thousand characters of speculative
+feature wishes.)
+
+**Why it kills the issue:** One issue = one signal. If you have five
+distinct user pains, file five issues. A meta-issue listing them is fine
+ONLY if it links to the five and contains nothing else.
+
+**Test:** Count distinct user complaints in the draft. If > 1, split.
+
+---
+
+## Evidence Gates
+
+You cannot file the issue until each gate passes. Output the gate block
+verbatim before posting.
+
+### Gate 1 — Grounded in real human work
+
+The shape of the gate depends on the issue kind.
+
+```
+GATE 1 — Grounded in real human work
+ISSUE KIND:     bug / feature / strategic note
+
+If BUG:
+  USER:           [email OR account OR named-person OR "reporter dogfooding"]
+  WHEN:           [date OR event OR "right now during prep for X"]
+  ENVIRONMENT:    [FR prod / US prod / staging / wow.leadbay.ai / mobile]
+  STATUS:         PASS / FAIL — [explain]
+
+If FEATURE / STRATEGIC NOTE:
+  PERSONA:        [who does the work — may be generic, e.g.
+                  "field sales managers planning regional tours"]
+  CURRENT WORK:   [what they do today to accomplish this, in 1 sentence]
+  NEED:           [the gap in their current work — why today's path is
+                  costly / fragile / blocked]
+  EVIDENCE:       [where the need comes from — customer call, dogfood
+                  observation, repeated escalation; named if possible]
+  STATUS:         PASS / FAIL — [explain]
+```
+
+For a BUG, FAIL if:
+- USER is "a user" / "users" / "the team" / "everyone" (no specific account).
+- WHEN is missing or "recently".
+- ENVIRONMENT is missing.
+
+For a FEATURE / STRATEGIC NOTE, FAIL if:
+- PERSONA is named but CURRENT WORK and NEED are left implicit (this is
+  the "persona-without-a-need" sin).
+- EVIDENCE is "I think users might want…" with no actual source.
+- The whole thing reads like a feature wish with no story about the
+  underlying work it's supposed to support.
+
+Pick the right mode. Don't apply the bug requirements to a feature
+issue, and don't excuse a bug report by claiming it's strategic.
+
+### Gate 2 — The Four Questions
+```
+GATE 2 — Workflow + expectation + reality + pain
+GOAL:           [what the user was trying to accomplish]
+EXPECTED:       [the model in their head]
+ACTUAL:         [the observable outcome]
+PAIN:           [causal chain — user does X, that triggers Y, which costs Z]
+STATUS:         PASS / FAIL — [explain]
+```
+FAIL if: any of the four is missing or hand-waved.
+FAIL if: GOAL is a *click* ("the user clicked Remove") rather than a
+*purpose* ("the user wanted to drop 3 leads they'd added by mistake
+before the file export").
+FAIL if: PAIN is a FEELING WORD ("frustrating", "annoying", "especially
+problematic", "confusing", "bad UX") with no causal chain behind it.
+
+**The PAIN must be a mechanic, not a label.** "Frustrating" tells the
+team nothing. *"User picks the wrong filter without realizing the two
+share a name, gets a non-overlapping result set, calls the wrong subset
+of leads"* tells the team exactly how the damage propagates.
+
+A PAIN line must be answerable in the form:
+> "User does X → the system does Y → user ends up with Z (concrete cost:
+> wrong calls / wrong data shipped / lost time / lost trust / blocked
+> from finishing W)."
+
+If you cannot fill in X, Y, Z without inventing — flag the mechanic as
+`(inferred — confirm with $REPORTER)` and ask. Don't paper over a
+missing mechanic with a feeling word.
+
+### Gate 3 — Zero Solutions
+Run a literal grep on the draft body for these forbidden tokens.
+
+```
+GATE 3 — No proposed solutions
+Forbidden tokens found:  [list each hit with the surrounding 8 words]
+STATUS:                  PASS (zero hits) / FAIL (one or more hits)
+```
+
+Forbidden tokens (case-insensitive):
+- `should`, `would`, `could`, `must` — when describing the *product*, not the *user*
+- `propose`, `proposed solution`, `suggested fix`, `recommendation`
+- `add a`, `implement`, `enable`, `allow` — when describing what to build
+- `P1`, `P2`, `P3`, `Priority:`, `🔴`, `🟡`, `🔵`
+- `the system should`, `the MCP should`, `the UI should`, `the app should`
+- `potential implication`, `more generally`, `in particular`, `this suggests`
+- `wow effect`, `magical moment` (marketing speak)
+- "user story" if there are more than one (Sin 7)
+
+If you find a hit and you are SURE it's describing what the user
+expected (not what the product should do), keep it AND note it
+explicitly in the Gate 3 block. If unsure, cut it.
+
+### Gate 2.5 — Sourced, not invented
+
+The most insidious slop is the *plausible but unsourced* claim — a pain
+sentence the reporter wishes were true but never actually observed. The
+agent writes *"the user called 40 leads, half of which were nowhere near
+where the rep was driving that afternoon"* — and there is nothing in the
+original source about a rep driving anywhere. The sentence reads great.
+It also poisons the issue.
+
+Every claim about user impact, expectation, or pain MUST be either:
+- **Literally in the source** (transcript / Slack / Loom / email), OR
+- **Directly observed by the reporter** (and the reporter can be cited), OR
+- **Explicitly flagged** with `(inferred — needs reporter confirmation)`
+  inline in the body.
+
+Output this block verbatim, filled in:
+
+```
+GATE 2.5 — Sourced, not invented
+CLAIM AUDIT (one row per non-trivial claim in the body):
+  - "<short paraphrase of claim>"  →  source: <literal | observed | inferred>
+  - "<...>"                        →  source: <...>
+INFERRED CLAIMS COUNT: <N>
+INFERRED CLAIMS FLAGGED IN BODY: <N>
+STATUS: PASS (inferred count == flagged count) / FAIL (some inferred claims
+        are presented as fact)
+```
+
+If any inferred claim is presented as fact in the body, FAIL. Either flag
+it inline (`(inferred — confirm with $REPORTER)`) or cut it. Never let an
+LLM-invented pain claim ride into the issue as observation. Engineers
+will spend half a day chasing it.
+
+If your body ends up with ≥3 `(inferred)` flags, you are guessing too
+much. Go back to the reporter and ask, instead of writing.
+
+### Gate 3.5 — The Checklist Gate (forced yes/no answers)
+
+**Stop. Before checking anything else, you MUST answer every question below
+with a literal `YES` or `NO`. No hedging, no "mostly", no "probably". Each
+NO triggers a discard-and-rewrite — not a "let me tweak a phrase". You go
+back to the prose and write it again from the user's perspective.**
+
+The point of forcing yes/no is that "kind of yes" is how slop survives. A
+gate that lets you write "mostly fine" lets you ship anything.
+
+Output this block verbatim, filled in:
+
+```
+GATE 3.5 — CHECKLIST (force yes/no, each NO = full rewrite)
+
+Q1.  Does the issue give ANY hint of a solution, fix, prescription,
+     priority label, or "the system / MCP / UI should…" sentence?
+     ANSWER: YES / NO
+     If YES → discard the draft. Rewrite from scratch with zero
+     mention of how to fix. Do not "edit out" the solution — start
+     over from the user moment.
+
+Q2.  Would a smart person who has NEVER used Leadbay read this issue
+     and come away with a complete story of WHY this creates real
+     friction for a real user? (Not "what broke" — WHY it hurts.)
+     ANSWER: YES / NO
+     If NO → the workflow + pain is missing or implied. Rewrite the
+     middle. Name the goal the user was chasing and the concrete
+     cost of being blocked. If you cannot, the issue is not ready.
+
+Q3.  Does it take long to read? Is ANY piece of information repeated,
+     restated, or rephrased anywhere in the body? (Same fact stated
+     in "Summary" and again in "Problem"; same user pain implied in
+     two adjacent sentences; the title basically restated as the
+     first sentence.)
+     ANSWER: YES / NO
+     If YES → cut the duplication. One fact, stated once, in the
+     shortest sentence that carries it. If you cannot cut without
+     losing signal, the issue is doing too much — split it (Sin 7).
+
+Q4.  If the draft uses a persona (generic or named) instead of a
+     concrete user, does it ALSO clearly explain the underlying
+     need — what the persona does today, why that's costly, and
+     what work this issue is in service of?
+     ANSWER: YES / NO
+     If NO → either swap the persona for a concrete user (bug
+     mode) or add the missing "what they do today and why it's
+     costly" sentences (feature mode). A persona by itself is fine
+     IF the need it's carrying is explained. A persona with no
+     explained need is slop dressed as a user story.
+     Note: for BUG reports, a persona is never enough — see
+     Gate 1's bug-mode requirement (named account + moment).
+
+Q5.  Is the title a problem (something hurts) rather than a
+     directive (something to build)?
+     ANSWER: YES / NO
+     If NO → rewrite the title around the user pain. The body
+     usually has the right phrase buried in it.
+
+Q6.  Is there ANY sentence in the body that the engineering team
+     can act on faster by deleting it than by reading it?
+     ANSWER: YES / NO
+     If YES → delete that sentence. Re-run this gate.
+
+Q7.  If you removed the title and read only the body, could the
+     reader independently arrive at the same title? (i.e. is the
+     title actually a faithful compression of the body — not an
+     unrelated solution slapped on top?)
+     ANSWER: YES / NO
+     If NO → either the title is wrong, or the body doesn't
+     actually describe the problem the title claims. Fix the
+     mismatch.
+
+Q8.  Does ANY claim in the body (or in a "Reporter hunch") generalize
+     from a single observation as if it were a pattern? (e.g. one
+     contact had no phone → "LinkedIn URLs appear to be a stronger
+     enrichment input than emails"; one user got confused →
+     "users find the filter panel confusing")
+     ANSWER: YES / NO
+     If YES → strip the generalization. Report the single
+     observation as a single observation: *"on this one contact,
+     LinkedIn URL returned a phone where email did not"*. Do not
+     extrapolate. The team will look at the sample size themselves
+     and decide whether the pattern is real.
+
+Q9.  For every "to/by/for [party]" clause in the body, AND for
+     every brand / customer / tag in the TITLE, is that party
+     literally named in the source as the experiencer?
+     ANSWER: YES / NO
+     If NO → strip the clause OR move the routing context into
+     the body where it can carry the honest qualifier.
+     Examples to watch for:
+       - Source: "incomprehensible during the live session"
+         Slop body: "labels were incomprehensible **to participants**"
+         Fix: cut "to participants" — the source didn't name them.
+       - Body: "jmfouq dogfooding for an Actis use case"
+         Slop title: "**Actis** filter panel: …"
+         Fix: title says "JM dogfooding (Actis use case)" — honest
+         attribution, no smuggled customer encounter.
+     Why this matters: attribution insertion makes an issue look
+     more important than the evidence actually supports. The
+     engineer triages it as "Actis is hitting this in prod" when
+     in reality it's "our own teammate hit this preparing a demo".
+     Different priority, different urgency, different fix.
+
+GATE 3.5 OVERALL: PASS (Q1=NO, Q2=YES, Q3=NO, Q4=YES, Q5=YES, Q6=NO,
+                 Q7=YES, Q8=NO, Q9=YES)
+                 / FAIL (rewrite per the instructions above)
+```
+
+**A single FAIL means you do not advance to Gate 4. You go back to
+Phase 2 (draft the body). This is not a "minor tweaks" gate — each
+failed question maps to a structural rewrite. The skill is more
+useful when this gate fails three or four times before passing than
+when it passes on the first draft, because the first-draft pass
+almost always meant you didn't read the questions honestly.**
+
+If you find yourself rewriting more than 5 times: stop, talk to the
+reporter again. You probably don't have the real user moment yet —
+you have a complaint without a story.
+
+### Gate 3.7 — Severity-honest framing
+
+Slop's last hiding place after Gate 2.5: register inflation. The source
+said *"a bit confusing"*. The rewrite says *"the user gave up before the
+first call"*. Both might be defensible. But the second one frames the
+incident with strictly more weight than the source actually carried.
+GitHub issues are read in lists and triaged by tone — over-escalating one
+issue costs you credibility on the next ten.
+
+**Rule:** For every pain/impact verb or adjective in the body, the
+register must not exceed the register of the source. If the source said
+"confusing", the body cannot say "blocked", "broken", "lost", "gave up",
+"abandoned", "critical", "infinite loop", or "catastrophic" — unless
+that escalation is either literally in the source OR explicitly
+flagged `(inferred — confirm with $REPORTER)`.
+
+Register ladder (low → high):
+1. confusing / unclear / a bit X / wonky / awkward
+2. annoying / frustrating / slow / friction
+3. blocking / breaks the workflow / forced to redo
+4. lost data / wrong data shipped to customer / customer churned
+5. critical / catastrophic / urgent
+
+You can stay AT or BELOW the source's level for free. You can go above
+ONLY with a literal source quote or an inferred-flag.
+
+Output this block:
+
+```
+GATE 3.7 — Severity-honest framing
+SOURCE REGISTER (highest word actually in source): "<word>" → level <N>
+BODY REGISTER (highest word in your rewrite):       "<word>" → level <N>
+ESCALATION DETECTED:  yes / no
+IF YES, JUSTIFIED BY:  literal quote / inferred-flag / NOT JUSTIFIED
+STATUS:               PASS / FAIL
+```
+
+FAIL if the body's register is higher than the source's AND the
+escalation is not justified by a literal quote or an inferred-flag.
+
+Common register-escalations to grep your draft for:
+- "gave up" (almost never in a source — the user probably just moved on)
+- "infinite loop" / "hangs forever" (source usually said "stuck" or "slow")
+- "broken" (source usually said "doesn't work as expected")
+- "blocked the workflow" (source usually said "had to find a workaround")
+- "lost trust" (source rarely measures trust)
+
+When in doubt, write down. The reader can infer urgency from the
+*concrete fact*. They don't need you to add the adjective.
+
+### Gate 3.9 — Signal-to-noise ratio
+
+Absolute length is a weak measure. A 1500-char body can be 100% signal;
+a 400-char body can be 90% noise. The real question is: *how much of
+this body is the irreducible fact, vs scaffolding, restatement, and
+hedge-padding?*
+
+**Protocol:**
+
+1. Write the **irreducible signal** as ONE sentence — the shortest
+   paraphrase that conveys the same information as your full body. Just
+   the brute facts the team needs.
+2. Count characters of: (a) your full body, (b) your signal sentence.
+3. Compute SNR = `len(signal) / len(body)`.
+
+```
+GATE 3.9 — Signal-to-noise
+SIGNAL SENTENCE (irreducible):   "<one sentence>"
+SIGNAL LENGTH:                   <N> chars
+BODY LENGTH:                     <N> chars
+SNR:                             <signal/body, as %>
+STATUS:                          PASS (SNR ≥ 33%) /
+                                 PASS-WITH-FLAG (25% ≤ SNR < 33%) /
+                                 FAIL (SNR < 25%)
+```
+
+- **SNR ≥ 33%** — tight. Ship it.
+- **25% ≤ SNR < 33%** — acceptable when the scaffolding is mostly
+  unavoidable (named user, environment, attribution honesty, one inferred
+  flag). Note the SNR explicitly and move on.
+- **SNR < 25%** — the body is doing too much *talking around* the fact.
+  Rewrite. Common culprits: (a) restating the title in the first
+  sentence, (b) paraphrasing the source rather than quoting it, (c)
+  parenthetical meta about what's missing from the source repeated in
+  multiple places, (d) hunch language sneaking back into the body.
+
+**Worked example (this is the rewrite the skill failed at):**
+
+> *"jmfouq (date unspecified — reporter dogfooding for an Actis use case)
+> reports that the lead filter panel shows Leadbay's standard fields and
+> CRM-synced custom fields side by side with similar naming conventions
+> and no visual marker telling them apart. Source describes this as
+> 'especially problematic' because 'it's unclear what data layer is
+> actually being queried'. Screenshot of the duplicated list is attached
+> to the original draft. The source records no specific filter pair, no
+> date, no user-encounter sequence (inferred encounter — confirm with
+> jmfouq…)."* — 680 chars.
+
+The irreducible signal sentence is: *"Custom fields and built-in monitor
+filters can share the same name but query different data."* — 95 chars.
+
+SNR = 95 / 680 = **14%**. FAIL.
+
+A passing rewrite hovers around 300 chars: signal + named user + one
+inferred-flag for the pain mechanic. ~30% SNR. Ship.
+
+### Gate 4 — Length and Title
+```
+GATE 4 — Brevity + problem-shaped title
+TITLE:          "<the title>" (<N> chars)
+TITLE-CHECK:    problem-shaped / solution-shaped / unclear
+BODY LENGTH:    <N> chars (cap: 1500)
+HEADER COUNT:   <N> (cap: 1)
+STATUS:         PASS / FAIL — [explain]
+```
+FAIL if: title > 90 chars.
+FAIL if: body > 1500 chars.
+FAIL if: more than 1 markdown header.
+FAIL if: title is solution-shaped (starts with verb like "Add",
+"Enable", "Allow", "Implement", or names a UI component to build).
+
+---
+
+## Protocol
+
+### Phase 1 — Listen, don't draft
+
+The reporter usually arrives with one of:
+- A user complaint they want to forward.
+- A bug they just hit themselves.
+- A feature wish from a customer call.
+- A Loom / screenshot / Slack thread.
+
+**Do NOT draft yet.** First decide whether this is a **bug** or a
+**feature / strategic note** — the questions differ.
+
+Then read what the reporter has and ask AT MOST three of the gate
+questions they haven't already answered. Use the AskUserQuestion format.
+
+**If BUG, examples of good questions:**
+- "Which user account hit this and when? I need an email or org name and
+  a rough timestamp — without those I can't file."
+- "What were they trying to do BEFORE they hit this? (Not the click —
+  the actual sales/CS goal.)"
+- "Why did this matter to them? Did they lose data, lose face in front
+  of their own customer, get blocked from finishing something? One
+  sentence."
+- "Is this on FR prod, US prod, staging, wow.leadbay.ai, or the mobile
+  app?"
+
+**If FEATURE / STRATEGIC NOTE, examples of good questions:**
+- "Who does this work today, and what do they do *right now* to get
+  through it without this feature? Walk me through one concrete recent
+  example."
+- "What part of that current workflow is genuinely costly — what slows
+  them down, what fails them, what step do they skip and regret?"
+- "Where is the evidence for this need coming from — a specific customer
+  call, your own dogfooding, a repeated escalation? Name the source."
+
+For feature mode, a generic persona ("field sales managers planning
+regional tours") is OK *as long as* the next two questions get
+answered. The persona alone is not enough; the persona + need is.
+
+Never ask "what's the solution" or "how should this be fixed".
+Never ask "what severity / priority". The team decides priority.
+
+### Phase 2 — Draft the body in ONE prose paragraph
+
+Goal: 600–900 chars. One paragraph. Plain sentences. No headers.
+
+Template (this is a SCAFFOLD, not a template the user fills in — you
+write it as natural prose using these elements in this order):
+
+> User `<email or name>` on `<date / context>` was trying to
+> `<goal in plain language>`. They expected `<expectation>` but
+> `<what actually happened>`. This `<concrete pain — lost time /
+> polluted data / blocked workflow / looked bad to their customer>`.
+> `<One optional sentence of evidence: file attached, screenshot,
+> Sentry link, account ID.>`
+
+Examples (from rewriting real issues):
+
+> *jean-marie+sider@leadbay.ai on 2026-05-27, preparing the Actis
+> Cold Call campaign, tried to drop three leads he'd added by mistake
+> before exporting. He clicked the red bin on each one, saw no
+> feedback, assumed they were gone, and exported. The CSV came back
+> with all three still in it — he sent it to the rep anyway and only
+> noticed at the call review. Repro file attached.*
+
+> *Actis sales rep using FR prod this morning typed "Limoges" into the
+> Discover filter and saw two identical "Limoges" entries (one is a
+> Commune, the other a Canton). They picked one at random, called
+> 40 leads, half of which were nowhere near where the rep was
+> driving that afternoon. The two entries are visually identical —
+> same label, same icon.*
+
+### Phase 3 — Title
+
+The title is what people see in lists. Two patterns work:
+
+- **For bugs:** `<who> <verb> <what happened>` — concrete user + concrete
+  failure.
+  - `Actis rep's campaign export silently dropped page-2 leads on 2026-05-20`
+  - `Cold Call Cup participant in Lyon got 0% import progress, gave up`
+
+- **For feature needs:** `<who> can't <do what> — <why it matters>`
+  - `Actis sales can't tell Leadbay filters from CRM custom fields when both share a name`
+  - `Enterprise admin can't restrict lead export — every rep can download the full contact DB`
+
+Avoid: `[For X]`, `[Bug]`, `[Feature]` prefixes unless your team
+convention requires them — they eat title characters that should be
+carrying signal. If you must use them, keep to ONE tag.
+
+### Phase 4 — Run the gates
+
+Emit all four GATE blocks. If any FAILs, fix and re-emit until all PASS.
+
+### Phase 5 — File
+
+```bash
+# Default: leadbay/product. Override with --repo if it's a backend/frontend bug.
+REPO="${REPO:-leadbay/product}"
+
+gh issue create \
+  --repo "$REPO" \
+  --title "$TITLE" \
+  --body "$BODY"
+```
+
+Print the issue URL. Done.
+
+### Phase 6 — Resist the urge to add more
+
+After filing, do NOT:
+- post a follow-up comment with the "proposed solution"
+- @-mention engineers with extra context
+- add a long thread on Slack reiterating
+
+The team reads the issue. If they need more, they'll ask. Restraint is
+the whole skill.
+
+---
+
+## Examples — slop in, signal out
+
+### Example A — Filter origin badge (`leadbay/product#3667`)
+
+**Slop (what was filed):**
+```
+Title: [For Actis] : Distinguish Leadbay Filters from CRM Custom Field Filters
+
+Summary: Users currently cannot easily tell whether a filter in the lead
+filter panel comes from Leadbay's standard fields or from custom fields
+synced from their CRM. This ambiguity is especially problematic because
+both sources use similar naming conventions, making it unclear what data
+layer is actually being queried.
+
+Proposed Solution: Add a small origin badge (e.g. Leadbay or CRM) next to
+each filter label in the filter panel. The badge should be visually
+distinct but unobtrusive — a subtle pill/chip styled consistently with
+the existing design system.
+```
+**Sins:** 1 (proposed solution section), 2 (template wall), 5
+(solution-shaped title), Iron Law 1 + 3.
+
+**Signal (rewritten):**
+```
+Title: Actis sales can't tell Leadbay filters from CRM custom fields when both share a name
+
+Body: Actis rep (account TBC, surfaced by JM during the 2026-05-27 demo
+prep) was filtering Monitor leads by what they thought was Leadbay's
+"Industry" field, but a CRM-synced custom field of the same name was
+also in the list. They picked one at random, got a result set that
+didn't match their CRM segmentation, lost ~10 min trying to reconcile
+why the numbers were off, then escalated to JM. They have no visual
+signal in the panel telling them which side of the data pipeline a
+filter queries.
+```
+Title: 84 chars. Body: 590 chars. Problem-shaped. Zero forbidden tokens.
+
+### Example B — FullEnRich phone match rates (`leadbay/product#3641`)
+
+**Slop (what was filed):** 1696 chars, ending in
+> *"Potential implication: When phone enrichment fails from email,
+> Leadbay could automatically attempt a secondary enrichment step using
+> the LinkedIn profile URL if available. More generally, enrichment
+> should probably be designed as a multi-step orchestration pipeline
+> rather than a single-shot query."*
+
+**Sins:** 1, 4 (textbook "Potential implication / More generally" tail),
+Iron Law 1.
+
+**Signal (rewritten):**
+```
+Title: JM dogfooding: 3 Actis contacts returned emails but no phones from native enrichment
+
+Body: jean-marie@leadbay.ai on 2026-05-20, prepping the Actis Cold Call
+demo, ran native enrichment on 3 contacts at the same company. Got
+emails for all 3, phones for 0. As a sanity check he took one of the
+emails to the FullEnRich console — also no phone. Then he retried the
+same contact in FullEnRich using the LinkedIn URL instead of email —
+got the mobile back. Suggests our query strategy is leaving phones on
+the table for contacts where we already have a LinkedIn URL. Repro
+contacts available on request; screenshots attached.
+```
+
+The "implication" / "more generally" paragraph is removed. The
+engineering team is fully equipped to decide whether multi-step
+orchestration is the right answer.
+
+### Example C — MCP User Stories Wow Effect (`leadbay/product#3630`)
+
+**Slop:** 6255 chars, four "user stories", all starting "I am a
+regional sales manager…" and ending in bulleted "The MCP should…" lists.
+
+**Sins:** 1, 2, 3, 7, Iron Laws 1+2+3+4.
+
+**Signal (rewritten):** This is NOT one issue. Split into four short
+issues, each grounded in the real Actis conversation that produced
+it. Title each one with the customer's specific frustration, not the
+imagined MCP feature.
+
+If you cannot tie a user story to a real Actis conversation with a
+date and a name, do not file it at all. It is a marketing brainstorm,
+not a product issue.
+
+### Example D — Cold Call Cup follow-up (`leadbay/product#3461`,
+comment by `zoebouchez`)
+
+**Slop:** 6000 chars, P1/P2/P3 priority sections, "Pre-call checklist",
+"Lessons from Better Cold Call", multiple "Real-time leaderboard
+visible during the session" feature specs.
+
+**Sins:** 1, 2, 5, 7, Iron Laws 1+3+4. CTO replied
+publicly: *"This issue format is not useful because it jumps to
+solutions without clearly defining the actual problems."*
+
+**Signal (rewritten):** Three separate issues, each tied to one Lyon
+event observation:
+1. "Lyon Cold Call participants saw 5-row imports stuck at 0% — gave up before first call"
+2. "Lyon participants couldn't tell 'Toujours en cours' from 'En cours' on Activate — asked organizer mid-session"
+3. "Lyon participants didn't see the Lens region constraint reflected in their initial Discover view (Loire-Atlantique in prompt → showed all of France)"
+
+Each one ≤ 900 chars, each one names the event + observer + concrete
+participant moment. No P1/P2/P3. No "feature list for Milan". The team
+will prioritize.
+
+---
+
+## What to do when the reporter pushes back
+
+Common pushbacks and how to hold the line:
+
+> *"But I already wrote the solution, I just want to save the engineer's time."*
+
+You are not saving time, you are anchoring the engineer on the wrong
+problem. Cut the solution. If you have a strong hunch, keep it as
+ONE sentence labelled `Reporter hunch:` at the bottom. The team will
+read it last.
+
+> *"This is too short, it doesn't sound professional."*
+
+The CTO is dyslexic. Long, structured issues do not get read. Short and
+sharp IS professional here. Compare to other issues that landed — the
+ones that got triaged within a day are the short ones.
+
+> *"Claude wrote me a really good draft, can we just clean it up?"*
+
+Cleanup of an AI draft is harder than rewriting from notes. Throw the
+draft away, talk through the four Iron-Law questions, and write fresh.
+
+> *"I don't know which user, the customer just complained on a call."*
+
+Then say that: "Customer call on 2026-05-XX, name on file with $REPORTER,
+not yet attributed to a specific seat." That is honest and filable.
+Naming "a user" is not.
+
+---
+
+## Output format the reporter will see
+
+After Phase 4 (gates pass), output exactly:
+
+```
+✅ Ready to file.
+
+REPO:   leadbay/product
+TITLE:  <title>
+BODY:
+<body>
+
+GATE 1 — Concrete user + concrete moment: PASS
+GATE 2 — Workflow + expectation + reality + pain: PASS
+GATE 2.5 — Sourced, not invented: PASS (N inferred claims, all flagged)
+GATE 3 — No proposed solutions: PASS (0 forbidden tokens)
+GATE 3.5 — Checklist (Q1..Q7 forced yes/no): PASS (rewrote N times)
+GATE 3.7 — Severity-honest framing: PASS (no register escalation, or justified)
+GATE 3.9 — Signal-to-noise ratio: PASS (SNR=<N>%; signal="<sentence>")
+GATE 4 — Brevity + problem-shaped title: PASS (title=<N>c, body=<N>c)
+
+File now? (y/n) — or paste edits to refine.
+```
+
+On `y`, run the `gh issue create` and print the URL.
+
+---
+
+## Self-check before you exit the skill
+
+- [ ] Did I name a concrete user with an email/account/person?
+- [ ] Did I name a concrete moment (date / event)?
+- [ ] Did I answer all four questions (goal, expected, actual, pain)?
+- [ ] Did every non-trivial claim trace back to the source — or get
+      explicitly flagged `(inferred — confirm with reporter)`?
+- [ ] Did the draft pass the literal grep for forbidden tokens?
+- [ ] Did the draft pass the Gate 3.5 Checklist with literal YES/NO answers
+      (Q1=NO, Q2=YES, Q3=NO, Q4=YES, Q5=YES, Q6=NO, Q7=YES, Q8=NO, Q9=YES)?
+- [ ] Is the title problem-shaped, not solution-shaped, ≤ 90 chars?
+- [ ] Is the body ≤ 1500 chars, ≤ 1 header?
+- [ ] If the reporter had multiple complaints, did I split into multiple issues?
+- [ ] Did I refuse to add a "Proposed Solution" / "More generally" tail?
+
+If you can answer yes to all ten, file it. Otherwise loop.
+
+---
+
+## Why this skill exists
+
+`leadbay/product` is filling up with AI-generated drafts that look
+thorough but bury the signal under engineering noise. Two recent
+public examples the CTO called out:
+
+- `#3667` — proposed an "origin badge" without ever describing the
+  user workflow that produced the confusion.
+- `#3461 comment 4303208092` — six thousand characters of P1/P2/P3
+  priorities and "feature list for Milan" with no clear problem
+  statements. The CTO replied: *"this issue format is not useful
+  because it jumps to solutions without clearly defining the actual
+  problems."*
+
+This skill exists so that next time a teammate is about to paste a
+Claude draft into a GitHub issue, the draft gets rewritten into
+something the CTO and engineers will actually read and act on.
+
+The cost is 3-5 minutes of structured questions. The benefit is the
+issue actually getting solved against the right problem.

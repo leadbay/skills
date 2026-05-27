@@ -30,6 +30,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 | `/relentless` | Overnight autonomous build-deploy-eval-iterate loop on a live system |
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence retro |
+| `/report-issue` | File a GitHub issue the CTO will actually read (built for non-tech team) |
 
 ## Skill routing
 
@@ -45,6 +46,8 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 - "diagnose this", "root cause" → `/diagnose`
 - "relentless mode", "overnight", "iterate until perfect", "I'll be away — keep going",
   "make it bulletproof", "don't stop until it's great" → `/relentless`
+- "report this bug", "file an issue", "write a github issue", "open an issue", "[For Actis]",
+  "[Bug]", "[Feature]", "rapporter ce bug" → `/report-issue` (BEFORE drafting any GitHub issue)
 
 ### Standing instructions (always-on, after install)
 
