@@ -714,42 +714,45 @@ After the Final Run Summary, check every result written to `.context/evals/`:
 
 ```bash
 LATEST=$(ls -t "$REPO_ROOT/.context/evals"/*.json | head -1)
-jq '[.entries[] | select(.evidence.judge_scores.mission_match < 5 and .passed == true)]' "$LATEST"
+jq '[.entries[] | select((.evidence.judge_scores | (.mission_match < 5 or .instruction_adherence < 5 or .no_fabrication < 5 or .tool_selection_fit < 5)) and .passed == true)]' "$LATEST"
 ```
 
 Three cases:
 
-**Case 1 — all MM == 5 (or all passed == false due to skill error):**
+**Case 1 — all scores == 5 on all dimensions (MM, IA, NF, TSF) — OR all passed == false due to skill error:**
 Print:
 ```
-✓ All workflows at MM:5. No self-improvement needed.
+✓ All workflows at 5/5 across all dimensions. No self-improvement needed.
 ```
 Stop. Do not invoke relentless.
 
-**Case 2 — one or more workflows have MM < 5 AND passed == true (real product signal, not skill error):**
+**Case 2 — one or more workflows have ANY score < 5 (MM, IA, NF, or TSF) AND passed == true (real product signal, not skill error):**
 
 For each such workflow, construct the relentless mission string and invoke the `relentless` skill.
 
 Build the mission string from the eval JSON:
 - `workflow_name` — from the entry name (e.g. `leadbay_followup_check_in/workflow-2b`)
 - `prompt_name` — from `evidence.session.prompt_name`
-- `current_mm` — from `evidence.judge_scores.mission_match`
-- `failing_criteria` — from `[evidence.per_criterion[] | select(.pass == false) | .criterion]`
+- `current_scores` — MM/IA/NF/TSF from `evidence.judge_scores` (report all four, highlight any < 5)
+- `failing_criteria` — from `[evidence.per_criterion[] | select(.pass == false) | .criterion]` (may be empty if only scores < 5 but all criteria passed — still worth improving)
 - `fix_target` — `packages/promptforge/prompts/<prompt_name>.md.tmpl` (if prompt_name is set and not `~`); otherwise `packages/promptforge/tool-descriptions/` (tool descriptions need investigation)
 - `passing_workflows` — all other workflow IDs that currently pass (for regression guard)
 
 Announce before invoking:
 ```
-MM:[N]/5 on [workflow_name] — launching self-improvement loop.
-Failing criteria:
+Scores below 5/5 on [workflow_name]: MM:[N] IA:[N] NF:[N] TSF:[N] — launching self-improvement loop.
+Failing criteria (if any):
   [✗] "criterion text"
+Low scores to fix: [list dimensions < 5 and judge reasoning for each]
 Fix target: packages/promptforge/prompts/<prompt_name>.md.tmpl
 Regression guard: workflows [N,N,...]
 ```
 
 Then invoke the `relentless` skill with:
 ```
---feature "Improve [workflow_name] (prompt: [prompt_name]) from MM:[current_mm] to MM:5.
+--feature "Improve [workflow_name] (prompt: [prompt_name]) to 5/5 on all dimensions.
+Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
+Judge reasoning on low scores: [paste judge reasoning for dimensions < 5]
 
 Failing criteria:
 [list each failing criterion, one per line with ✗ prefix]
@@ -761,13 +764,13 @@ Fix target: [fix_target]
 Test harness: invoke the /eval skill with '--workflow [N]' after each build.
 Read the latest result:
   LATEST=$(ls -t .context/evals/*.json | head -1)
-  jq '.entries[0].evidence.judge_scores.mission_match' $LATEST   # target: 5
+  jq '.entries[0].evidence.judge_scores' $LATEST          # target: all 5
   jq '[.entries[0].evidence.per_criterion[] | select(.pass==false)]' $LATEST  # target: []
 
-Regression guard: invoke /eval skill with '--workflow [passing_workflow_ids]' once MM:5 is reached.
+Regression guard: invoke /eval skill with '--workflow [passing_workflow_ids]' once all scores reach 5.
 All must still pass (passed:true). If any regress, revert the last template edit and try a different approach.
 
-Exit condition: MM:5 stable across 2 consecutive /eval runs AND a fresh-context second-opinion judge
+Exit condition: all dimensions 5/5 stable across 2 consecutive /eval runs AND a fresh-context second-opinion judge
 agrees the template diff is a genuine improvement (not a narrow hack).
 
 Do NOT modify .generated.ts files directly — always edit .md.tmpl and rebuild."
