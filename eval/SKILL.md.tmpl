@@ -748,33 +748,22 @@ Fix target: packages/promptforge/prompts/<prompt_name>.md.tmpl
 Regression guard: workflows [N,N,...]
 ```
 
-Then invoke the `relentless` skill with:
-```
---feature "Improve [workflow_name] (prompt: [prompt_name]) to 5/5 on all dimensions.
-Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
-Judge reasoning on low scores: [paste judge reasoning for dimensions < 5]
+**DO NOT use the Skill tool to invoke relentless.** Calling `Skill({ skill: 'relentless' })` only loads the skill content — it does not execute it. You must execute relentless inline by running its phases directly in this same conversation turn.
 
-Failing criteria:
-[list each failing criterion, one per line with ✗ prefix]
+Execute the relentless loop now with this seeded mission:
 
-Fix target: [fix_target]
-— Edit the .md.tmpl source file, NOT the .generated.ts files.
-— Run pnpm prompts:build from repo root after every edit (must exit 0).
+**Mission:** Improve [workflow_name] (prompt: [prompt_name]) to 5/5 on all dimensions.
+- Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
+- Judge reasoning on low scores: [paste judge reasoning for dimensions < 5]
+- Failing criteria: [list each with ✗ prefix, or "none — quality-only improvement"]
+- Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts
+- Build gate: `pnpm prompts:build` from repo root after every edit (must exit 0)
+- Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build
+- Read result: `jq '.entries[0].evidence.judge_scores' $(ls -t .context/evals/*.json | head -1)` — target: all 5
+- Regression guard: run `/eval --workflow [passing_workflow_ids]` once all scores reach 5
+- Exit: all 5/5 stable across 2 consecutive eval runs AND fresh-context second-opinion judge agrees improvement is real
 
-Test harness: invoke the /eval skill with '--workflow [N]' after each build.
-Read the latest result:
-  LATEST=$(ls -t .context/evals/*.json | head -1)
-  jq '.entries[0].evidence.judge_scores' $LATEST          # target: all 5
-  jq '[.entries[0].evidence.per_criterion[] | select(.pass==false)]' $LATEST  # target: []
-
-Regression guard: invoke /eval skill with '--workflow [passing_workflow_ids]' once all scores reach 5.
-All must still pass (passed:true). If any regress, revert the last template edit and try a different approach.
-
-Exit condition: all dimensions 5/5 stable across 2 consecutive /eval runs AND a fresh-context second-opinion judge
-agrees the template diff is a genuine improvement (not a narrow hack).
-
-Do NOT modify .generated.ts files directly — always edit .md.tmpl and rebuild."
-```
+Execute relentless Phase 0 immediately — set up the artifact spine, write 00-contract.md, then proceed through all phases without stopping. Iron Law #7 applies: do not end the turn until Phase 5 verdict is PROCEED TO REPORT.
 
 **If multiple workflows need improvement:** handle them sequentially. Finish one (MM:5 confirmed) before starting the next.
 
