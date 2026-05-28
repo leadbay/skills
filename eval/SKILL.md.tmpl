@@ -116,10 +116,10 @@ If Claude Code is prompting for approval on each action, tell the user:
 ```
 PHASE 0 GATE
 ════════════════════════════════
-[x/  ] REPO_ROOT resolved: ______
-[x/  ] WORKFLOWS.md: FOUND
-[x/  ] LEADBAY_TOKEN: present (N chars)
-[x/  ] Workflows to run: [N,N,...] or ALL
+[✓/✗] REPO_ROOT resolved: ______
+[✓/✗] WORKFLOWS.md: FOUND
+[✓/✗] LEADBAY_TOKEN: present (N chars)
+[✓/✗] Workflows to run: [N,N,...] or ALL
 ════════════════════════════════
 GATE: PASS / FAIL — [explain any failures]
 ```
@@ -362,11 +362,11 @@ Return a structured JSON summary:
 ```
 PHASE 3 GATE — Session completed: workflow #N
 ════════════════════════════════
-[x/  ] Session exited cleanly (EXIT=0 or graceful stop)
-[x/  ] skill_execution_error: null
-[x/  ] tool_calls extracted (leadbay_ only): N calls
-[x/  ] agent_prose: N segments
-[x/  ] tokens captured: N in / N cache / N out
+[✓/✗] Session exited cleanly (EXIT=0 or graceful stop)
+[✓/✗] skill_execution_error: null
+[✓/✗] tool_calls extracted (leadbay_ only): N calls
+[✓/✗] agent_prose: N segments
+[✓/✗] tokens captured: N in / N cache / N out
 ════════════════════════════════
 GATE: PASS / FAIL — [if FAIL: state whether this is a skill-execution-error or a run to be judged]
 ```
