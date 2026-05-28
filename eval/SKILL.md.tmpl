@@ -748,9 +748,9 @@ Fix target: packages/promptforge/prompts/<prompt_name>.md.tmpl
 Regression guard: workflows [N,N,...]
 ```
 
-**DO NOT use the Skill tool to invoke relentless.** Calling `Skill({ skill: 'relentless' })` only loads the skill content — it does not execute it. You must execute relentless inline by running its phases directly in this same conversation turn.
+Call `Skill({ skill: 'relentless' })` to load the relentless instructions. **Then immediately — in the same conversation turn, without stopping — execute Phase 0** of those instructions. Do not describe what you are about to do. Do not summarise. Just start running Phase 0 (artifact spine setup, 00-contract.md) right after the Skill() call returns.
 
-Execute the relentless loop now with this seeded mission:
+The seeded mission to pass to relentless:
 
 **Mission:** Improve [workflow_name] (prompt: [prompt_name]) to 5/5 on all dimensions.
 - Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
