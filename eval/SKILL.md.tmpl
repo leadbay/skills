@@ -17,7 +17,7 @@ description: |
     /eval --workflow 1 --model claude-opus-4-7
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.2.0
+version: 1.3.0
 allowed-tools:
   - Bash
   - Read
@@ -400,7 +400,7 @@ Each entry in `entries` follows the `EvalEntry` schema:
 
 ---
 
-## Phase 7 — Print scorecard
+## Phase 7 — Print scorecard and generate HTML dashboard
 
 Print per-workflow scorecard:
 
@@ -438,8 +438,36 @@ Then print the summary table:
   Judge tokens:   N in / N out
   ─────────────────────────────────────────────────
   Grand total:    N in (incl. cache) / N out
+```
 
-Dashboard: pnpm --filter @leadbay/mcp run eval:view
+Then generate the HTML dashboard by writing and running a Python script.
+Use the Write tool to write the script to `$EVALS_DIR/gen-dashboard.py`, then run it with `python3`.
+
+The Python script must:
+1. Glob all `*.json` files from the evals dir (passed as `sys.argv[1]`)
+2. Parse each file, collect all `entry` objects from `data["entries"]`
+3. Sort entries newest-first by `name` (ISO timestamp prefix)
+4. Build a complete self-contained HTML string with:
+   - Dark theme: `background:#0d1117`, `color:#c9d1d9`, monospace font
+   - Page header: big pass-rate %, pass count, fail count, total
+   - CSS grid of cards — one per entry:
+     - Green left border if `passed`, red if not
+     - Name + PASS/FAIL badge
+     - Meta row: duration_ms formatted, turns_used, tool_call_count, token counts, model
+     - Score bars for `judge_scores.mission_match/instruction_adherence/no_fabrication/tool_selection_fit` (1–5, colored: 5=`#22c55e` 4=`#84cc16` 3=`#eab308` 2=`#f97316` 1=`#ef4444`)
+     - Invariants list (`evidence.invariants`) — ✓/✗ per item
+     - Per-criterion list (`evidence.per_criterion`) — ✓/✗ + reasoning
+     - Tool calls list (`evidence.tool_calls`)
+     - Collapsible judge reasoning (`<details><summary>Judge reasoning</summary>`)
+   - All entry data embedded as `const entries = [...]` JSON literal in a `<script>` tag
+   - Pure vanilla JS rendering: `document.getElementById('cards').innerHTML = entries.map(renderCard).join('')`
+5. Write HTML to `sys.argv[2]` (the dashboard path)
+6. Print `file://` + the dashboard path
+
+```bash
+DASHBOARD="$EVALS_DIR/eval-report.html"
+python3 "$EVALS_DIR/gen-dashboard.py" "$EVALS_DIR" "$DASHBOARD"
+echo "Dashboard: file://$DASHBOARD"
 ```
 
 ---
@@ -579,4 +607,4 @@ Print the PR URL. Then print:
 2. **Filter tool calls.** Only count tool calls whose name starts with `leadbay_`. ToolSearch, WebFetch, Bash etc. from leaked superpowers are noise — exclude them from all invariant checks and the judge prompt.
 3. **Judge is always a fresh-context subagent.** Never judge in the same context as the session runner — the judge must be blind to the session's "feel" and reason only from the evidence passed to it.
 4. **WORKFLOWS.md is the only contract source.** Never hardcode workflow metadata in this skill. Always re-read WORKFLOWS.md for every run.
-5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so `pnpm eval:report` can render it. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
+5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so Phase 7 can render the dashboard. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
