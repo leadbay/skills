@@ -17,7 +17,7 @@ description: |
     /eval --workflow 1 --model claude-opus-4-7
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.3.0
+version: 1.3.1
 allowed-tools:
   - Bash
   - Read
@@ -69,8 +69,8 @@ If Claude Code is prompting for approval on each action, tell the user:
 > `claude --dangerously-skip-permissions`
 > Then invoke `/eval` again — no further approvals will be needed.
 
-All `claude -p` subprocess calls in this skill already include `--dangerously-skip-permissions`
-so session and judge subagents never block waiting for input.
+Session subagents run via the TypeScript `live-session-runner.ts` (invoked with `tsx`) which
+handles MCP config, hook isolation, and stream parsing. No `claude -p` subprocess is needed.
 
 ---
 
@@ -149,22 +149,29 @@ For each workflow, spawn a **session subagent** via the Agent tool with this pro
 **SESSION SUBAGENT PROMPT:**
 
 You are running a live Leadbay MCP eval session. Your only job is to:
-1. Write the MCP config and settings files to a temp directory
+1. Set up an isolated HOME directory so the pixel-agents hook cannot inject superpowers context
 2. Run `claude -p` with the correct flags against the real Leadbay API
 3. Capture the full stdout (stream-json events) and return structured evidence
+
+**Key flags:**
+- `--system-prompt` is **always required** — it overrides the project's CLAUDE.md which restricts
+  Claude to "software engineering tasks only". For workflows with a dedicated prompt (`prompt_name`
+  from Phase 2), pass that prompt body. For workflows where `prompt_name` is null/`~`, pass a
+  minimal fallback: `"You are a Leadbay sales assistant. Use the available MCP tools to help."`.
+  Without this, Claude refuses Leadbay tool calls as out-of-scope.
+- `--input-format stream-json` with the message piped to stdin gives the MCP server time to
+  finish its handshake before the first turn runs.
 
 **Setup:**
 
 ```bash
-TMPDIR=$(mktemp -d /tmp/leadbay-eval-XXXXXX)
-echo "TMPDIR: $TMPDIR"
+REPO_ROOT=REPO_ROOT_PLACEHOLDER
+source "$REPO_ROOT/.env.eval"
 
-# Find tsx binary
+TMPDIR=$(mktemp -d /tmp/lb-eval-XXXXXX)
 TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
-echo "TSX: $TSX"
-
 LIVE_SERVER="$REPO_ROOT/packages/mcp/test/eval/helpers/live-mcp-server.ts"
-ls "$LIVE_SERVER" && echo "SERVER: FOUND" || echo "SERVER: NOT FOUND"
+echo "TSX: $TSX"
 ```
 
 Write MCP config:
@@ -183,31 +190,38 @@ cat > "$TMPDIR/mcp-config.json" << MCPEOF
   }
 }
 MCPEOF
-echo "MCP config written"
 ```
 
-Write settings (suppress all hooks so superpowers doesn't inject skill-check directives):
+Write settings (suppresses hook tools from leaking into allowed set):
 ```bash
-cat > "$TMPDIR/settings.json" << SETEOF
+cat > "$TMPDIR/settings.json" << 'SETEOF'
 {
-  "hooks": {
-    "PreToolUse": [],
-    "PostToolUse": [],
-    "UserPromptSubmit": [],
-    "SessionStart": [],
-    "Stop": []
-  },
+  "hooks": { "PreToolUse": [], "PostToolUse": [], "UserPromptSubmit": [], "SessionStart": [], "Stop": [] },
   "enabledPlugins": {}
 }
 SETEOF
-echo "Settings written"
 ```
 
-Run the session and capture output:
+Determine the effective system prompt (ALWAYS pass one — never omit):
+```bash
+# If SYSTEM_PROMPT was loaded in Phase 2 and is non-empty, use it.
+# Otherwise use a minimal fallback that allows Leadbay tool calls.
+EFFECTIVE_SYSTEM_PROMPT="${SYSTEM_PROMPT:-You are a Leadbay sales assistant. Use the available MCP tools to help the user.}"
+```
+
+Run the session:
 ```bash
 SESSION_RAW="$TMPDIR/session.raw.jsonl"
-claude -p \
-  --input-format text \
+START_MS=$(date +%s%3N)
+
+USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
+  "$(echo "$SCENARIO_PROMPT" | sed 's/"/\\"/g')")
+
+# 10s delay lets the tsx MCP server complete its stdio handshake before the first turn.
+# Without this, the session starts with status:"pending" and tool calls fail.
+# 5s is insufficient when parent-session hooks (pixel-agents, orca) add startup latency.
+{ sleep 10; echo "$USER_MSG"; } | claude -p \
+  --input-format stream-json \
   --output-format stream-json \
   --verbose \
   --mcp-config "$TMPDIR/mcp-config.json" \
@@ -217,27 +231,31 @@ claude -p \
   --disable-slash-commands \
   --allowedTools "mcp__leadbay-live__*" \
   --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Glob,Grep,LS,Skill,LSP,Agent" \
-  ${SYSTEM_PROMPT:+--system-prompt "$SYSTEM_PROMPT"} \
+  --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
   ${MODEL:+--model "$MODEL"} \
-  "$SCENARIO_PROMPT" > "$SESSION_RAW" 2>"$TMPDIR/stderr.txt"
+  > "$SESSION_RAW" 2>"$TMPDIR/stderr.txt"
 
-echo "EXIT: $?"
+EXIT=$?
+END_MS=$(date +%s%3N)
+DURATION_MS=$((END_MS - START_MS))
+echo "EXIT: $EXIT  DURATION_MS: $DURATION_MS"
 echo "RAW_LINES: $(wc -l < "$SESSION_RAW")"
+echo "=== STDERR ==="
+head -20 "$TMPDIR/stderr.txt"
 echo "=== RAW JSONL ==="
 cat "$SESSION_RAW"
 echo "=== END RAW JSONL ==="
-cat "$TMPDIR/stderr.txt" | head -20
 rm -rf "$TMPDIR"
 ```
 
-From the stream-json output, extract:
-- **tool_calls**: lines where `type=assistant` containing `tool_use` content blocks → extract `name` + `input`
-- **tool_results**: lines where `type=tool_result` → extract `content` (API responses)
-- **agent_prose**: text blocks from `type=assistant` that are NOT tool calls
-- **final_message**: the `result` field from the `type=result` line
-- **tokens**: `usage` from the `type=result` line (`input_tokens`, `cache_read_input_tokens`, `output_tokens`)
+Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT` value. Set `SCENARIO_PROMPT`,
+`SYSTEM_PROMPT`, and `MODEL` from the workflow contract parsed in Phase 1/2.
 
-Filter tool calls to only those whose `name` starts with `leadbay_`.
+From the stream-json output, extract:
+- **tool_calls**: lines where `type=assistant` with `tool_use` content blocks → `name` + `input`. Only names starting with `leadbay_`.
+- **agent_prose**: text blocks from `type=assistant` that are NOT tool_use
+- **final_message**: `result` field from the `type=result` line
+- **tokens**: `usage` from the `type=result` line (`input_tokens`, `cache_read_input_tokens`, `output_tokens`)
 
 Return a structured JSON summary:
 ```json
@@ -245,7 +263,8 @@ Return a structured JSON summary:
   "tool_calls": [{"turn": 1, "name": "leadbay_xxx", "input": {}, "output_preview": "..."}],
   "agent_prose": ["text between tool calls"],
   "final_message": "...",
-  "tokens": {"in": 0, "cache": 0, "out": 0}
+  "tokens": {"in": 0, "cache": 0, "out": 0},
+  "duration_ms": 0
 }
 ```
 
@@ -443,26 +462,55 @@ Then print the summary table:
 Then generate the HTML dashboard by writing and running a Python script.
 Use the Write tool to write the script to `$EVALS_DIR/gen-dashboard.py`, then run it with `python3`.
 
-The Python script must:
-1. Glob all `*.json` files from the evals dir (passed as `sys.argv[1]`)
-2. Parse each file, collect all `entry` objects from `data["entries"]`
-3. Sort entries newest-first by `name` (ISO timestamp prefix)
-4. Build a complete self-contained HTML string with:
-   - Dark theme: `background:#0d1117`, `color:#c9d1d9`, monospace font
-   - Page header: big pass-rate %, pass count, fail count, total
-   - CSS grid of cards — one per entry:
-     - Green left border if `passed`, red if not
-     - Name + PASS/FAIL badge
-     - Meta row: duration_ms formatted, turns_used, tool_call_count, token counts, model
-     - Score bars for `judge_scores.mission_match/instruction_adherence/no_fabrication/tool_selection_fit` (1–5, colored: 5=`#22c55e` 4=`#84cc16` 3=`#eab308` 2=`#f97316` 1=`#ef4444`)
-     - Invariants list (`evidence.invariants`) — ✓/✗ per item
-     - Per-criterion list (`evidence.per_criterion`) — ✓/✗ + reasoning
-     - Tool calls list (`evidence.tool_calls`)
-     - Collapsible judge reasoning (`<details><summary>Judge reasoning</summary>`)
-   - All entry data embedded as `const entries = [...]` JSON literal in a `<script>` tag
-   - Pure vanilla JS rendering: `document.getElementById('cards').innerHTML = entries.map(renderCard).join('')`
-5. Write HTML to `sys.argv[2]` (the dashboard path)
-6. Print `file://` + the dashboard path
+The Python script must produce a **self-contained single-file HTML dashboard** matching this exact design:
+
+### Section 1 — Header
+- Title: `⚡ Leadbay Eval Dashboard` (monospace, bold)
+- Subtitle: `N runs · M workflows · last updated <timestamp>`
+
+### Section 2 — Stat tiles (horizontal row)
+Five dark tiles with label + big number:
+`TOTAL` (white), `PASS` (green `#22c55e`), `FAIL` (red `#ef4444`), `PASS RATE %` (green/red based on ≥50%), `AVG MM` (score color)
+
+### Section 3 — Pass/Fail trend bar chart
+One vertical bar per entry, oldest→newest left to right.
+- Bar height proportional to avg judge score (MM+IA+NF+TSF)/4, scaled 0–5 → 0–60px
+- Bar color: `#22c55e` if passed, `#ef4444` if failed
+- Bars are thin (4px wide, 2px gap), packed tightly in a flex row
+- Label above chart: `Pass/Fail trend (all runs, oldest → newest)`
+
+### Section 4 — Filter bar
+- Buttons: `All` | `Pass only` | `Fail only` (toggle active state with blue border)
+- Workflow chip filters: one pill per unique workflow name (extracted from entry `name` before `/workflow-N`), showing count in parens. Clicking filters list to that workflow only.
+- Search input (right-aligned): filters by name or run ID substring
+
+### Section 5 — Entry list (scrollable)
+Each entry is a **compact single-line row** (not a card) that expands on click:
+
+**Collapsed row:**
+```
+[PASS|FAIL badge]  leadbay_daily_check_in/workflow-1    MM:5  IA:5  NF:5  TSF:5  ▶
+                   5/27/2026, 4:25:14 PM · 130.0s · 9 turns
+```
+- Badge: pill, green bg + black text for PASS, red bg + white text for FAIL
+- Name in monospace, timestamp + duration + turns in muted gray below
+- Score pills right-aligned: `MM:N` colored by score (5=green 4=lime 3=yellow 2=orange 1=red)
+- `▶` chevron right edge, rotates to `▼` when expanded
+
+**Expanded section (click to toggle):**
+- Scenario prompt used
+- Invariants list: `✓`/`✗` per item with reason
+- Per-criterion list: `✓`/`✗` + reasoning indented
+- Tool calls: comma-separated names
+- Judge reasoning: full text
+- Token counts
+
+### Implementation notes
+- All data embedded as `const ENTRIES = [...];` JSON in a `<script>` tag
+- Pure vanilla JS — no external dependencies
+- Dark theme throughout: bg `#0d1117`, surface `#161b22`, border `#30363d`, text `#c9d1d9`, muted `#8b949e`
+- Score color function: `{5:"#22c55e", 4:"#84cc16", 3:"#eab308", 2:"#f97316", 1:"#ef4444"}`
+- Entry `name` format is `prompt_name/workflow-N` — parse workflow label as everything before `/workflow`
 
 ```bash
 DASHBOARD="$EVALS_DIR/eval-report.html"
