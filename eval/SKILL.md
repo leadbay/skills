@@ -16,9 +16,10 @@ description: |
     /eval --workflow 1,3,5
     /eval              (runs all workflows)
     /eval --workflow 1 --model claude-opus-4-7
+    /eval --workflow 9 --improve   (eval + auto self-improve if MM < 5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.4.0
+version: 1.5.0
 allowed-tools:
   - Bash
   - Read
@@ -129,8 +130,9 @@ echo "REPO_ROOT: $REPO_ROOT"
 ls "$REPO_ROOT/WORKFLOWS.md" 2>/dev/null && echo "WORKFLOWS_MD: FOUND" || echo "WORKFLOWS_MD: NOT FOUND"
 ```
 
-Parse the user message for `--workflow N` (comma-separated) and `--model M`.
+Parse the user message for `--workflow N` (comma-separated), `--model M`, and `--improve` flag.
 If no `--workflow` flag, run all workflows found in WORKFLOWS.md.
+If `--improve` is present, set `IMPROVE_MODE=true` — Phase 8 will auto-invoke `/relentless` for any workflow with MM < 5.
 
 ```bash
 # Load .env.eval credentials
@@ -154,10 +156,10 @@ If Claude Code is prompting for approval on each action, tell the user:
 ```
 PHASE 0 GATE
 ════════════════════════════════
-[x/  ] REPO_ROOT resolved: ______
-[x/  ] WORKFLOWS.md: FOUND
-[x/  ] LEADBAY_TOKEN: present (N chars)
-[x/  ] Workflows to run: [N,N,...] or ALL
+[✓/✗] REPO_ROOT resolved: ______
+[✓/✗] WORKFLOWS.md: FOUND
+[✓/✗] LEADBAY_TOKEN: present (N chars)
+[✓/✗] Workflows to run: [N,N,...] or ALL
 ════════════════════════════════
 GATE: PASS / FAIL — [explain any failures]
 ```
@@ -400,11 +402,11 @@ Return a structured JSON summary:
 ```
 PHASE 3 GATE — Session completed: workflow #N
 ════════════════════════════════
-[x/  ] Session exited cleanly (EXIT=0 or graceful stop)
-[x/  ] skill_execution_error: null
-[x/  ] tool_calls extracted (leadbay_ only): N calls
-[x/  ] agent_prose: N segments
-[x/  ] tokens captured: N in / N cache / N out
+[✓/✗] Session exited cleanly (EXIT=0 or graceful stop)
+[✓/✗] skill_execution_error: null
+[✓/✗] tool_calls extracted (leadbay_ only): N calls
+[✓/✗] agent_prose: N segments
+[✓/✗] tokens captured: N in / N cache / N out
 ════════════════════════════════
 GATE: PASS / FAIL — [if FAIL: state whether this is a skill-execution-error or a run to be judged]
 ```
@@ -739,6 +741,88 @@ Dashboard: file://$DASHBOARD
 ```
 
 **Skill errors are NOT self-corrected during this run.** They indicate a problem in the eval infrastructure (missing system prompt, tsx failure, MCP server not starting). Report them clearly so the user can investigate and fix the skill or environment before the next run. This is not a product regression — it is a tooling problem that requires human review.
+
+---
+
+## Phase 8 — Self-improvement loop (only runs if `--improve` flag was passed)
+
+**Skip this phase entirely if `--improve` was NOT in the user's invocation.**
+
+After the Final Run Summary, check every result written to `.context/evals/`:
+
+```bash
+LATEST=$(ls -t "$REPO_ROOT/.context/evals"/*.json | head -1)
+jq '[.entries[] | select((.evidence.judge_scores | (.mission_match < 5 or .instruction_adherence < 5 or .no_fabrication < 5 or .tool_selection_fit < 5)) and .passed == true)]' "$LATEST"
+```
+
+Three cases:
+
+**Case 1 — all scores == 5 on all dimensions (MM, IA, NF, TSF) — OR all passed == false due to skill error:**
+Print:
+```
+✓ All workflows at 5/5 across all dimensions. No self-improvement needed.
+```
+Stop. Do not invoke relentless.
+
+**Case 2 — one or more workflows have ANY score < 5 (MM, IA, NF, or TSF) AND passed == true (real product signal, not skill error):**
+
+For each such workflow, construct the relentless mission string and invoke the `relentless` skill.
+
+Build the mission string from the eval JSON:
+- `workflow_name` — from the entry name (e.g. `leadbay_followup_check_in/workflow-2b`)
+- `prompt_name` — from `evidence.session.prompt_name`
+- `current_scores` — MM/IA/NF/TSF from `evidence.judge_scores` (report all four, highlight any < 5)
+- `failing_criteria` — from `[evidence.per_criterion[] | select(.pass == false) | .criterion]` (may be empty if only scores < 5 but all criteria passed — still worth improving)
+- `fix_target` — `packages/promptforge/prompts/<prompt_name>.md.tmpl` (if prompt_name is set and not `~`); otherwise `packages/promptforge/tool-descriptions/` (tool descriptions need investigation)
+- `passing_workflows` — all other workflow IDs that currently pass (for regression guard)
+
+Announce before invoking:
+```
+Scores below 5/5 on [workflow_name]: MM:[N] IA:[N] NF:[N] TSF:[N] — launching self-improvement loop.
+Failing criteria (if any):
+  [✗] "criterion text"
+Low scores to fix: [list dimensions < 5 and judge reasoning for each]
+Fix target: packages/promptforge/prompts/<prompt_name>.md.tmpl
+Regression guard: workflows [N,N,...]
+```
+
+Then invoke the `relentless` skill with:
+```
+--feature "Improve [workflow_name] (prompt: [prompt_name]) to 5/5 on all dimensions.
+Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
+Judge reasoning on low scores: [paste judge reasoning for dimensions < 5]
+
+Failing criteria:
+[list each failing criterion, one per line with ✗ prefix]
+
+Fix target: [fix_target]
+— Edit the .md.tmpl source file, NOT the .generated.ts files.
+— Run pnpm prompts:build from repo root after every edit (must exit 0).
+
+Test harness: invoke the /eval skill with '--workflow [N]' after each build.
+Read the latest result:
+  LATEST=$(ls -t .context/evals/*.json | head -1)
+  jq '.entries[0].evidence.judge_scores' $LATEST          # target: all 5
+  jq '[.entries[0].evidence.per_criterion[] | select(.pass==false)]' $LATEST  # target: []
+
+Regression guard: invoke /eval skill with '--workflow [passing_workflow_ids]' once all scores reach 5.
+All must still pass (passed:true). If any regress, revert the last template edit and try a different approach.
+
+Exit condition: all dimensions 5/5 stable across 2 consecutive /eval runs AND a fresh-context second-opinion judge
+agrees the template diff is a genuine improvement (not a narrow hack).
+
+Do NOT modify .generated.ts files directly — always edit .md.tmpl and rebuild."
+```
+
+**If multiple workflows need improvement:** handle them sequentially. Finish one (MM:5 confirmed) before starting the next.
+
+**Case 3 — workflow has passed == false due to skill_execution_error:**
+Do NOT invoke relentless. Skill errors require human diagnosis, not prompt editing.
+Print:
+```
+⚠ Workflow #N failed due to skill execution error — skipping self-improvement.
+Fix the infrastructure issue first (see Final Run Summary above).
+```
 
 ---
 
