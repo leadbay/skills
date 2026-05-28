@@ -18,7 +18,7 @@ description: |
     /eval --workflow 1 --model claude-opus-4-7
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.1.0
+version: 1.2.0
 allowed-tools:
   - Bash
   - Read
@@ -157,18 +157,24 @@ Extract all fields for each requested workflow ID. If a requested ID has no
 For each workflow where `prompt_name` is not null/`~`:
 
 ```bash
-# Get the rendered prompt body from the prompts registry
-node --input-type=module <<'EOF'
-import { getPrompt } from "$REPO_ROOT/packages/mcp/src/prompts.js";
+# Get the rendered prompt body using tsx on a temp script (avoids dist dependency)
+TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
+PROMPT_SCRIPT=$(mktemp /tmp/get-prompt-XXXXXX.mts)
+cat > "$PROMPT_SCRIPT" << TSEOF
+import { getPrompt } from "$REPO_ROOT/packages/mcp/src/prompts.ts";
 const rendered = getPrompt("PROMPT_NAME", {});
 const block = rendered.messages[0]?.content;
-const body = block?.type === "text" ? block.text : "";
-console.log(body.length >= 50 ? body : "");
-EOF
+const body = block?.type === "text" ? block.text
+  : Array.isArray(block) ? (block.find((b: any) => b.type === "text")?.text ?? "") : "";
+if (body && body.length >= 50) process.stdout.write(body);
+TSEOF
+SYSTEM_PROMPT=$("$TSX" "$PROMPT_SCRIPT" 2>/dev/null || true)
+rm -f "$PROMPT_SCRIPT"
+echo "SYSTEM_PROMPT length: ${#SYSTEM_PROMPT}"
 ```
 
-Replace `PROMPT_NAME` with the actual `prompt_name`. If the output is empty or
-the import fails, proceed without a system prompt (the scenario prompt alone
+Replace `PROMPT_NAME` with the actual `prompt_name`. If `$SYSTEM_PROMPT` is empty or
+fewer than 50 chars, proceed without a system prompt (the scenario prompt alone
 will drive the session).
 
 ---
@@ -269,7 +275,7 @@ From the stream-json output, extract:
 - **final_message**: the `result` field from the `type=result` line
 - **tokens**: `usage` from the `type=result` line (`input_tokens`, `cache_read_input_tokens`, `output_tokens`)
 
-Filter tool calls to only those whose `name` contains `leadbay_` (the actual stream-json names are prefixed: `mcp__leadbay-live__leadbay_xxx`).
+Filter tool calls to only those whose `name` starts with `leadbay_`.
 
 Return a structured JSON summary:
 ```json
@@ -297,8 +303,7 @@ If present → `INVARIANT FAIL: leadbay_xxx was called (forbidden)`.
 
 **required_byproducts**: If set, verify each phrase appears in `agent_prose` or `final_message`.
 
-Record each as an object `{"name": "check-description", "pass": true|false, "reason": "..."}`.
-Use exactly these field names — the dashboard schema (`report.ts`) expects `name`, `pass`, `reason`.
+Record each as `PASS` or `FAIL` with reason.
 
 ---
 
@@ -471,35 +476,145 @@ Then print the summary table:
   Judge tokens:   N in / N out
   ─────────────────────────────────────────────────
   Grand total:    N in (incl. cache) / N out
+
+Dashboard: pnpm --filter @leadbay/mcp run eval:view
 ```
-
-After printing the summary, generate the HTML dashboard yourself by reading all JSON files in `.context/evals/` and writing `eval-report.html`.
-
-**Dashboard generation:**
-
-```bash
-ls "$REPO_ROOT/.context/evals/"*.json 2>/dev/null
-```
-
-Read every `.json` file in `.context/evals/` (skip `eval-report.html`). For each run file, extract its `entries` array. Build a self-contained HTML file at `$REPO_ROOT/.context/evals/eval-report.html` with:
-
-- A header showing total runs, pass rate, date range
-- One section per run (grouped by `run_id`), showing `branch`, `git_sha`, `started_at`
-- Per-entry cards showing: workflow name, PASS/FAIL badge (green/red), scores (MM/IA/NF/TSF as 1–5 colored pills), tool call list, per-criterion checklist (✓/✗), judge reasoning, token counts
-- A summary bar chart or table across all runs for trend visibility
-- Dark-mode-friendly color scheme: background `#0d1117`, card `#161b22`, text `#e6edf3`, green `#22c55e`, red `#ef4444`, accent `#58a6ff`
-- No external dependencies — fully inline CSS + vanilla JS only
-
-Write the file using the Write tool directly. Then print:
-
-`Dashboard saved → file://$REPO_ROOT/.context/evals/eval-report.html`
 
 ---
 
-## Iron Laws
+## Phase 8 — Self-improvement loop (skill-bug FAILs only)
+
+After Phase 7, check if any workflow **failed** and the failure looks like a **skill bug** rather than a product regression.
+
+**Skill-bug signals** (trigger the loop if ANY present):
+- A required tool was never called, but the session transcript shows the agent was never given the correct system prompt
+- Phase 2 or Phase 3 produced an error or empty output that caused the session to run without instructions
+- The session exited with 0 tool calls and the agent prose shows it had no context about Leadbay workflows
+- A bash command in the skill failed (exit code != 0) and the failure propagated silently
+
+**Product-regression signals** (do NOT trigger — this is real eval signal):
+- The session had the correct system prompt but the agent chose wrong tools
+- Required criteria were unmet despite the agent following instructions
+- Scores are 3+ but specific criteria missed
+
+If no skill-bug signals → skip Phase 8 entirely. Print: `No skill bugs detected — FAIL is product signal.`
+
+---
+
+### Step 8a — Diagnose
+
+Examine the evidence to identify the exact skill defect:
+- What command failed or produced wrong output?
+- Which phase of the skill caused the downstream failure?
+- What is the minimal fix?
+
+Write a one-paragraph diagnosis. Be concrete: name the exact line/command/variable that was wrong.
+
+---
+
+### Step 8b — Patch SKILL.md.tmpl
+
+Edit `~/.leadbay-skills/eval/SKILL.md.tmpl` to fix the identified defect. Rules:
+- Make the minimal change that fixes the root cause — don't refactor unrelated sections
+- Increment the patch version in the frontmatter (`version: X.Y.Z` → `version: X.Y.(Z+1)`)
+- Add a comment near the fix explaining WHY if the reason isn't obvious
+
+---
+
+### Step 8c — Reassemble
+
+```bash
+~/.leadbay-skills/bin/lb-skills-assemble
+echo "Assembly exit: $?"
+# Verify the fix is present in the assembled SKILL.md
+grep -n "KEYWORD_FROM_FIX" ~/.leadbay-skills/eval/SKILL.md | head -5
+```
+
+Replace `KEYWORD_FROM_FIX` with a distinctive string from the patch. If assembly fails or the keyword is absent, diagnose and retry Step 8b (max 2 retries before escalating).
+
+---
+
+### Step 8d — Verify fix with a targeted re-run
+
+Re-run **only the workflow(s) that failed due to the skill bug** using the same scenario prompt. Use the same Phase 3 session subagent approach but with the updated skill logic applied. This is a smoke-test run — single workflow, same credentials.
+
+If the re-run passes: proceed to Step 8e.
+If the re-run still fails with the same skill-bug signal: diagnose again (Step 8a), max 2 retries total. After 2 retries escalate with `STATUS: BLOCKED`.
+
+---
+
+### Step 8e — Commit and open PR
+
+```bash
+cd ~/.leadbay-skills
+
+# Create a branch named eval/fix-<slug> where slug describes the fix
+BRANCH="eval/fix-$(date -u +%Y%m%d)-SLUG"
+git checkout -b "$BRANCH"
+
+# Stage only eval skill files
+git add eval/SKILL.md.tmpl eval/SKILL.md
+
+git commit -m "$(cat <<'EOF'
+eval skill: fix DESCRIPTION_OF_FIX
+
+Root cause: WHAT_WAS_BROKEN
+Fix: WHAT_WAS_CHANGED
+
+Verified: re-ran workflow N after patch — result changed FAIL → PASS.
+EOF
+)"
+
+git push -u origin "$BRANCH"
+```
+
+Replace `SLUG` with a 2–4 word kebab-case description of the fix (e.g. `phase2-tsx-import`).
+Replace `DESCRIPTION_OF_FIX`, `WHAT_WAS_BROKEN`, `WHAT_WAS_CHANGED`, and `N` with specifics.
+
+Then open the PR:
+
+```bash
+gh pr create \
+  --title "eval skill: fix DESCRIPTION_OF_FIX" \
+  --body "$(cat <<'EOF'
+## What broke
+
+WHAT_WAS_BROKEN — discovered during a live /eval run on WORKFLOW_NAME.
+
+## Root cause
+
+EXACT_COMMAND_OR_LINE_THAT_FAILED
+
+## Fix
+
+WHAT_WAS_CHANGED
+
+## Verified
+
+Re-ran workflow N after patch. Result: FAIL → PASS.
+Scores: MM=N IA=N NF=N TSF=N.
+EOF
+)" \
+  --assignee ArtyETH06 \
+  --label "eval" \
+  --base main
+```
+
+Print the PR URL. Then print:
+
+```
+── Self-improvement complete ─────────────────────────────────
+  Skill bug fixed: DESCRIPTION
+  Patch: SKILL.md.tmpl v X.Y.Z → v X.Y.(Z+1)
+  Verification: workflow N FAIL → PASS
+  PR: <url>
+──────────────────────────────────────────────────────────────
+```
+
+---
 
 1. **Never fabricate evidence.** If the session output is ambiguous, mark the criterion as FAIL rather than guessing PASS.
 2. **Filter tool calls.** Only count tool calls whose name starts with `leadbay_`. ToolSearch, WebFetch, Bash etc. from leaked superpowers are noise — exclude them from all invariant checks and the judge prompt.
 3. **Judge is always a fresh-context subagent.** Never judge in the same context as the session runner — the judge must be blind to the session's "feel" and reason only from the evidence passed to it.
 4. **WORKFLOWS.md is the only contract source.** Never hardcode workflow metadata in this skill. Always re-read WORKFLOWS.md for every run.
-5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly (the skill reads it back in Phase 7 to generate the HTML dashboard). If the schema needs to evolve, update the skill template and `evidence.ts` in the eval-framework repo.
+5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so `pnpm eval:report` can render it. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
