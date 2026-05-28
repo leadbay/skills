@@ -22,7 +22,7 @@ for tmpl in "$REPO_ROOT"/*/SKILL.md.tmpl; do
           exit 1
         fi
         cat "$fragment"
-        ((includes++))
+        includes=$((includes+1))
       else
         echo "$line"
       fi
@@ -30,7 +30,7 @@ for tmpl in "$REPO_ROOT"/*/SKILL.md.tmpl; do
   } > "$output"
 
   echo "  Assembled $skill_name/SKILL.md ($includes includes)"
-  ((count++))
+  count=$((count+1))
 done
 
 echo ""
