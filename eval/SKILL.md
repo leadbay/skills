@@ -18,7 +18,7 @@ description: |
     /eval --workflow 1 --model claude-opus-4-7
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.3.1
+version: 1.3.2
 allowed-tools:
   - Bash
   - Read
@@ -494,11 +494,12 @@ Then print the summary table:
   Session tokens: N in / N cache / N out
   Judge tokens:   N in / N out
   ─────────────────────────────────────────────────
-  Grand total:    N in (incl. cache) / N out
+  Grand total:    (session_in + session_cache + judge_in) in / (session_out + judge_out) out
+  e.g. session 27 in / 946878 cache / 6152 out + judge 82125 in / 0 out
+       → Grand total: 27 + 946878 + 82125 = 1,029,030 in / 6152 out
 ```
 
-Then generate the HTML dashboard by writing and running a Python script.
-Use the Write tool to write the script to `$EVALS_DIR/gen-dashboard.py`, then run it with `python3`.
+Then generate the HTML dashboard by running `gen-dashboard.py`. Prefer the repo-root copy (`$REPO_ROOT/gen-dashboard.py`) — it is version-controlled and may be newer. Fall back to `$EVALS_DIR/gen-dashboard.py` if the repo-root copy is absent. **Do NOT overwrite either copy** — if neither exists, write to `$REPO_ROOT/gen-dashboard.py` (see design spec below). This preserves improvements made outside of eval runs.
 
 The Python script must produce a **self-contained single-file HTML dashboard** matching this exact design:
 
@@ -552,7 +553,9 @@ Each entry is a **compact single-line row** (not a card) that expands on click:
 
 ```bash
 DASHBOARD="$EVALS_DIR/eval-report.html"
-python3 "$EVALS_DIR/gen-dashboard.py" "$EVALS_DIR" "$DASHBOARD"
+GEN_SCRIPT="$REPO_ROOT/gen-dashboard.py"
+[ -f "$GEN_SCRIPT" ] || GEN_SCRIPT="$EVALS_DIR/gen-dashboard.py"
+python3 "$GEN_SCRIPT" "$EVALS_DIR" "$DASHBOARD"
 echo "Dashboard: file://$DASHBOARD"
 ```
 
