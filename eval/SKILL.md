@@ -500,26 +500,55 @@ Then print the summary table:
 Then generate the HTML dashboard by writing and running a Python script.
 Use the Write tool to write the script to `$EVALS_DIR/gen-dashboard.py`, then run it with `python3`.
 
-The Python script must:
-1. Glob all `*.json` files from the evals dir (passed as `sys.argv[1]`)
-2. Parse each file, collect all `entry` objects from `data["entries"]`
-3. Sort entries newest-first by `name` (ISO timestamp prefix)
-4. Build a complete self-contained HTML string with:
-   - Dark theme: `background:#0d1117`, `color:#c9d1d9`, monospace font
-   - Page header: big pass-rate %, pass count, fail count, total
-   - CSS grid of cards — one per entry:
-     - Green left border if `passed`, red if not
-     - Name + PASS/FAIL badge
-     - Meta row: duration_ms formatted, turns_used, tool_call_count, token counts, model
-     - Score bars for `judge_scores.mission_match/instruction_adherence/no_fabrication/tool_selection_fit` (1–5, colored: 5=`#22c55e` 4=`#84cc16` 3=`#eab308` 2=`#f97316` 1=`#ef4444`)
-     - Invariants list (`evidence.invariants`) — ✓/✗ per item
-     - Per-criterion list (`evidence.per_criterion`) — ✓/✗ + reasoning
-     - Tool calls list (`evidence.tool_calls`)
-     - Collapsible judge reasoning (`<details><summary>Judge reasoning</summary>`)
-   - All entry data embedded as `const entries = [...]` JSON literal in a `<script>` tag
-   - Pure vanilla JS rendering: `document.getElementById('cards').innerHTML = entries.map(renderCard).join('')`
-5. Write HTML to `sys.argv[2]` (the dashboard path)
-6. Print `file://` + the dashboard path
+The Python script must produce a **self-contained single-file HTML dashboard** matching this exact design:
+
+### Section 1 — Header
+- Title: `⚡ Leadbay Eval Dashboard` (monospace, bold)
+- Subtitle: `N runs · M workflows · last updated <timestamp>`
+
+### Section 2 — Stat tiles (horizontal row)
+Five dark tiles with label + big number:
+`TOTAL` (white), `PASS` (green `#22c55e`), `FAIL` (red `#ef4444`), `PASS RATE %` (green/red based on ≥50%), `AVG MM` (score color)
+
+### Section 3 — Pass/Fail trend bar chart
+One vertical bar per entry, oldest→newest left to right.
+- Bar height proportional to avg judge score (MM+IA+NF+TSF)/4, scaled 0–5 → 0–60px
+- Bar color: `#22c55e` if passed, `#ef4444` if failed
+- Bars are thin (4px wide, 2px gap), packed tightly in a flex row
+- Label above chart: `Pass/Fail trend (all runs, oldest → newest)`
+
+### Section 4 — Filter bar
+- Buttons: `All` | `Pass only` | `Fail only` (toggle active state with blue border)
+- Workflow chip filters: one pill per unique workflow name (extracted from entry `name` before `/workflow-N`), showing count in parens. Clicking filters list to that workflow only.
+- Search input (right-aligned): filters by name or run ID substring
+
+### Section 5 — Entry list (scrollable)
+Each entry is a **compact single-line row** (not a card) that expands on click:
+
+**Collapsed row:**
+```
+[PASS|FAIL badge]  leadbay_daily_check_in/workflow-1    MM:5  IA:5  NF:5  TSF:5  ▶
+                   5/27/2026, 4:25:14 PM · 130.0s · 9 turns
+```
+- Badge: pill, green bg + black text for PASS, red bg + white text for FAIL
+- Name in monospace, timestamp + duration + turns in muted gray below
+- Score pills right-aligned: `MM:N` colored by score (5=green 4=lime 3=yellow 2=orange 1=red)
+- `▶` chevron right edge, rotates to `▼` when expanded
+
+**Expanded section (click to toggle):**
+- Scenario prompt used
+- Invariants list: `✓`/`✗` per item with reason
+- Per-criterion list: `✓`/`✗` + reasoning indented
+- Tool calls: comma-separated names
+- Judge reasoning: full text
+- Token counts
+
+### Implementation notes
+- All data embedded as `const ENTRIES = [...];` JSON in a `<script>` tag
+- Pure vanilla JS — no external dependencies
+- Dark theme throughout: bg `#0d1117`, surface `#161b22`, border `#30363d`, text `#c9d1d9`, muted `#8b949e`
+- Score color function: `{5:"#22c55e", 4:"#84cc16", 3:"#eab308", 2:"#f97316", 1:"#ef4444"}`
+- Entry `name` format is `prompt_name/workflow-N` — parse workflow label as everything before `/workflow`
 
 ```bash
 DASHBOARD="$EVALS_DIR/eval-report.html"
