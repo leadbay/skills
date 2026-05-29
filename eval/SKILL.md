@@ -17,9 +17,10 @@ description: |
     /eval              (runs all workflows)
     /eval --workflow 1 --model claude-opus-4-7
     /eval --workflow 9 --improve   (eval + auto self-improve if MM < 5)
+    /eval --workflow 12,13,14 --verify 3   (each workflow enters 3 stability rounds as soon as it hits 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.5.0
+version: 1.6.0
 allowed-tools:
   - Bash
   - Read
@@ -130,9 +131,10 @@ echo "REPO_ROOT: $REPO_ROOT"
 ls "$REPO_ROOT/WORKFLOWS.md" 2>/dev/null && echo "WORKFLOWS_MD: FOUND" || echo "WORKFLOWS_MD: NOT FOUND"
 ```
 
-Parse the user message for `--workflow N` (comma-separated), `--model M`, and `--improve` flag.
+Parse the user message for `--workflow N` (comma-separated), `--model M`, `--improve`, and `--verify N` flags.
 If no `--workflow` flag, run all workflows found in WORKFLOWS.md.
 If `--improve` is present, set `IMPROVE_MODE=true` — Phase 8 will auto-invoke `/relentless` for any workflow with MM < 5.
+If `--verify N` is present, set `VERIFY_MODE=true, VERIFY_ROUNDS=N` — Phase 7b will run N more rounds after all workflows hit 5/5/5/5.
 
 ```bash
 # Load .env.eval credentials
@@ -532,6 +534,27 @@ For each success criterion, set `pass: true` if confirmed by evidence, `pass: fa
 }
 ```
 
+**Immediately after the judge returns — before the Phase 5 Gate — print the per-workflow scorecard** so the user sees results as they happen rather than waiting for all workflows to finish:
+
+```
+── eval: workflow #N — WORKFLOW_NAME ─────────────────────────
+  prompt: SCENARIO_PROMPT
+  mission_match:          N/5
+  instruction_adherence:  N/5
+  no_fabrication:         N/5
+  tool_selection_fit:     N/5
+  invariants: N/M PASS
+  criteria:
+    [✓] criterion text
+        → reasoning
+    [✗] criterion text
+        → reasoning
+  tools called: leadbay_xxx → leadbay_yyy
+  turns: N  duration: Ns
+  tokens: Nin / Ncache cache / Nout out
+──────────────────────────────────────────────────────────────
+```
+
 **Phase 5 Gate — emit this block before Phase 6 (one per workflow):**
 
 ```
@@ -617,30 +640,11 @@ Each entry in `entries` follows the `EvalEntry` schema:
 
 ---
 
-## Phase 7 — Print scorecard and generate HTML dashboard
+## Phase 7 — Print summary table and generate HTML dashboard
 
-Print per-workflow scorecard:
+Note: per-workflow scorecards were already printed during Phase 5 as each judge completed. Phase 7 only prints the summary table (not the per-workflow boxes again).
 
-```
-── eval: workflow #N — WORKFLOW_NAME ─────────────────────────
-  prompt: SCENARIO_PROMPT
-  mission_match:          N/5
-  instruction_adherence:  N/5
-  no_fabrication:         N/5
-  tool_selection_fit:     N/5
-  invariants: N/M PASS
-  criteria:
-    [✓] criterion text
-        → reasoning
-    [✗] criterion text
-        → reasoning
-  tools called: leadbay_xxx → leadbay_yyy
-  turns: N  duration: Ns
-  tokens: Nin / Ncache cache / Nout out
-──────────────────────────────────────────────────────────────
-```
-
-Then print the summary table:
+Print the summary table:
 
 ```
 ═══════════════════════════════════════════════════════════════
@@ -752,6 +756,74 @@ Dashboard: file://$DASHBOARD
 ```
 
 **Skill errors are NOT self-corrected during this run.** They indicate a problem in the eval infrastructure (missing system prompt, tsx failure, MCP server not starting). Report them clearly so the user can investigate and fix the skill or environment before the next run. This is not a product regression — it is a tooling problem that requires human review.
+
+---
+
+## Phase 7b — Per-workflow stability verification (only if `--verify N` was passed)
+
+**Skip this phase entirely if `--verify` was NOT in the user's invocation.**
+
+**Key behavior: verification is per-workflow and starts immediately when a workflow hits 5/5/5/5.** It does not wait for all workflows to reach 5/5/5/5 first. Workflows that haven't hit 5/5/5/5 continue their eval loop normally in parallel.
+
+### Per-workflow verification state machine
+
+Each workflow independently tracks:
+- `state`: `IMPROVING` → `VERIFYING(round K of N)` → `VERIFIED` | `UNSTABLE`
+- A workflow enters `VERIFYING` the moment it first scores 5/5/5/5.
+- While one workflow is in `VERIFYING`, others in `IMPROVING` continue their eval loop.
+- The whole session ends when every workflow has reached `VERIFIED` or `UNSTABLE`.
+
+### When a workflow hits 5/5/5/5 for the first time:
+
+Announce immediately:
+```
+✓ Workflow #N (WORKFLOW_NAME) hit 5/5/5/5 — starting verify round 1/VERIFY_ROUNDS
+```
+
+Then run the VERIFY_ROUNDS stability rounds for that workflow (one at a time, printing each result as it completes):
+```
+  Verify round 1/N: re-run session + judge for WF#N → PASS (5/5/5/5) | PASS (minor dip, e.g. 5/4/5/5) | FAIL
+  Verify round 2/N: ...
+  ...
+```
+
+While those rounds run for WF#N, other workflows that are still `IMPROVING` continue their eval sessions in parallel (Phase 3–6 loop as normal).
+
+### Per-workflow verification scorecard
+
+After all rounds complete for a workflow:
+```
+════════════════════════════════════════════════════════
+  Verify: workflow #N — WORKFLOW_NAME
+════════════════════════════════════════════════════════
+  Round 1: PASS  5/5/5/5
+  Round 2: PASS  5/5/5/4  (minor judge variance — acceptable)
+  Round 3: PASS  5/5/5/5
+  ────────────────────────────────────────────────────
+  Consistent: 3/3 passed (MM ≥ 3 in all rounds)
+  Perfect:    2/3 scored 5/5/5/5
+  VERDICT: VERIFIED
+════════════════════════════════════════════════════════
+```
+
+### Final stability summary (after all workflows settle)
+
+```
+════════════════════════════════════════════════════════
+  --verify VERIFY_ROUNDS final summary
+════════════════════════════════════════════════════════
+  WF#12  artifact-proposal-gate      VERIFIED  (3/3 consistent, 2/3 perfect)
+  WF#13  scheduled-task-proposal     VERIFIED  (3/3 consistent, 3/3 perfect)
+  WF#14  widget-overdelivery-guard   IMPROVING → still at MM:3, needs more work
+════════════════════════════════════════════════════════
+  Overall: N / total workflows VERIFIED
+```
+
+Then regenerate the dashboard and print the link.
+
+**Consistency rule:** A verification round "passes" when `passed == true` (MM ≥ 3). A round is "perfect" when all scores are 5. VERIFIED = all N rounds passed. A single FAIL means UNSTABLE — the fix is fragile and the failing criterion is the next improvement target.
+
+If `--improve` is ALSO set: after `--verify` completes, run Phase 8 only for workflows still in `IMPROVING` state (i.e., never reached 5/5/5/5). Workflows that are `VERIFIED` or `UNSTABLE` are excluded from Phase 8.
 
 ---
 
