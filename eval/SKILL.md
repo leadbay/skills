@@ -534,6 +534,27 @@ For each success criterion, set `pass: true` if confirmed by evidence, `pass: fa
 }
 ```
 
+**Immediately after the judge returns — before the Phase 5 Gate — print the per-workflow scorecard** so the user sees results as they happen rather than waiting for all workflows to finish:
+
+```
+── eval: workflow #N — WORKFLOW_NAME ─────────────────────────
+  prompt: SCENARIO_PROMPT
+  mission_match:          N/5
+  instruction_adherence:  N/5
+  no_fabrication:         N/5
+  tool_selection_fit:     N/5
+  invariants: N/M PASS
+  criteria:
+    [✓] criterion text
+        → reasoning
+    [✗] criterion text
+        → reasoning
+  tools called: leadbay_xxx → leadbay_yyy
+  turns: N  duration: Ns
+  tokens: Nin / Ncache cache / Nout out
+──────────────────────────────────────────────────────────────
+```
+
 **Phase 5 Gate — emit this block before Phase 6 (one per workflow):**
 
 ```
@@ -619,30 +640,11 @@ Each entry in `entries` follows the `EvalEntry` schema:
 
 ---
 
-## Phase 7 — Print scorecard and generate HTML dashboard
+## Phase 7 — Print summary table and generate HTML dashboard
 
-Print per-workflow scorecard:
+Note: per-workflow scorecards were already printed during Phase 5 as each judge completed. Phase 7 only prints the summary table (not the per-workflow boxes again).
 
-```
-── eval: workflow #N — WORKFLOW_NAME ─────────────────────────
-  prompt: SCENARIO_PROMPT
-  mission_match:          N/5
-  instruction_adherence:  N/5
-  no_fabrication:         N/5
-  tool_selection_fit:     N/5
-  invariants: N/M PASS
-  criteria:
-    [✓] criterion text
-        → reasoning
-    [✗] criterion text
-        → reasoning
-  tools called: leadbay_xxx → leadbay_yyy
-  turns: N  duration: Ns
-  tokens: Nin / Ncache cache / Nout out
-──────────────────────────────────────────────────────────────
-```
-
-Then print the summary table:
+Print the summary table:
 
 ```
 ═══════════════════════════════════════════════════════════════
