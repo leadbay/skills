@@ -6,8 +6,7 @@ description: |
   Reads contracts directly from WORKFLOWS.md, spawns a session subagent
   against the real Leadbay API, judges the result with a fresh-context
   judge subagent, writes structured JSON to .context/evals/, and prints
-  a scorecard. The HTML dashboard can be regenerated at any time with
-  `pnpm --filter @leadbay/mcp run eval:report`.
+  a scorecard, and generates an HTML dashboard at `.context/evals/eval-report.html`.
 
   For fully unattended runs (no approval prompts), launch Claude Code with:
     claude --dangerously-skip-permissions
@@ -19,7 +18,7 @@ description: |
     /eval --workflow 1 --model claude-opus-4-7
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.1.0
+version: 1.4.0
 allowed-tools:
   - Bash
   - Read
@@ -77,6 +76,48 @@ Run live eval sessions for Leadbay MCP workflows. Each eval:
 
 ---
 
+## The Iron Laws
+
+These rules are inviolable. No phase gate can pass while any Iron Law is violated.
+
+**Iron Law #1 — No fabricated evidence.**
+Mark a criterion FAIL rather than guess PASS when the evidence is ambiguous. A false PASS poisons the dataset and corrupts every trend chart downstream.
+
+**Iron Law #2 — Tool call filter is absolute.**
+Only tool calls whose `name` starts with `leadbay_` count for invariant checks and judge scoring. ToolSearch, WebFetch, Bash, Skill, and any other leaked-superpowers calls are noise. They must be stripped from all ledgers before any invariant is evaluated.
+
+**Iron Law #3 — Judge is always blind.**
+The judge subagent must receive ONLY the evidence block and the success criteria — never the session runner's assessment, never "the agent did well on X", never the invariant results framed as conclusions. The judge's value is independence; priming it is Goodhart's law.
+
+**Iron Law #4 — WORKFLOWS.md is the only contract source.**
+Never hardcode workflow metadata. Always re-read WORKFLOWS.md for every run. A stale contract is indistinguishable from a product regression.
+
+**Iron Law #5 — Phase gates are not decoration.**
+Each phase has a mandatory gate block the model must emit verbatim before advancing. An agent that skips a gate is declaring it passed without checking. That is worse than a FAIL result.
+
+**Iron Law #6 — No silent phase failures.**
+If any bash command in a phase exits non-zero, print the error and stop that workflow's run immediately. Report it as a skill execution error, not a FAIL score. Propagating a silent failure into judge scoring produces meaningless results.
+
+---
+
+## The Deadly Sins
+
+These are the specific failure modes that destroy eval results. Guard against each one actively.
+
+1. **Skipping the invariant check and letting the judge do it.** The judge scores quality. The invariant check scores correctness. They are orthogonal. A judge that says "required_calls passed" without seeing the ledger is guessing.
+
+2. **Running the judge in the same context as the session runner.** The session runner has already formed a view of the session. The judge must be blind. Same context = primed judge = invalid scores.
+
+3. **Counting leaked-superpowers tool calls in the ledger.** If the session leaks ToolSearch or Bash calls, and you count them, every required_calls invariant that passed because of them is a false PASS.
+
+4. **Declaring a workflow PASS when required_calls invariants failed, because "the judge scored it 5/5".** Judge scores and invariant checks are independent gates. BOTH must pass. A 5/5 score with an invariant FAIL means the judge was wrong or the evidence was wrong.
+
+5. **Advancing from a phase without emitting the gate block.** The gate block is what makes the run auditable. Skipping it because "it's obvious" is how bugs hide across runs.
+
+6. **Running the session without a system prompt.** CLAUDE.md restricts Claude to software engineering tasks. Without `--system-prompt`, the session refuses all Leadbay tool calls and exits with 0 tool calls. Every invariant fails. This is a skill execution error, not a product signal.
+
+---
+
 ## Phase 0 — Parse arguments and locate WORKFLOWS.md
 
 Read the user's invocation to extract `--workflow` and `--model` flags.
@@ -108,8 +149,20 @@ If Claude Code is prompting for approval on each action, tell the user:
 > `claude --dangerously-skip-permissions`
 > Then invoke `/eval` again — no further approvals will be needed.
 
-All `claude -p` subprocess calls in this skill already include `--dangerously-skip-permissions`
-so session and judge subagents never block waiting for input.
+**Phase 0 Gate — emit this block before Phase 1:**
+
+```
+PHASE 0 GATE
+════════════════════════════════
+[x/  ] REPO_ROOT resolved: ______
+[x/  ] WORKFLOWS.md: FOUND
+[x/  ] LEADBAY_TOKEN: present (N chars)
+[x/  ] Workflows to run: [N,N,...] or ALL
+════════════════════════════════
+GATE: PASS / FAIL — [explain any failures]
+```
+
+If GATE is FAIL: stop. Do not proceed to Phase 1 until every box is checked.
 
 ---
 
@@ -151,6 +204,20 @@ prompt: "user message"
 Extract all fields for each requested workflow ID. If a requested ID has no
 `yaml expected` block, skip it and report: `workflow #N: no contract found in WORKFLOWS.md`.
 
+**Phase 1 Gate — emit this block before Phase 2:**
+
+```
+PHASE 1 GATE — Contracts parsed
+════════════════════════════════
+Workflow #N  name: ______  prompt_name: ______  required_calls: [...]  scenario: "..."
+Workflow #M  name: ______  prompt_name: ______  required_calls: [...]  scenario: "..."
+[one line per workflow being run]
+════════════════════════════════
+GATE: PASS / FAIL — [list any workflows with missing/incomplete contracts]
+```
+
+If GATE is FAIL: skip workflows with missing contracts. Proceed with the rest.
+
 ---
 
 ## Phase 2 — Load MCP system prompt (if prompt_name is set)
@@ -158,19 +225,40 @@ Extract all fields for each requested workflow ID. If a requested ID has no
 For each workflow where `prompt_name` is not null/`~`:
 
 ```bash
-# Get the rendered prompt body from the prompts registry
-node --input-type=module <<'EOF'
-import { getPrompt } from "$REPO_ROOT/packages/mcp/src/prompts.js";
+# Get the rendered prompt body using tsx on a temp script (avoids dist dependency)
+TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
+PROMPT_SCRIPT=$(mktemp /tmp/get-prompt-XXXXXX.mts)
+cat > "$PROMPT_SCRIPT" << TSEOF
+import { getPrompt } from "$REPO_ROOT/packages/mcp/src/prompts.ts";
 const rendered = getPrompt("PROMPT_NAME", {});
 const block = rendered.messages[0]?.content;
-const body = block?.type === "text" ? block.text : "";
-console.log(body.length >= 50 ? body : "");
-EOF
+const body = block?.type === "text" ? block.text
+  : Array.isArray(block) ? (block.find((b: any) => b.type === "text")?.text ?? "") : "";
+if (body && body.length >= 50) process.stdout.write(body);
+TSEOF
+SYSTEM_PROMPT=$("$TSX" "$PROMPT_SCRIPT" 2>/dev/null || true)
+rm -f "$PROMPT_SCRIPT"
+echo "SYSTEM_PROMPT length: ${#SYSTEM_PROMPT}"
 ```
 
-Replace `PROMPT_NAME` with the actual `prompt_name`. If the output is empty or
-the import fails, proceed without a system prompt (the scenario prompt alone
-will drive the session).
+Replace `PROMPT_NAME` with the actual `prompt_name`. If `$SYSTEM_PROMPT` is empty or
+fewer than 50 chars, fall back to the minimal fallback (see Phase 3). Never omit
+the system prompt entirely — that is Iron Law #6 / Deadly Sin #6.
+
+**Phase 2 Gate — emit this block before Phase 3:**
+
+```
+PHASE 2 GATE — System prompts
+════════════════════════════════
+Workflow #N  prompt_name: ______  SYSTEM_PROMPT: N chars  [LOADED / FALLBACK]
+Workflow #M  prompt_name: ~       SYSTEM_PROMPT: [FALLBACK — minimal]
+[one line per workflow]
+════════════════════════════════
+GATE: PASS / FAIL — [list any workflows where prompt loading errored]
+```
+
+A workflow using FALLBACK is fine. A workflow where `tsx` errored and SYSTEM_PROMPT
+is empty must use the fallback, not run without a system prompt.
 
 ---
 
@@ -182,22 +270,29 @@ For each workflow, spawn a **session subagent** via the Agent tool with this pro
 **SESSION SUBAGENT PROMPT:**
 
 You are running a live Leadbay MCP eval session. Your only job is to:
-1. Write the MCP config and settings files to a temp directory
+1. Set up an isolated HOME directory so the pixel-agents hook cannot inject superpowers context
 2. Run `claude -p` with the correct flags against the real Leadbay API
 3. Capture the full stdout (stream-json events) and return structured evidence
+
+**Key flags:**
+- `--system-prompt` is **always required** — it overrides the project's CLAUDE.md which restricts
+  Claude to "software engineering tasks only". For workflows with a dedicated prompt (`prompt_name`
+  from Phase 2), pass that prompt body. For workflows where `prompt_name` is null/`~`, pass a
+  minimal fallback: `"You are a Leadbay sales assistant. Use the available MCP tools to help."`.
+  Without this, Claude refuses Leadbay tool calls as out-of-scope.
+- `--input-format stream-json` with the message piped to stdin gives the MCP server time to
+  finish its handshake before the first turn runs.
 
 **Setup:**
 
 ```bash
-TMPDIR=$(mktemp -d /tmp/leadbay-eval-XXXXXX)
-echo "TMPDIR: $TMPDIR"
+REPO_ROOT=REPO_ROOT_PLACEHOLDER
+source "$REPO_ROOT/.env.eval"
 
-# Find tsx binary
+TMPDIR=$(mktemp -d /tmp/lb-eval-XXXXXX)
 TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
-echo "TSX: $TSX"
-
 LIVE_SERVER="$REPO_ROOT/packages/mcp/test/eval/helpers/live-mcp-server.ts"
-ls "$LIVE_SERVER" && echo "SERVER: FOUND" || echo "SERVER: NOT FOUND"
+echo "TSX: $TSX"
 ```
 
 Write MCP config:
@@ -216,31 +311,38 @@ cat > "$TMPDIR/mcp-config.json" << MCPEOF
   }
 }
 MCPEOF
-echo "MCP config written"
 ```
 
-Write settings (suppress all hooks so superpowers doesn't inject skill-check directives):
+Write settings (suppresses hook tools from leaking into allowed set):
 ```bash
-cat > "$TMPDIR/settings.json" << SETEOF
+cat > "$TMPDIR/settings.json" << 'SETEOF'
 {
-  "hooks": {
-    "PreToolUse": [],
-    "PostToolUse": [],
-    "UserPromptSubmit": [],
-    "SessionStart": [],
-    "Stop": []
-  },
+  "hooks": { "PreToolUse": [], "PostToolUse": [], "UserPromptSubmit": [], "SessionStart": [], "Stop": [] },
   "enabledPlugins": {}
 }
 SETEOF
-echo "Settings written"
 ```
 
-Run the session and capture output:
+Determine the effective system prompt (ALWAYS pass one — never omit):
+```bash
+# If SYSTEM_PROMPT was loaded in Phase 2 and is non-empty, use it.
+# Otherwise use a minimal fallback that allows Leadbay tool calls.
+EFFECTIVE_SYSTEM_PROMPT="${SYSTEM_PROMPT:-You are a Leadbay sales assistant. Use the available MCP tools to help the user.}"
+```
+
+Run the session:
 ```bash
 SESSION_RAW="$TMPDIR/session.raw.jsonl"
-claude -p \
-  --input-format text \
+START_MS=$(date +%s%3N)
+
+USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
+  "$(echo "$SCENARIO_PROMPT" | sed 's/"/\\"/g')")
+
+# 10s delay lets the tsx MCP server complete its stdio handshake before the first turn.
+# Without this, the session starts with status:"pending" and tool calls fail.
+# 5s is insufficient when parent-session hooks (pixel-agents, orca) add startup latency.
+{ sleep 10; echo "$USER_MSG"; } | claude -p \
+  --input-format stream-json \
   --output-format stream-json \
   --verbose \
   --mcp-config "$TMPDIR/mcp-config.json" \
@@ -250,27 +352,36 @@ claude -p \
   --disable-slash-commands \
   --allowedTools "mcp__leadbay-live__*" \
   --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Glob,Grep,LS,Skill,LSP,Agent" \
-  ${SYSTEM_PROMPT:+--system-prompt "$SYSTEM_PROMPT"} \
+  --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
   ${MODEL:+--model "$MODEL"} \
-  "$SCENARIO_PROMPT" > "$SESSION_RAW" 2>"$TMPDIR/stderr.txt"
+  > "$SESSION_RAW" 2>"$TMPDIR/stderr.txt"
 
-echo "EXIT: $?"
+EXIT=$?
+END_MS=$(date +%s%3N)
+DURATION_MS=$((END_MS - START_MS))
+echo "EXIT: $EXIT  DURATION_MS: $DURATION_MS"
 echo "RAW_LINES: $(wc -l < "$SESSION_RAW")"
+echo "=== STDERR ==="
+head -20 "$TMPDIR/stderr.txt"
 echo "=== RAW JSONL ==="
 cat "$SESSION_RAW"
 echo "=== END RAW JSONL ==="
-cat "$TMPDIR/stderr.txt" | head -20
 rm -rf "$TMPDIR"
 ```
 
+Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT` value. Set `SCENARIO_PROMPT`,
+`SYSTEM_PROMPT`, and `MODEL` from the workflow contract parsed in Phase 1/2.
+
 From the stream-json output, extract:
-- **tool_calls**: lines where `type=assistant` containing `tool_use` content blocks → extract `name` + `input`
-- **tool_results**: lines where `type=tool_result` → extract `content` (API responses)
-- **agent_prose**: text blocks from `type=assistant` that are NOT tool calls
-- **final_message**: the `result` field from the `type=result` line
+- **tool_calls**: lines where `type=assistant` with `tool_use` content blocks → `name` + `input`. **STRIP all non-`leadbay_` names before returning** (Iron Law #2).
+- **agent_prose**: text blocks from `type=assistant` that are NOT tool_use
+- **final_message**: `result` field from the `type=result` line
 - **tokens**: `usage` from the `type=result` line (`input_tokens`, `cache_read_input_tokens`, `output_tokens`)
 
-Filter tool calls to only those whose `name` starts with `leadbay_`.
+**Session health check — detect skill execution errors before returning:**
+- If `EXIT != 0` AND `tool_calls` is empty AND agent prose contains "software engineering" or "can't help" → this is Iron Law #6 violation (no system prompt effect). Return `skill_execution_error: "session refused tool calls — system prompt likely missing or rejected"`.
+- If `EXIT != 0` AND stderr contains "tsx" errors → `skill_execution_error: "tsx failed to start MCP server"`.
+- Any `skill_execution_error` must be returned in the structured response so Phase 3 can stop the run cleanly rather than pass empty evidence to the judge.
 
 Return a structured JSON summary:
 ```json
@@ -278,9 +389,27 @@ Return a structured JSON summary:
   "tool_calls": [{"turn": 1, "name": "leadbay_xxx", "input": {}, "output_preview": "..."}],
   "agent_prose": ["text between tool calls"],
   "final_message": "...",
-  "tokens": {"in": 0, "cache": 0, "out": 0}
+  "tokens": {"in": 0, "cache": 0, "out": 0},
+  "duration_ms": 0,
+  "skill_execution_error": null
 }
 ```
+
+**Phase 3 Gate — emit this block before Phase 4 (one per workflow):**
+
+```
+PHASE 3 GATE — Session completed: workflow #N
+════════════════════════════════
+[x/  ] Session exited cleanly (EXIT=0 or graceful stop)
+[x/  ] skill_execution_error: null
+[x/  ] tool_calls extracted (leadbay_ only): N calls
+[x/  ] agent_prose: N segments
+[x/  ] tokens captured: N in / N cache / N out
+════════════════════════════════
+GATE: PASS / FAIL — [if FAIL: state whether this is a skill-execution-error or a run to be judged]
+```
+
+If `skill_execution_error` is non-null: GATE is FAIL. Do NOT advance to Phase 4 for this workflow. Record the error in the result JSON (`passed: false`, `exit_reason: "skill_execution_error"`). Continue with other workflows.
 
 ---
 
@@ -300,6 +429,25 @@ If present → `INVARIANT FAIL: leadbay_xxx was called (forbidden)`.
 
 Record each as `PASS` or `FAIL` with reason.
 
+**Phase 4 Gate — emit this block before Phase 5 (one per workflow):**
+
+```
+PHASE 4 GATE — Invariants: workflow #N (WORKFLOW_NAME)
+════════════════════════════════
+required_calls:
+  [✓/✗] leadbay_xxx — PASS: found at turn N / FAIL: not in ledger
+  [✓/✗] leadbay_yyy — ...
+forbidden_calls:
+  [✓/✗] leadbay_zzz — PASS: absent / FAIL: called at turn N
+required_order: [PASS / FAIL / N/A]
+required_byproducts: [PASS / FAIL / N/A — phrase "..." found/not found]
+────────────────────────────────
+INVARIANTS: N/M PASS
+GATE: PASS / FAIL
+```
+
+This block is mandatory. Do not pass this gate by omitting it.
+
 ---
 
 ## Phase 5 — Judge (fresh-context subagent)
@@ -307,6 +455,8 @@ Record each as `PASS` or `FAIL` with reason.
 Spawn a **judge subagent** via the Agent tool. Pass it only:
 - The `success_criteria` list from WORKFLOWS.md
 - The session evidence (tool call ledger, agent prose, final message, invariant results)
+
+**DO NOT include your own assessment.** Do not say "the agent did well on X." Do not frame invariant results as conclusions. Pass the raw evidence and let the judge reason from it independently (Iron Law #3).
 
 **JUDGE SUBAGENT PROMPT:**
 
@@ -369,9 +519,35 @@ For each success criterion, set `pass: true` if confirmed by evidence, `pass: fa
 }
 ```
 
+**Phase 5 Gate — emit this block before Phase 6 (one per workflow):**
+
+```
+PHASE 5 GATE — Judge result: workflow #N (WORKFLOW_NAME)
+════════════════════════════════
+mission_match:         N/5
+instruction_adherence: N/5
+no_fabrication:        N/5
+tool_selection_fit:    N/5
+per_criterion:
+  [✓/✗] "criterion text" — reasoning
+  [✓/✗] "criterion text" — reasoning
+────────────────────────────────
+Judge reasoning: "..."
+GATE: PASS / FAIL — [PASS if judge JSON is valid and all scores present; FAIL if JSON malformed]
+```
+
 ---
 
-## Phase 6 — Save result to .context/evals/
+## Phase 6 — Determine pass/fail and save result to .context/evals/
+
+**Pass condition (ALL of the following must hold):**
+- Phase 3 gate PASS (no skill_execution_error)
+- All `required_calls` invariants PASS
+- All `forbidden_calls` invariants PASS
+- `mission_match` score ≥ 3
+
+A 5/5 judge score with an invariant FAIL is still a FAIL (Deadly Sin #4).
+An invariant PASS with `mission_match` < 3 is still a FAIL.
 
 ```bash
 EVALS_DIR="$REPO_ROOT/.context/evals"
@@ -426,14 +602,9 @@ Each entry in `entries` follows the `EvalEntry` schema:
 }
 ```
 
-**Pass condition:** `passed = true` if ALL of:
-- All `required_calls` invariants PASS
-- All `forbidden_calls` invariants PASS
-- `mission_match` score ≥ 3
-
 ---
 
-## Phase 7 — Print scorecard
+## Phase 7 — Print scorecard and generate HTML dashboard
 
 Print per-workflow scorecard:
 
@@ -444,6 +615,7 @@ Print per-workflow scorecard:
   instruction_adherence:  N/5
   no_fabrication:         N/5
   tool_selection_fit:     N/5
+  invariants: N/M PASS
   criteria:
     [✓] criterion text
         → reasoning
@@ -470,17 +642,111 @@ Then print the summary table:
   Session tokens: N in / N cache / N out
   Judge tokens:   N in / N out
   ─────────────────────────────────────────────────
-  Grand total:    N in (incl. cache) / N out
+  Grand total:    (session_in + session_cache + judge_in) in / (session_out + judge_out) out
+  e.g. session 27 in / 946878 cache / 6152 out + judge 82125 in / 0 out
+       → Grand total: 27 + 946878 + 82125 = 1,029,030 in / 6152 out
+```
 
-Dashboard: pnpm --filter @leadbay/mcp run eval:view
+Then generate the HTML dashboard by running `gen-dashboard.py`. The canonical copy lives at `$REPO_ROOT/packages/mcp/test/eval/helpers/gen-dashboard.py`. Fall back to `$EVALS_DIR/gen-dashboard.py` if absent. **Do NOT overwrite either copy** — if neither exists, write to the canonical path (see design spec below). This preserves improvements made outside of eval runs.
+
+The Python script must produce a **self-contained single-file HTML dashboard** matching this exact design:
+
+### Section 1 — Header
+- Title: `⚡ Leadbay Eval Dashboard` (monospace, bold)
+- Subtitle: `N runs · M workflows · last updated <timestamp>`
+
+### Section 2 — Stat tiles (horizontal row)
+Five dark tiles with label + big number:
+`TOTAL` (white), `PASS` (green `#22c55e`), `FAIL` (red `#ef4444`), `PASS RATE %` (green/red based on ≥50%), `AVG MM` (score color)
+
+### Section 3 — Pass/Fail trend bar chart
+One vertical bar per entry, oldest→newest left to right.
+- Bar height proportional to avg judge score (MM+IA+NF+TSF)/4, scaled 0–5 → 0–60px
+- Bar color: `#22c55e` if passed, `#ef4444` if failed
+- Bars are thin (4px wide, 2px gap), packed tightly in a flex row
+- Label above chart: `Pass/Fail trend (all runs, oldest → newest)`
+
+### Section 4 — Filter bar
+- Buttons: `All` | `Pass only` | `Fail only` (toggle active state with blue border)
+- Workflow chip filters: one pill per unique workflow name (extracted from entry `name` before `/workflow-N`), showing count in parens. Clicking filters list to that workflow only.
+- Search input (right-aligned): filters by name or run ID substring
+
+### Section 5 — Entry list (scrollable)
+Each entry is a **compact single-line row** (not a card) that expands on click:
+
+**Collapsed row:**
+```
+[PASS|FAIL badge]  leadbay_daily_check_in/workflow-1    MM:5  IA:5  NF:5  TSF:5  ▶
+                   5/27/2026, 4:25:14 PM · 130.0s · 9 turns
+```
+- Badge: pill, green bg + black text for PASS, red bg + white text for FAIL
+- Name in monospace, timestamp + duration + turns in muted gray below
+- Score pills right-aligned: `MM:N` colored by score (5=green 4=lime 3=yellow 2=orange 1=red)
+- `▶` chevron right edge, rotates to `▼` when expanded
+
+**Expanded section (click to toggle):**
+- Scenario prompt used
+- Invariants list: `✓`/`✗` per item with reason
+- Per-criterion list: `✓`/`✗` + reasoning indented
+- Tool calls: comma-separated names
+- Judge reasoning: full text
+- Token counts
+
+### Implementation notes
+- All data embedded as `const ENTRIES = [...];` JSON in a `<script>` tag
+- Pure vanilla JS — no external dependencies
+- Dark theme throughout: bg `#0d1117`, surface `#161b22`, border `#30363d`, text `#c9d1d9`, muted `#8b949e`
+- Score color function: `{5:"#22c55e", 4:"#84cc16", 3:"#eab308", 2:"#f97316", 1:"#ef4444"}`
+- Entry `name` format is `prompt_name/workflow-N` — parse workflow label as everything before `/workflow`
+
+```bash
+DASHBOARD="$EVALS_DIR/eval-report.html"
+GEN_SCRIPT="$REPO_ROOT/packages/mcp/test/eval/helpers/gen-dashboard.py"
+[ -f "$GEN_SCRIPT" ] || GEN_SCRIPT="$EVALS_DIR/gen-dashboard.py"
+python3 "$GEN_SCRIPT" "$EVALS_DIR" "$DASHBOARD"
+echo "Dashboard: file://$DASHBOARD"
 ```
 
 ---
 
-## Iron Laws
+## Final Run Summary Gate
+
+After all workflows complete and the dashboard is generated, emit this block:
+
+```
+FINAL RUN SUMMARY
+════════════════════════════════════════════════════════
+Workflows run:           N
+PASS:                    N
+FAIL (product signal):   N  ← agent had correct context but scored below threshold
+FAIL (skill error):      N  ← skill execution error (system prompt, tsx, etc.)
+════════════════════════════════════════════════════════
+Dashboard: file://$DASHBOARD
+
+[For each FAIL (product signal):]
+  Workflow #N — WORKFLOW_NAME
+  Failing criteria:
+    [✗] "criterion text" — reasoning
+  Invariant failures (if any):
+    [✗] required_calls: leadbay_xxx not called
+  Judge scores: MM:N  IA:N  NF:N  TSF:N
+
+[For each FAIL (skill error):]
+  Workflow #N — WORKFLOW_NAME
+  Error: [description from skill_execution_error field]
+  Action required: [diagnose Phase 2/3 manually — do not re-run without fixing root cause]
+════════════════════════════════════════════════════════
+```
+
+**Skill errors are NOT self-corrected during this run.** They indicate a problem in the eval infrastructure (missing system prompt, tsx failure, MCP server not starting). Report them clearly so the user can investigate and fix the skill or environment before the next run. This is not a product regression — it is a tooling problem that requires human review.
+
+---
+
+## Invariable Rules (non-negotiable, applies across all phases)
 
 1. **Never fabricate evidence.** If the session output is ambiguous, mark the criterion as FAIL rather than guessing PASS.
 2. **Filter tool calls.** Only count tool calls whose name starts with `leadbay_`. ToolSearch, WebFetch, Bash etc. from leaked superpowers are noise — exclude them from all invariant checks and the judge prompt.
 3. **Judge is always a fresh-context subagent.** Never judge in the same context as the session runner — the judge must be blind to the session's "feel" and reason only from the evidence passed to it.
 4. **WORKFLOWS.md is the only contract source.** Never hardcode workflow metadata in this skill. Always re-read WORKFLOWS.md for every run.
-5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so `pnpm eval:report` can render it. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
+5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so Phase 7 can render the dashboard. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
+6. **Phase gates are mandatory.** Every phase has a gate block. If a gate is not emitted, the phase did not complete. Do not advance without emitting the gate verbatim.
