@@ -227,10 +227,21 @@ If GATE is FAIL: skip workflows with missing contracts. Proceed with the rest.
 For each workflow where `prompt_name` is not null/`~`:
 
 ```bash
-# Get the rendered prompt body using tsx on a temp script (avoids dist dependency)
+# Combined loader: MCP prompt body + buildServerInstructions() output.
+# This matches real user context — the MCP server delivers both the prompt body
+# AND server instructions, but claude -p's --system-prompt only carries the
+# prompt body unless we merge them here.
 TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
-PROMPT_SCRIPT=$(mktemp /tmp/get-prompt-XXXXXX.mts)
-cat > "$PROMPT_SCRIPT" << TSEOF
+GET_PROMPT_SCRIPT="$REPO_ROOT/packages/mcp/test/eval/helpers/get-system-prompt.mts"
+
+if [ -f "$GET_PROMPT_SCRIPT" ]; then
+  cd "$REPO_ROOT/packages/mcp"
+  SYSTEM_PROMPT=$("$TSX" "$GET_PROMPT_SCRIPT" "PROMPT_NAME" 2>/dev/null || true)
+  cd "$REPO_ROOT"
+else
+  # Fallback: prompt body only (no server instructions — gates may not fire)
+  PROMPT_SCRIPT=$(mktemp /tmp/get-prompt-XXXXXX.mts)
+  cat > "$PROMPT_SCRIPT" << TSEOF
 import { getPrompt } from "$REPO_ROOT/packages/mcp/src/prompts.ts";
 const rendered = getPrompt("PROMPT_NAME", {});
 const block = rendered.messages[0]?.content;
@@ -238,8 +249,9 @@ const body = block?.type === "text" ? block.text
   : Array.isArray(block) ? (block.find((b: any) => b.type === "text")?.text ?? "") : "";
 if (body && body.length >= 50) process.stdout.write(body);
 TSEOF
-SYSTEM_PROMPT=$("$TSX" "$PROMPT_SCRIPT" 2>/dev/null || true)
-rm -f "$PROMPT_SCRIPT"
+  SYSTEM_PROMPT=$("$TSX" "$PROMPT_SCRIPT" 2>/dev/null || true)
+  rm -f "$PROMPT_SCRIPT"
+fi
 echo "SYSTEM_PROMPT length: ${#SYSTEM_PROMPT}"
 ```
 
@@ -272,9 +284,8 @@ For each workflow, spawn a **session subagent** via the Agent tool with this pro
 **SESSION SUBAGENT PROMPT:**
 
 You are running a live Leadbay MCP eval session. Your only job is to:
-1. Set up an isolated HOME directory so the pixel-agents hook cannot inject superpowers context
-2. Run `claude -p` with the correct flags against the real Leadbay API
-3. Capture the full stdout (stream-json events) and return structured evidence
+1. Run `claude -p` with the correct flags against the real Leadbay API
+2. Capture the full stdout (stream-json events) and return structured evidence
 
 **Key flags:**
 - `--system-prompt` is **always required** — it overrides the project's CLAUDE.md which restricts
@@ -315,7 +326,7 @@ cat > "$TMPDIR/mcp-config.json" << MCPEOF
 MCPEOF
 ```
 
-Write settings (suppresses hook tools from leaking into allowed set):
+Write settings (clean slate — no hooks, no plugins):
 ```bash
 cat > "$TMPDIR/settings.json" << 'SETEOF'
 {
@@ -342,7 +353,7 @@ USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
 
 # 10s delay lets the tsx MCP server complete its stdio handshake before the first turn.
 # Without this, the session starts with status:"pending" and tool calls fail.
-# 5s is insufficient when parent-session hooks (pixel-agents, orca) add startup latency.
+# 5s is insufficient when the parent session has startup hooks that add latency.
 { sleep 10; echo "$USER_MSG"; } | claude -p \
   --input-format stream-json \
   --output-format stream-json \
