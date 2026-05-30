@@ -226,17 +226,25 @@ If GATE is FAIL: skip workflows with missing contracts. Proceed with the rest.
 
 ## Phase 2 — Load MCP system prompt (if prompt_name is set)
 
-For each workflow where `prompt_name` is not null/`~`:
+**Routing mode vs forced-prompt mode:**
+
+In Claude Desktop, the model receives the MCP server instructions and picks which prompt to invoke based on the user's message — routing is model-driven. The eval's `--system-prompt` bypasses this and forces a specific prompt body, which means routing bugs are invisible to evals.
+
+For workflows where routing matters (i.e., the scenario could plausibly match multiple prompts), set `ROUTING_MODE=true` in the workflow contract. In routing mode, pass **only the server instructions** as the system prompt (no forced prompt body) — the model must pick the right prompt itself from the MCP `/prompts` list, exactly as Claude Desktop does.
+
+For workflows where routing is not the concern (testing behaviour inside a known prompt), use the normal combined loader.
 
 ```bash
-# Combined loader: MCP prompt body + buildServerInstructions() output.
-# This matches real user context — the MCP server delivers both the prompt body
-# AND server instructions, but claude -p's --system-prompt only carries the
-# prompt body unless we merge them here.
 TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
 GET_PROMPT_SCRIPT="$REPO_ROOT/packages/mcp/test/eval/helpers/get-system-prompt.mts"
 
-if [ -f "$GET_PROMPT_SCRIPT" ]; then
+if [ "$ROUTING_MODE" = "true" ]; then
+  # Routing mode: server instructions only — model must pick the prompt.
+  # This matches Claude Desktop behaviour exactly.
+  SYSTEM_PROMPT="You are a Leadbay sales assistant. Use the available MCP tools and prompts to help the user. Invoke the correct slash-prompt for the user's request."
+  echo "ROUTING_MODE: server instructions only — prompt selection is model-driven"
+elif [ -f "$GET_PROMPT_SCRIPT" ]; then
+  # Normal mode: combined prompt body + server instructions.
   cd "$REPO_ROOT/packages/mcp"
   SYSTEM_PROMPT=$("$TSX" "$GET_PROMPT_SCRIPT" "PROMPT_NAME" 2>/dev/null || true)
   cd "$REPO_ROOT"
@@ -365,7 +373,7 @@ USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
   --dangerously-skip-permissions \
   --strict-mcp-config \
   --disable-slash-commands \
-  --allowedTools "mcp__leadbay-live__*" \
+  --allowedTools "mcp__leadbay-live__*,ask_user_input_v0" \
   --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Glob,Grep,LS,Skill,LSP,Agent" \
   --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
   ${MODEL:+--model "$MODEL"} \
@@ -389,6 +397,7 @@ Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT` value. Set `SCENARI
 
 From the stream-json output, extract:
 - **tool_calls**: lines where `type=assistant` with `tool_use` content blocks → `name` + `input`. **STRIP all non-`leadbay_` names before returning** (Iron Law #2).
+- **widget_calls**: separately capture any `ask_user_input_v0` tool_use blocks — do NOT strip these. Extract `input.questions[0].options` as an ordered array. This is how Claude Desktop actually presents next-steps to the user; the option order here is what the user sees, not the prose fallback.
 - **agent_prose**: text blocks from `type=assistant` that are NOT tool_use
 - **final_message**: `result` field from the `type=result` line
 - **tokens**: `usage` from the `type=result` line (`input_tokens`, `cache_read_input_tokens`, `output_tokens`)
@@ -402,6 +411,7 @@ Return a structured JSON summary:
 ```json
 {
   "tool_calls": [{"turn": 1, "name": "leadbay_xxx", "input": {}, "output_preview": "..."}],
+  "widget_calls": [{"turn": 1, "options": ["option 1 label", "option 2 label", "option 3 label"]}],
   "agent_prose": ["text between tool calls"],
   "final_message": "...",
   "tokens": {"in": 0, "cache": 0, "out": 0},
@@ -409,6 +419,8 @@ Return a structured JSON summary:
   "skill_execution_error": null
 }
 ```
+
+**Widget vs prose fallback note:** When `ask_user_input_v0` fires (widget), `widget_calls[0].options` is the ground truth for what the user sees — use this for position-based criteria (e.g., "triage board offered as first option"). When no widget fires, fall back to numbered prose in `final_message`. Judge prompts must check `widget_calls` first, then prose. A criterion that passes on prose but would fail on the widget options is a FALSE PASS.
 
 **Phase 3 Gate — emit this block before Phase 4 (one per workflow):**
 
