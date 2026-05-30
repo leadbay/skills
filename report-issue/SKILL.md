@@ -102,7 +102,10 @@ the body proper. The team reads it last, if at all.
 ## What a good issue carries: three things
 
 Every issue conveys these three, and a smart reader who has never used
-Leadbay should come away with all three:
+Leadbay should come away with all three. They are what the issue must
+*convey*, woven into the shortest prose that carries them — **not three
+headings to fill in.** The moment you make them slots, the same fact lands
+in two of them, and you have built the repetition this skill exists to kill.
 
 **1. PROBLEM — what is actually wrong.**
 State plainly what broke or what's missing. Distinguish the *symptom* the
@@ -179,13 +182,31 @@ LinkedIn URL instead: got the mobile. On this one contact, LinkedIn URL
 returned a phone where email did not.* One observation, reported as one
 observation. The team decides if it's a pattern.
 
-**Example C — structure is fine when it carries signal (#3670).** A bug
-report with `## Summary / ## Steps to Reproduce / ## Expected / ## Actual`
-is *good* when each section says something distinct. Don't strip headers to
-hit some prose ideal, and don't pad them with restatement either. Form
-follows the content: a repro-heavy bug often reads best as steps; a
-customer-call signal often reads best as a short paragraph. Use whichever
-makes the three things clearest.
+**Example C — structure is earned, not default (#3670).** Default to one
+tight paragraph. A header or numbered list earns its place only when it
+carries something a sentence can't — e.g. genuine repro *steps* an engineer
+will follow in order. A bug with real reproduction steps reads well as
+`## Steps to Reproduce` because each step is a distinct action. But the
+moment a "section" only restates a fact already in the paragraph, it's noise.
+Sections aren't banned; restatement is.
+
+**Example E — cut the repetition (a real failure).** A CSV-export bug filed
+with five headers:
+
+❌ Bloated (~180 words): *## Problem — …~2,400 leads. Campaigns that export
+fine are under ~800… ## Why it hurts — … ## Context — account, when, campaign…
+## Expected vs actual — infinite spinner, no error, no file… ## Data
+condition — campaigns under ~800 export fine; this one ~2,400…* — the
+800/2,400 split appears twice, "spinner/no error/no file" appears twice.
+
+✅ Cut to the bone (~50 words, one paragraph): *Boucherie du Marché
+(marie@…, US prod, 2026-05-29 ~10h ET) couldn't export their ~2,400-lead "Q2
+Restaurants" campaign to CSV — infinite spinner, no error, no file. Their
+campaigns under ~800 leads export fine (sizes are the reporter's estimate).
+They retried ~15 min, gave up, CS exported manually, and their two reps
+started calling an hour late.*
+
+Same facts, ~70% shorter, nothing stated twice. That's the bar.
 
 **Example D — one signal per issue (#3461).** A "Cold Call Cup prep" note
 with a P1/P2/P3 feature list and four mixed asks is not one issue. Split
@@ -244,6 +265,10 @@ true; if one isn't, fix it or go back to the reporter:
 
 - Does the body convey the PROBLEM, WHY-IT-HURTS, and CONTEXT — to someone
   who's never used Leadbay?
+- **The omission test:** can any sentence be deleted without the reader
+  losing a fact? If yes, delete it and re-check. Does any fact appear twice?
+  If yes, that's the #1 failure — cut one. The final draft should be the
+  shortest text that still carries all three things.
 - Is the cost concrete (units, a named consequence) rather than an adjective?
 - Did I name who actually hit this (account + moment for a bug; workflow +
   need for a feature)?
@@ -267,18 +292,27 @@ missing (account + moment, what they were doing and for whom, what it cost,
 which environment). Use the AskUserQuestion format. Never ask "what's the
 solution" or "what priority" — the team owns both.
 
-**2. Draft tight.** Prose or sections, whichever makes the three things
-clearest. Aim for short — most good issues are a few sentences to a short
-paragraph. Put any technical repro detail (IDs, tool names) in a short tail
-at the end, not in the body's lead. Length isn't the metric; signal is —
-but if you're past a screenful, you're probably doing too much or restating.
-Say each fact once: if you keep section headers, don't *also* prepend a
-paragraph that restates them — let the lead carry context and cost and the
-sections carry repro, with no sentence repeating another. A repro tail at
-the end is for handles the prose doesn't already carry (IDs, tool names,
-env) — don't restate body facts there, and don't close with a sentence that
-re-states the cost. Before you file, resolve every placeholder; never leave
-a literal `$TOKEN` (like a raw `$REPORTER`) in the body.
+**2. Draft, then cut to the bone.** Write the draft, then go through it and
+**delete every word, clause, and sentence that can be removed without losing
+a fact the engineer needs.** Repeat until nothing more can go. A first draft
+usually loses half its length this way — and should. The test for every
+sentence: *"if I delete this, does the reader lose a fact?"* If no, it's
+noise — delete it.
+
+Two non-negotiables:
+- **Each fact appears exactly once.** If the same thing is stated in two
+  places (e.g. the symptom in a "Problem" line and again in an "Expected vs
+  Actual" line), one of them is noise. Cut it.
+- **Default to one short paragraph.** Reach for a header or a numbered list
+  ONLY when it carries something a sentence can't — genuine repro *steps*, a
+  short evidence line — and never a section whose content restates another.
+  Five headers for a three-sentence bug is the failure, not the format.
+
+Repetition is not thoroughness. To the reader — and the CTO is dyslexic —
+restating the same fact reads as noise that hides the signal, and as not
+having bothered to think it through. Keep the irreducible repro handles (IDs,
+tool names, env) in one short tail, stated once. Resolve every placeholder;
+never leave a literal `$TOKEN` (like a raw `$REPORTER`) in the body.
 
 **3. Title.** Problem-shaped, names who + what concisely. Bugs:
 `<who> <what failed> <when/where>`. Features: `<who> can't <do what> — <why
