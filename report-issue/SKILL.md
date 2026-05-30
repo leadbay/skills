@@ -184,11 +184,22 @@ observation. The team decides if it's a pattern.
 
 **Example C — structure is earned, not default (#3670).** Default to one
 tight paragraph. A header or numbered list earns its place only when it
-carries something a sentence can't — e.g. genuine repro *steps* an engineer
-will follow in order. A bug with real reproduction steps reads well as
-`## Steps to Reproduce` because each step is a distinct action. But the
-moment a "section" only restates a fact already in the paragraph, it's noise.
-Sections aren't banned; restatement is.
+carries something a sentence can't — repro *steps* an engineer can't follow
+from a sentence. Sections aren't banned; restatement is.
+
+**Don't preserve a reporter's template — compress it.** When the reporter
+hands you the Jira shape (`Summary / Steps to Reproduce / Expected / Actual`),
+do NOT keep all four. Re-derive the shortest form:
+- The Summary becomes your one-line problem (in the prose, not a header).
+- Keep `## Steps to Reproduce` ONLY if the repro is genuinely multi-step and
+  hard to follow in a sentence. "Add leads to a campaign → the tab switches
+  → they don't show until refresh" is one sentence; it does not need a steps
+  block.
+- **Drop Expected/Actual whenever the expected behaviour is obvious from the
+  problem** ("leads should appear" — obviously). Expected/Actual that just
+  re-say "X should work, X doesn't" is the symptom told twice more.
+A four-header bug report usually compresses to two or three sentences. That
+compression is the job, not a betrayal of the reporter's structure.
 
 **Example E — cut the repetition (a real failure).** A CSV-export bug filed
 with five headers:
@@ -266,9 +277,11 @@ true; if one isn't, fix it or go back to the reporter:
 - Does the body convey the PROBLEM, WHY-IT-HURTS, and CONTEXT — to someone
   who's never used Leadbay?
 - **The omission test:** can any sentence be deleted without the reader
-  losing a fact? If yes, delete it and re-check. Does any fact appear twice?
-  If yes, that's the #1 failure — cut one. The final draft should be the
-  shortest text that still carries all three things.
+  losing a fact? If yes, delete it and re-check. Does any fact appear twice —
+  including the symptom re-told as a consequence or re-explanation? If yes,
+  that's the #1 failure — cut one. Final check: if a ruthless editor could
+  still cut ~30% of your body, you haven't cut enough — aim within ~15% of
+  the shortest version that keeps every fact.
 - Is the cost concrete (units, a named consequence) rather than an adjective?
 - Did I name who actually hit this (account + moment for a bug; workflow +
   need for a feature)?
@@ -300,13 +313,31 @@ sentence: *"if I delete this, does the reader lose a fact?"* If no, it's
 noise — delete it.
 
 Two non-negotiables:
-- **Each fact appears exactly once.** If the same thing is stated in two
-  places (e.g. the symptom in a "Problem" line and again in an "Expected vs
-  Actual" line), one of them is noise. Cut it.
+- **State each fact — especially the symptom — exactly once.** The most
+  common slip is telling the symptom and then re-telling it as a
+  *consequence* or *re-explanation*: "the list jumped to the top, **so she
+  lost her place and had to scroll back**" (lost-place and scroll-back just
+  re-say "jumped to the top"); "`enrich_titles` returned 0, **so the system
+  counts zero enrichable identities**" (re-says the 0). A follow-on clause
+  must add a NEW fact — the *cost* or the *cause* — not restate the symptom.
+  If you can delete it and lose nothing, it was a re-telling. Cut it.
 - **Default to one short paragraph.** Reach for a header or a numbered list
   ONLY when it carries something a sentence can't — genuine repro *steps*, a
-  short evidence line — and never a section whose content restates another.
-  Five headers for a three-sentence bug is the failure, not the format.
+  short evidence line. **If you write Steps to Reproduce, the prose says
+  NOTHING about what happened in the UI** — not the click, not the tab
+  switch, not "the leads weren't there". The steps own every action and the
+  symptom; the prose is one line of who-and-for-whom and one line of cost,
+  full stop. (Narrating the bug in prose AND in steps is the symptom told
+  twice.) Five headers for a three-sentence bug is the failure.
+- **State an outcome once, with its cause attached.** "`enrich_titles`
+  returned 0 because the imported rows have empty names" — not "returned 0…
+  the system counts zero identities because the rows have empty names"
+  (that says the zero twice). This includes the **same result on two
+  surfaces**: if the API call returned 0 *and* the Monitor badge shows "+0",
+  that's the same nothing twice — state the result once, then use the other
+  surface (the screenshot, the badge) for the *cause* (the empty-name rows),
+  not as a second telling of the zero. Name a count, a status, or a result a
+  single time and hang the cause off it in the same breath.
 
 Repetition is not thoroughness. To the reader — and the CTO is dyslexic —
 restating the same fact reads as noise that hides the signal, and as not
