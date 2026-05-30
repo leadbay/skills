@@ -169,9 +169,11 @@ can't tie an ask to a real user and moment, it isn't an issue yet.
 - **Proposed solution.** "Add…", "the system should…", priority labels,
   UX prescriptions. Cut it. (At most: one `Reporter hunch:` line at the end.)
 - **Invented detail.** A pain or number that isn't in the source and the
-  reporter didn't observe. Either it's real, or it's flagged
-  `(inferred — confirm with $REPORTER)`, or it's cut. Never ship a guessed
-  cost as fact — engineers will chase it for half a day.
+  reporter didn't observe — *including a figure you computed yourself* (a
+  ratio, a multiplier, "80 ÷ 5 = 16×"). Either it's real and sourced, or
+  it's flagged `(inferred — confirm)` / `(derived)`, or it's cut. Never
+  ship a guessed or self-computed number as observed fact — engineers will
+  chase it for half a day.
 - **Generalizing from one case.** One contact lacked a phone → "LinkedIn is
   a stronger enrichment input than email." No. Report the one case; let the
   team judge the sample.
@@ -231,6 +233,11 @@ clearest. Aim for short — most good issues are a few sentences to a short
 paragraph. Put any technical repro detail (IDs, tool names) in a short tail
 at the end, not in the body's lead. Length isn't the metric; signal is —
 but if you're past a screenful, you're probably doing too much or restating.
+Say each fact once: if you keep section headers, don't *also* prepend a
+paragraph that restates them — let the lead carry context and cost and the
+sections carry repro, with no sentence repeating another. Before you file,
+resolve every placeholder; never leave a literal `$TOKEN` (like a raw
+`$REPORTER`) in the body.
 
 **3. Title.** Problem-shaped, names who + what concisely. Bugs:
 `<who> <what failed> <when/where>`. Features: `<who> can't <do what> — <why
@@ -282,7 +289,7 @@ evidence and explain the rest in English.
   AI draft is harder than writing from notes. Throw it away, talk through
   the three things, write fresh.
 - *"I don't know which user — a customer complained on a call."* — Then say
-  that: "customer call 2026-05-XX, name on file with $REPORTER, not yet
+  that: "customer call 2026-05-XX, name on file with the reporter, not yet
   attributed to a seat." Honest and filable. "A user" is not.
 - *"The call was in French, can I file in French?"* — No. Narrative in
   English, French phrases as quoted evidence.
