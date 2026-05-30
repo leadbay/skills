@@ -15,11 +15,11 @@ description: |
     /eval --workflow 1,3,5
     /eval              (runs all workflows)
     /eval --workflow 1 --model claude-opus-4-7
-    /eval --workflow 9 --improve   (eval + auto self-improve if MM < 5)
+    /eval --workflow 9 --improve   (eval + auto self-improve if MM < 5; requires 3 stable 5/5/5/5 rounds before stopping)
     /eval --workflow 12,13,14 --verify 3   (each workflow enters 3 stability rounds as soon as it hits 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.6.0
+version: 1.7.0
 allowed-tools:
   - Bash
   - Read
@@ -803,11 +803,21 @@ jq '[.entries[] | select((.evidence.judge_scores | (.mission_match < 5 or .instr
 Three cases:
 
 **Case 1 — all scores == 5 on all dimensions (MM, IA, NF, TSF) — OR all passed == false due to skill error:**
-Print:
+
+A single 5/5/5/5 result is not enough to stop — LLM judges vary between runs. Run **3 consecutive verification rounds** for each passing workflow before declaring done. Use the same Phase 7b verification loop (re-run session + judge, track pass/fail per round).
+
 ```
-✓ All workflows at 5/5 across all dimensions. No self-improvement needed.
+✓ Workflow #N hit 5/5/5/5 — running 3 stability rounds before stopping...
+  Verify round 1/3: re-run session + judge → PASS (5/5/5/5) | PASS (minor dip) | FAIL
+  Verify round 2/3: ...
+  Verify round 3/3: ...
 ```
-Stop. Do not invoke relentless.
+
+- If all 3 rounds pass (MM ≥ 3 in each): print `✓ VERIFIED (3/3 stable)` and stop.
+- If any round fails: the fix is fragile — treat as Case 2 (invoke relentless on the failing workflow).
+- If all passed == false due to skill error (not product signal): skip verification and stop immediately.
+
+**Why 3 rounds before stopping:** a prompt change that produces 5/5/5/5 once may regress on the next LLM sample. Three passing rounds demonstrates genuine stability, not a lucky sample.
 
 **Case 2 — one or more workflows have ANY score < 5 (MM, IA, NF, or TSF) AND passed == true (real product signal, not skill error):**
 
