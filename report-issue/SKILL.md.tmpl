@@ -95,7 +95,10 @@ shipped to a named customer, half a campaign postponed, an event
 participant who gave up before their first call. If you can't name the
 cost in units, ask the reporter. A concrete *consequence* still counts as
 cost even when no number is available ("stopped the demo to filter by
-hand", "postponed half the campaign"); a bare adjective does not.
+hand", "postponed half the campaign"); a bare adjective does not. A number
+the reporter *estimated* rather than measured keeps a light tag ("~3-5×",
+"reporter's estimate") so it doesn't read as a measured fact the team will
+try and fail to reconcile against logs.
 
 **3. CONTEXT — what the user was doing, and the data/workflow condition.**
 Who was the user, doing what, for whom? What were they trying to
@@ -125,7 +128,7 @@ work and they were sad", you don't have the issue yet.
 > Proposed Solution: add a small origin badge next to each filter label…*
 
 ✅ Signal:
-> Title: `Actis filter panel shows two same-named filters that query different data`
+> Title: `Monitor filter panel shows two same-named filters that query different data`
 > Body: *JM, dogfooding the Actis onboarding on FR prod (2026-05-27),
 > filtered Monitor by "Industry" and saw two identical "Industry" entries
 > — one is Leadbay's native field, the other a CRM-synced custom field of
@@ -139,6 +142,10 @@ source), the cost (wrong result set, time lost reconciling), and the
 context (JM, Actis onboarding prep, Monitor, Industry filter) are all
 there. Note the honest attribution: JM *dogfooding* for Actis, not "Actis
 hitting this in prod" — that smuggles urgency the evidence doesn't support.
+This applies to the **title too**: the signal title names the surface
+("Monitor filter panel"), not the brand — `Actis filter panel…` would read
+in the issue list as if Actis hit it in prod. Keep the customer as use-case
+context in the body, never as the experiencer in the title.
 
 **Example B — enrichment cost (#3641).** Cut the "more generally,
 enrichment should be a multi-step pipeline" tail. Report what happened:
@@ -253,7 +260,10 @@ a literal `$TOKEN` (like a raw `$REPORTER`) in the body.
 **3. Title.** Problem-shaped, names who + what concisely. Bugs:
 `<who> <what failed> <when/where>`. Features: `<who> can't <do what> — <why
 it matters>`. Avoid `[Bug]`/`[Feature]` prefixes unless your team needs the
-routing tag; they eat signal. If you use one, keep it to a single tag.
+routing tag; they eat signal. If you use one, keep it to a single tag. When
+the reporter was dogfooding or previewing for a customer, don't lead the
+title with that customer's name as if they hit it — name the surface or the
+teammate; the customer is use-case context for the body.
 
 **4. File.**
 
