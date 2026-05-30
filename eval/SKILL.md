@@ -16,11 +16,11 @@ description: |
     /eval --workflow 1,3,5
     /eval              (runs all workflows)
     /eval --workflow 1 --model claude-opus-4-7
-    /eval --workflow 9 --improve   (eval + auto self-improve if MM < 5; requires 3 stable 5/5/5/5 rounds before stopping)
-    /eval --workflow 12,13,14 --verify 3   (each workflow enters 3 stability rounds as soon as it hits 5/5/5/5)
+    /eval --workflow 9 --improve   (eval + auto self-improve if any score < 5; each workflow must hit 5/5/5/5 THREE consecutive times before being marked complete — others keep improving in parallel)
+    /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.7.0
+version: 1.8.0
 allowed-tools:
   - Bash
   - Read
@@ -133,8 +133,8 @@ ls "$REPO_ROOT/WORKFLOWS.md" 2>/dev/null && echo "WORKFLOWS_MD: FOUND" || echo "
 
 Parse the user message for `--workflow N` (comma-separated), `--model M`, `--improve`, and `--verify N` flags.
 If no `--workflow` flag, run all workflows found in WORKFLOWS.md.
-If `--improve` is present, set `IMPROVE_MODE=true` — Phase 8 will auto-invoke `/relentless` for any workflow with MM < 5.
-If `--verify N` is present, set `VERIFY_MODE=true, VERIFY_ROUNDS=N` — Phase 7b will run N more rounds after all workflows hit 5/5/5/5.
+If `--improve` is present, set `IMPROVE_MODE=true` — Phase 8 will auto-invoke `/relentless` for any workflow with MM < 5. `--improve` also implicitly sets `VERIFY_MODE=true, VERIFY_ROUNDS=3`: every workflow that hits 5/5/5/5 must pass **3 consecutive stability rounds** before being marked complete. Workflows that fail any stability round re-enter the relentless improvement loop. While one workflow runs its 3 stability rounds, other workflows that haven't hit 5/5/5/5 continue being improved in parallel.
+If `--verify N` is present (without `--improve`), set `VERIFY_MODE=true, VERIFY_ROUNDS=N` — Phase 7b will run N more rounds after all workflows hit 5/5/5/5.
 
 ```bash
 # Load .env.eval credentials
@@ -842,7 +842,9 @@ Three cases:
 
 **Case 1 — all scores == 5 on all dimensions (MM, IA, NF, TSF) — OR all passed == false due to skill error:**
 
-A single 5/5/5/5 result is not enough to stop — LLM judges vary between runs. Run **3 consecutive verification rounds** for each passing workflow before declaring done. Use the same Phase 7b verification loop (re-run session + judge, track pass/fail per round).
+**Per-workflow completion gate:** a workflow is only done when it scores 5/5/5/5 AND passes **3 consecutive stability rounds**. A single 5/5/5/5 is not enough — LLM judges vary between runs. Workflows that fail any stability round re-enter Case 2 improvement. While workflow A runs its 3 stability rounds, workflow B (which hasn't hit 5/5/5/5 yet) keeps being actively improved. Only when ALL workflows have completed their 3 stability rounds does the `--improve` session end.
+
+Run **3 consecutive verification rounds** for each workflow that hits 5/5/5/5. Use the same Phase 7b verification loop (re-run session + judge, track pass/fail per round).
 
 ```
 ✓ Workflow #N hit 5/5/5/5 — running 3 stability rounds before stopping...
