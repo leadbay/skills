@@ -93,7 +93,9 @@ and not a system observation ("forces a workaround") — a concrete cost:
 minutes per lead × leads per batch, a deal slipped, the wrong message
 shipped to a named customer, half a campaign postponed, an event
 participant who gave up before their first call. If you can't name the
-cost in units, ask the reporter. Don't paper over it with an adjective.
+cost in units, ask the reporter. A concrete *consequence* still counts as
+cost even when no number is available ("stopped the demo to filter by
+hand", "postponed half the campaign"); a bare adjective does not.
 
 **3. CONTEXT — what the user was doing, and the data/workflow condition.**
 Who was the user, doing what, for whom? What were they trying to
@@ -160,7 +162,11 @@ with a P1/P2/P3 feature list and four mixed asks is not one issue. Split
 it: file the *observed* problems separately ("Lyon participant saw a 5-row
 import stuck at 0% for 3 min, gave up, skipped the warmup round"), and drop
 the speculative feature wishes that aren't tied to a real moment. If you
-can't tie an ask to a real user and moment, it isn't an issue yet.
+can't tie an ask to a real user and moment, it isn't an issue yet. Write
+each kept issue as its own complete title + body and file them one at a
+time — don't hand back a running commentary of what you'd file, hold, or
+drop. The "held (needs facts)" and "dropped (feature wish)" list is a short
+note to the reporter, never text inside an issue body.
 
 ---
 
@@ -182,7 +188,10 @@ can't tie an ask to a real user and moment, it isn't an issue yet.
   contacts to enrich'" stops at the symptom; "*the screenshot shows those
   accounts' contact rows have empty `firstName`/`lastName`, so the system
   counts zero enrichable identities*" names the condition. The screenshot
-  confirms; the prose carries.
+  confirms; the prose carries. Name the data condition you can *see*; if you
+  then state a *cause* you only inferred from it ("the import never attached
+  the names"), flag it `(inferred)` — don't assert a mechanism the evidence
+  doesn't directly show.
 - **The hollow technical body.** Named user, UUIDs, status codes, every box
   ticked — but no story of a human doing real work for someone, what they
   expected and why, what it cost. Boxes ticked, substance zero.
@@ -252,7 +261,8 @@ REPO="${REPO:-leadbay/product}"
 gh issue create --repo "$REPO" --title "$TITLE" --body "$BODY"
 ```
 
-Print the URL. For a mega-note that you split, file each atomic issue.
+Print the URL. For a mega-note that you split, file each atomic issue as
+its own title + body, one at a time.
 
 **5. Stop.** Don't follow up with the "proposed solution", don't @-mention
 engineers with extra context, don't reopen it on Slack. If the team needs
