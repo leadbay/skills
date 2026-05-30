@@ -31,7 +31,6 @@ allowed-tools:
   - Glob
   - Edit
   - Write
-  - AskUserQuestion
 ---
 
 ## Preamble (run first)
@@ -91,13 +90,7 @@ as...`, `Handle the response-shape change`), and that's correct —
 the team decides their own work. If you're filing one of those,
 close this skill and write it however suits.
 
-In practice the test is **the reporter's role vs the target repo**,
-not the topic. If you (the reporter) are on the team that ships the
-fix — backend engineer ↔ `leadbay/backend`, frontend engineer ↔
-`leadbay/frontend`, product team ↔ `leadbay/product` — and you're
-describing your own work item or your team's backlog, this isn't
-your skill. If you're outside that team (or it's a different
-team's repo), you're reporter-to-team and the gates apply.
+Step 0's two-test sequence makes this concrete.
 
 ---
 
@@ -119,10 +112,7 @@ proposed an "origin badge"):
 > than actually trying to better convey (and god forbid understand)
 > the problem you are experiencing.**"*
 
-That's the central rule. Everything else in this skill follows from
-it. There is a small release valve for the rare reporter who genuinely
-cannot let go of a hunch — Gate 1 describes it — but using it is a
-regression, not the default, and most issues should land without one.
+That's the central rule. Everything else in this skill follows from it.
 
 ---
 
@@ -257,6 +247,12 @@ length, same n=1 dogfooding evidence as #3641 — but #3641's
 prescriptive about the product, and that's the cut. Keep
 descriptive workflow gaps. Cut prescriptive product strategy.
 
+Watch the smuggled-prescription form: *"the absence of X forces Y"*
+is fine when Y is *what you did* (forces a parallel Apollo pass — a
+workaround you ran), and a smuggled fix when Y is *what the product
+should do* (forces us to build a manual-sourcing path). Same words,
+opposite intent — the tell is whether Y is your action or the team's.
+
 ### Sin 5 — Non-English narrative
 
 Source is a French customer call. Draft lands in GitHub with the
@@ -273,6 +269,10 @@ obvious they're evidence.
 - ❌ Body: *"Le commercial a cliqué sur 'Toujours en cours' pensant que…"*
 - ✅ Body: *"The rep clicked `Toujours en cours` thinking it meant
   'still active' — it actually meant 'still in progress'."*
+
+When the translation itself is inferred (not literal), flag it:
+*"`Toujours en cours` (lit: 'still in progress'; rep read it as
+'still active')"*.
 
 ### Sin 6 — Mega-issue (multiple distinct pains in one)
 
@@ -423,11 +423,7 @@ issue is doing too much. Use checkbox lists where work is distinct
 and parallel (see #3657). Use prose paragraphs for narrative.
 
 If you find yourself writing `user story 1`, `user story 2`,
-`user story 3` — stop. Those are 3 issues, not one. File them
-separately. (Real anti-pattern: `#3630` MCP Wow Effect, 6255 chars
-of speculative user stories. The CTO replied: *"this issue format
-is not useful because it jumps to solutions without clearly defining
-the actual problems."*)
+`user story 3` — stop. That's Sin 6 territory; split.
 
 ---
 
@@ -435,19 +431,33 @@ the actual problems."*)
 
 ### Step 0 — Is this even the right skill?
 
-Apply the role-vs-repo test from the Scope section. Is the reporter
-on the team that owns the target repo? If yes AND they're filing
-their own work item / backlog goal → owner-internal, exit with:
-"this looks like owner-internal team backlog — write it however
-suits, the team decides their own work." Don't run the gates.
+Two tests, **in this order** (the first that fires wins):
 
-Otherwise (reporter is outside the owning team, OR is on the team
-but reporting a customer-found problem they want triaged not
-work-tracked) → reporter-to-team, continue.
+1. **Customer-found-pain test (fires first).** Is the source a
+   user encounter — a customer call, a Loom from a customer,
+   a Sentry ticket from a real session, a dogfooded workflow that
+   broke, a user-reported regression? If yes → reporter-to-team,
+   RUN THE GATES. Doesn't matter what repo you're filing against
+   or what team you're on. A FE engineer reporting a customer-hit
+   regression in `leadbay/frontend` still needs Gate 2 grounding.
+
+2. **Own-team-backlog test (fires second).** Only if test 1 didn't
+   fire. Is the reporter on the team that owns the target repo AND
+   filing their own work item, sprint goal, FE/BE ask, or internal
+   TODO that no specific user is currently hitting? If yes →
+   owner-internal, exit with: "this looks like owner-internal team
+   backlog — write it however suits, the team decides their own
+   work." Don't run the gates.
+
+If neither test fires cleanly, treat as reporter-to-team and run
+the gates. False-positive routing into the gates is recoverable
+(reporter notices the misfit and uses Step 6's restraint clause);
+false-negative routing into Step 0 exit ships a slop issue.
 
 ### Step 1 — Decide bug or feature
 
-Ask yourself first. If unsure, ask the reporter ONCE.
+Ask yourself first. If unsure, fold the bug-vs-feature question
+into Step 2's batched ask (one prose message, both questions).
 
 ### Step 2 — Listen, don't draft
 
@@ -590,6 +600,28 @@ should…" lists.
 each tied to one real Actis conversation with a date and a name.
 If you cannot tie a user story to a real Actis conversation, do not
 file it — it's a marketing brainstorm, not a product issue.
+
+### Example D — When scaffolded sections earn their place
+
+Some bug reports have genuinely distinct parts — setup that
+matters, an event, and a downstream cost the reader needs to
+weigh — and a single prose paragraph buries them. Earned
+scaffolding (one short section per part, each carrying NEW
+information not in the others) is fine and improves scan speed.
+
+**Signal (scaffolded, non-milstan reporter):**
+> **Title:** Lyon cold-call participant got 0% import progress, gave up
+>
+> Setup: Lyon Cold Call Cup, 2026-05-20, Salle 3, ~14h. Participant
+> uploaded 5-row CSV via Activate to test the import flow before
+> calling.
+> What happened: progress bar stuck at 0%, no error toast, no
+> status change after 3 min. Participant refreshed; same. Asked
+> the organizer mid-event.
+> Cost: skipped the warmup round for that participant; they
+> joined the live calls cold without testing their Activate setup.
+
+Earned scaffolding; the gates still apply.
 
 ---
 
