@@ -316,7 +316,30 @@ TMPDIR=$(mktemp -d /tmp/lb-eval-XXXXXX)
 TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
 LIVE_SERVER="$REPO_ROOT/packages/mcp/test/eval/helpers/live-mcp-server.ts"
 echo "TSX: $TSX"
+
+# Agent-memory isolation — fresh-user baseline per session.
+# The live server reads/writes persistent on-disk agent memory at
+# ~/.leadbay/memory/<account>/entries.jsonl. Across repeated eval rounds this
+# memory accumulates, which poisons any workflow whose invariant is "capture
+# signal X": a correctly-behaving agent reads the summary, sees X already
+# captured, and declines a duplicate — so leadbay_agent_memory_capture never
+# fires and the invariant FAILS for the wrong reason. Reset memory to a
+# fresh-user state before EVERY session so capture-type invariants test a
+# genuine first-time signal. Back up first (reversible).
+LEADBAY_HOME="${LEADBAY_HOME:-$HOME/.leadbay}"
+for _MEMF in "$LEADBAY_HOME"/memory/*/entries.jsonl; do
+  [ -f "$_MEMF" ] || continue
+  cp "$_MEMF" "$_MEMF.evalbak.$$" 2>/dev/null || true
+  : > "$_MEMF"
+done
+echo "AGENT_MEMORY: reset to fresh-user baseline (backups: *.evalbak.$$)"
 ```
+
+> **Note:** this reset is the right default because each eval round must test a
+> deterministic fresh-user signal. If a specific workflow's contract instead
+> needs to test *returning-user* behaviour (memory already populated), seed the
+> required entries AFTER this reset and BEFORE the session, and say so in the
+> workflow's contract. The default is fresh.
 
 Write MCP config:
 ```bash
@@ -909,12 +932,13 @@ The seeded mission to pass to relentless:
 - Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
 - Judge reasoning on low scores: [paste judge reasoning for dimensions < 5]
 - Failing criteria: [list each with ✗ prefix, or "none — quality-only improvement"]
-- Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts
+- Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts. **CRITICAL surface rule for routing_mode workflows:** if the workflow contract has `routing_mode: true`, the session runs with **server-instructions only** and the prompt BODY is NEVER injected (slash commands are disabled). Editing `packages/promptforge/prompts/<prompt_name>.md.tmpl` will have **zero effect** on a routing_mode eval. For routing_mode workflows the correct fix surface is whatever the model actually reads in routing mode — the **server instructions** (`packages/promptforge/snippets/server-instructions/*.md`, plus the inline paragraphs in `packages/mcp/src/server.ts` such as SCHEDULED_TASK_PARAGRAPH / ARTIFACT_PROPOSAL_PARAGRAPH) and the **tool descriptions**. Confirm which surface the failing behaviour lives on BEFORE editing; a prompt-body edit that passes in non-routing mode can still fail the routing_mode eval.
 - Build gate: `pnpm prompts:build` from repo root after every edit (must exit 0)
 - Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build — **each test run MUST write its result to `.context/evals/` per the Phase 6 logging rule**; tag with `"suite": "relentless"`, `"_relentless_iter": N`, `"_relentless_goal": "..."` so the dashboard tracks every iteration
 - Read result: `jq '.entries[0].evidence.judge_scores' $(ls -t .context/evals/*.json | head -1)` — target: all 5
 - Regression guard: run `/eval --workflow [passing_workflow_ids]` once all scores reach 5
-- Exit: all 5/5 stable across 2 consecutive eval runs AND fresh-context second-opinion judge agrees improvement is real
+- Exit: all 5/5/5/5 stable across **3 consecutive** eval runs (matches the per-workflow completion gate — NOT 2) AND fresh-context second-opinion judge agrees improvement is real
+- **Escape hatch (do NOT loop forever on an unwinnable eval):** if **3 consecutive improvement iterations** target the SAME failing invariant/criterion and produce **NO movement** on it (the live output is materially unchanged despite the fix being verifiably on the surface the model reads), STOP improving that workflow and escalate. The suspect is no longer the prompt — it is the eval condition or the contract itself. Common causes: (1) the test account/fixture produces a pathological input (e.g. a 100%-off-ICP batch) where the agent's "wrong" behaviour is arguably correct; (2) the invariant conflicts with correct behaviour (e.g. "capture X every run" when X is already in agent memory — see the memory-reset step in Phase 3); (3) a harness confound (e.g. the widget tool name is not in `--allowedTools`). Report it as `STATUS: BLOCKED` with the specific invariant, the 3 no-movement iterations as evidence, and a recommendation to the user (adjust the fixture, the contract, or the harness) — NOT as a product FAIL to keep grinding on.
 
 Execute relentless Phase 0 immediately — set up the artifact spine, write 00-contract.md, then proceed through all phases without stopping. Iron Law #7 applies: do not end the turn until Phase 5 verdict is PROCEED TO REPORT.
 
