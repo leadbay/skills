@@ -547,6 +547,14 @@ GATE: PASS / FAIL — [PASS if judge JSON is valid and all scores present; FAIL 
 A 5/5 judge score with an invariant FAIL is still a FAIL (Deadly Sin #4).
 An invariant PASS with `mission_match` < 3 is still a FAIL.
 
+**Logging rule — write every result immediately, every time:**
+Every eval session result — including sessions run during `--improve` relentless iterations and `--verify` stability rounds — MUST be written to `.context/evals/` as soon as it completes. Do NOT wait until the end of the full run to batch-save. This ensures every iteration appears in the dashboard, not just the final summary.
+
+- Each `/eval` invocation (including those triggered internally during `--improve`) gets its own `RUN_ID` and JSON file written immediately.
+- During `--improve` relentless iterations: tag each entry with `"suite": "relentless"`, `"_relentless_iter": N`, and `"_relentless_goal": "..."` so the dashboard can group and label them.
+- During `--verify` stability rounds: tag entries with `"suite": "verify"` and `"_verify_round": N`.
+- A plain `/eval` run uses `"suite": "eval"` (unchanged).
+
 ```bash
 EVALS_DIR="$REPO_ROOT/.context/evals"
 TRANSCRIPTS_DIR="$EVALS_DIR/transcripts"
@@ -853,7 +861,7 @@ The seeded mission to pass to relentless:
 - Failing criteria: [list each with ✗ prefix, or "none — quality-only improvement"]
 - Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts
 - Build gate: `pnpm prompts:build` from repo root after every edit (must exit 0)
-- Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build
+- Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build — **each test run MUST write its result to `.context/evals/` per the Phase 6 logging rule**; tag with `"suite": "relentless"`, `"_relentless_iter": N`, `"_relentless_goal": "..."` so the dashboard tracks every iteration
 - Read result: `jq '.entries[0].evidence.judge_scores' $(ls -t .context/evals/*.json | head -1)` — target: all 5
 - Regression guard: run `/eval --workflow [passing_workflow_ids]` once all scores reach 5
 - Exit: all 5/5 stable across 2 consecutive eval runs AND fresh-context second-opinion judge agrees improvement is real
