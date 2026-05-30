@@ -320,7 +320,7 @@ Two non-negotiables:
   re-say "jumped to the top"); "`enrich_titles` returned 0, **so the system
   counts zero enrichable identities**" (re-says the 0). A follow-on clause
   must add a NEW fact — the *cost* or the *cause* — not restate the symptom.
-  If you can delete it and lose nothing, it was a re-telling. Cut it.
+  If you can delete a phrase and lose nothing, it was a re-telling. Cut it.
 - **Default to one short paragraph.** Reach for a header or a numbered list
   ONLY when it carries something a sentence can't — genuine repro *steps*, a
   short evidence line. **If you write Steps to Reproduce, the prose says
