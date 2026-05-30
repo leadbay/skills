@@ -19,7 +19,9 @@ description: |
   Triggers: "report this bug", "file an issue", "write a github issue",
   "open an issue for X", "create an issue", "rapporter ce bug",
   "ouvrir une issue", "report a feature request", "[For Actis]",
-  "[For Sider]", "[Bug]", "[Feature]".
+  "[For Sider]", "[Bug]", "[Feature]". Bracket-tag triggers summon
+  the skill from old habits; Step 4 will help drop them from the
+  filed title.
 version: 2.0.0
 allowed-tools:
   - Bash
@@ -66,10 +68,13 @@ as...`, `Handle the response-shape change`), and that's correct —
 the team decides their own work. If you're filing one of those,
 close this skill and write it however suits.
 
-In practice: if you would naturally start the issue with "we should
-build X" and you ARE part of the team that builds it, this isn't
-your skill. If you would naturally start with "the user / a customer
-hit X", it is.
+In practice the test is **the reporter's role vs the target repo**,
+not the topic. If you (the reporter) are on the team that ships the
+fix — backend engineer ↔ `leadbay/backend`, frontend engineer ↔
+`leadbay/frontend`, product team ↔ `leadbay/product` — and you're
+describing your own work item or your team's backlog, this isn't
+your skill. If you're outside that team (or it's a different
+team's repo), you're reporter-to-team and the gates apply.
 
 ---
 
@@ -92,9 +97,9 @@ proposed an "origin badge"):
 > the problem you are experiencing.**"*
 
 That's the central rule. Everything else in this skill follows from
-it. If the reporter insists on a fix idea, accept it as ONE sentence
-labelled `Reporter hunch:` at the very end — never in the title,
-never in the body proper, never as a section.
+it. There is a small release valve for the rare reporter who genuinely
+cannot let go of a hunch — Gate 1 describes it — but using it is a
+regression, not the default, and most issues should land without one.
 
 ---
 
@@ -217,12 +222,17 @@ support; both fail differently:
   LinkedIn URL returned a phone where email did not."* The team
   looks at sample size and decides whether the pattern is real.
 
-What is **not** this sin: naming a workflow gap from the
-reporter's own dogfooding session. *"No MCP path converts
-manually-sourced name+linkedin+title rows into outreach-ready
-emails — forces a parallel Apollo/Hunter pass"* (#3676) names a
-gap the dogfooder hit and what they did next. Not a fix, not a
-customer-wide claim. Keep it.
+The test that separates the two shapes from a legitimate
+workflow-gap note is **verb shape**, not evidence shape. Is your
+sentence about what the product *should* do (Sin 4 — cut), or
+about what you *hit* and what you *did next* (workflow gap —
+keep)? *"No MCP path converts manually-sourced contacts to
+outreach-ready emails — forces a parallel Apollo/Hunter pass"*
+(#3676) is descriptive: a gap I hit, a workaround I ran. Same
+length, same n=1 dogfooding evidence as #3641 — but #3641's
+*"enrichment should probably be a multi-step pipeline"* is
+prescriptive about the product, and that's the cut. Keep
+descriptive workflow gaps. Cut prescriptive product strategy.
 
 ### Sin 5 — Non-English narrative
 
@@ -252,9 +262,13 @@ distinct user pains, file five issues. A meta-issue listing them
 is fine ONLY if it links to the five and contains nothing else.
 
 Test: count the distinct user complaints in your draft. If > 1,
-split. The CTO replied to `#3461`'s wall: *"this issue format is
-not useful because it jumps to solutions without clearly defining
-the actual problems."*
+split. Worked example. Source: customer-call notes covering three
+frustrations — filter confusion, missing leads in campaign export,
+unresponsive remove-lead button. Slop: one issue with three
+sections. Signal: three separate issues, each tied to the specific
+customer moment, each titled with one user pain. The CTO replied
+to `#3461`'s wall: *"this issue format is not useful because it
+jumps to solutions without clearly defining the actual problems."*
 
 ---
 
@@ -336,14 +350,17 @@ Three checks, each one-line:
   Write down, not up; the reader infers urgency from the concrete
   fact, not from your adjectives.
 
+  Register ladder: *confusing < frustrating < blocking < lost data
+  < critical*. Stay AT or BELOW the source level for free; go above
+  only with a literal source quote or an inferred-flag.
+
   Worked example. Source (Loom transcript): *"j'ai trouvé ça un
   peu déroutant"* (a bit confusing). Slop body: *"the rep gave up
   before the first call"*. Signal body: *"the rep called the
-  filter `Industrie` confusing"* — or, if you suspect they gave up
-  but can't prove it from the source: *"(inferred: rep may have
-  abandoned the segment — confirm with $REPORTER)"*. The
-  difference: an honest issue costs nothing in priority; an inflated
-  one costs credibility on every issue you file next.
+  filter `Industrie` confusing"* — or, if you suspect more: *"(inferred:
+  rep may have abandoned the segment — confirm with $REPORTER)"*.
+  Honest costs nothing in priority; inflated costs credibility on
+  every issue you file next.
 
 PASS if all three checks clean.
 
@@ -382,12 +399,12 @@ Title hard cap: 90 chars. Body hard cap: 2000 chars. Above those, the
 issue is doing too much. Use checkbox lists where work is distinct
 and parallel (see #3657). Use prose paragraphs for narrative.
 
-If you find yourself writing five `user stories` under one issue,
-**stop**. That's not one issue — it's five. File them separately.
-(Real anti-pattern: `#3630` MCP Wow Effect, 6255 chars of speculative
-user stories. The CTO replied: *"this issue format is not useful
-because it jumps to solutions without clearly defining the actual
-problems."*)
+If you find yourself writing `user story 1`, `user story 2`,
+`user story 3` — stop. Those are 3 issues, not one. File them
+separately. (Real anti-pattern: `#3630` MCP Wow Effect, 6255 chars
+of speculative user stories. The CTO replied: *"this issue format
+is not useful because it jumps to solutions without clearly defining
+the actual problems."*)
 
 ---
 
@@ -395,16 +412,15 @@ problems."*)
 
 ### Step 0 — Is this even the right skill?
 
-Quickly check: is this a **reporter-to-team issue** (user pain,
-customer complaint, workflow gap for the team to act on), or an
-**owner-internal backlog note** (FE/BE ask, internal TODO, work-
-tracking goal where the team owns the fix)?
+Apply the role-vs-repo test from the Scope section. Is the reporter
+on the team that owns the target repo? If yes AND they're filing
+their own work item / backlog goal → owner-internal, exit with:
+"this looks like owner-internal team backlog — write it however
+suits, the team decides their own work." Don't run the gates.
 
-If owner-internal: exit. Tell the reporter "this looks like
-owner-internal team backlog — write it however suits, the team
-decides their own work." Don't run the gates.
-
-If reporter-to-team: continue.
+Otherwise (reporter is outside the owning team, OR is on the team
+but reporting a customer-found problem they want triaged not
+work-tracked) → reporter-to-team, continue.
 
 ### Step 1 — Decide bug or feature
 
@@ -461,7 +477,16 @@ path is costly / fragile / blocked), evidence source.
 Two patterns work. Aim for 30–60 chars (milstan's own median is
 ~38, max is ~73):
 - Bug: `<who> <verb> <what happened>` → "Actis campaign export drops page-2 leads"
-- Feature: `<who> can't <do what>` → "Actis can't tell Leadbay filters from CRM fields"
+- Feature: `<who> can't <do workflow-thing>` → "Actis can't tell Leadbay filters from CRM fields"
+
+Trap on the feature pattern: if the verb-phrase after `can't` reads
+like a Jira card title (`disable lead export`, `enable HQ-only
+filtering`, `add origin badge`), you've laundered a solution-shaped
+title into negative voice. *"Enterprise admin can't disable lead
+export"* fails the same Sin 3 test as *"Allow Enterprise admins to
+disable lead export"*. Real workflow-things describe what the user
+is trying to accomplish (tell things apart, qualify a lead, run
+outreach), not the name of a feature you want shipped.
 
 Avoid `[For X]`, `[Bug]`, `[Feature]` prefixes unless team convention
 requires them — they eat characters that should carry signal.
@@ -547,7 +572,7 @@ file it — it's a marketing brainstorm, not a product issue.
 
 ## When the reporter pushes back
 
-- *"But I already wrote the solution, I just want to save the engineer's time."* — You're not saving time, you're anchoring the engineer on the wrong problem. Cut the solution. If you have a strong hunch, keep it as ONE `Reporter hunch:` sentence at the bottom.
+- *"But I already wrote the solution, I just want to save the engineer's time."* — You're not saving time, you're anchoring the engineer on the wrong problem. Cut the solution. The `Reporter hunch:` slot Gate 1 describes exists but is a regression — don't reach for it as the default.
 - *"This is too short, it doesn't sound professional."* — The CTO is dyslexic. Tight problem-shaped issues get triaged within the day; long structured ones get skipped. Compare against milstan's own issues.
 - *"Claude wrote me a really good draft, can we just clean it up?"* — Cleanup of an AI draft is usually harder than rewriting from the underlying notes. Throw the draft away, talk through the four-gate questions, write fresh.
 - *"I don't know which user — the customer just complained on a call."* — Say that: *"Customer call on 2026-05-XX, name on file with $REPORTER, not yet attributed to a specific seat."* Honest and filable. Naming "a user" is not.
