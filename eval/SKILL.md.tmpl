@@ -4,8 +4,9 @@ description: |
   Run live eval sessions for one or more Leadbay MCP workflows.
   Reads contracts directly from WORKFLOWS.md, spawns a session subagent
   against the real Leadbay API, judges the result with a fresh-context
-  judge subagent, writes structured JSON to .context/evals/, and prints
-  a scorecard, and generates an HTML dashboard at `.context/evals/eval-report.html`.
+  judge subagent, writes structured JSON to a persistent per-project
+  eval store under `$HOME/.leadbay/evals/`, prints a scorecard, and
+  generates an HTML dashboard in the same store.
 
   For fully unattended runs (no approval prompts), launch Claude Code with:
     claude --dangerously-skip-permissions
@@ -19,7 +20,7 @@ description: |
     /eval --workflow 12,13,14 --verify 3   (each workflow enters 3 stability rounds as soon as it hits 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.6.0
+version: 1.6.1
 allowed-tools:
   - Bash
   - Read
@@ -36,7 +37,7 @@ Run live eval sessions for Leadbay MCP workflows. Each eval:
 1. Spawns a real Claude session against the live Leadbay API
 2. Captures tool calls, prose, and token usage
 3. Judges the result with a fresh-context subagent
-4. Writes structured JSON to `.context/evals/` for the dashboard
+4. Writes structured JSON to `$HOME/.leadbay/evals/<project-slug>/` for the dashboard
 
 ---
 
@@ -536,7 +537,7 @@ GATE: PASS / FAIL — [PASS if judge JSON is valid and all scores present; FAIL 
 
 ---
 
-## Phase 6 — Determine pass/fail and save result to .context/evals/
+## Phase 6 — Determine pass/fail and save result to the persistent eval store
 
 **Pass condition (ALL of the following must hold):**
 - Phase 3 gate PASS (no skill_execution_error)
@@ -548,13 +549,32 @@ A 5/5 judge score with an invariant FAIL is still a FAIL (Deadly Sin #4).
 An invariant PASS with `mission_match` < 3 is still a FAIL.
 
 ```bash
-EVALS_DIR="$REPO_ROOT/.context/evals"
+PROJECT_SLUG=$(
+  cd "$REPO_ROOT" && \
+    ~/.leadbay-skills/bin/lb-slug 2>/dev/null | awk -F= '/^SLUG=/{print $2; exit}'
+)
+PROJECT_SLUG=${PROJECT_SLUG:-$(basename "$REPO_ROOT" | tr -cd 'a-zA-Z0-9._-')}
+PROJECT_SLUG=${PROJECT_SLUG:-leadbay-eval}
+
+# Persistent by default so Conductor/worktree cleanup does not wipe history.
+# Override for throwaway local runs by setting LEADBAY_EVALS_DIR to a path.
+EVALS_ROOT="${LEADBAY_EVALS_ROOT:-${LEADBAY_HOME:-$HOME/.leadbay}/evals}"
+EVALS_DIR="${LEADBAY_EVALS_DIR:-$EVALS_ROOT/$PROJECT_SLUG}"
+case "$EVALS_DIR" in
+  "~") EVALS_DIR="$HOME" ;;
+  "~/"*) EVALS_DIR="$HOME/${EVALS_DIR#~/}" ;;
+esac
+case "$EVALS_DIR" in
+  /*) ;;
+  *) EVALS_DIR="$REPO_ROOT/$EVALS_DIR" ;;
+esac
 TRANSCRIPTS_DIR="$EVALS_DIR/transcripts"
 mkdir -p "$EVALS_DIR" "$TRANSCRIPTS_DIR"
 
 RUN_ID=$(date -u +%Y-%m-%dT%H-%M-%S)_$$
 RESULT_FILE="$EVALS_DIR/${RUN_ID}.json"
 echo "Saving to: $RESULT_FILE"
+echo "Eval store: $EVALS_DIR"
 ```
 
 Each entry in `entries` follows the `EvalEntry` schema:
@@ -793,10 +813,10 @@ If `--improve` is ALSO set: after `--verify` completes, run Phase 8 only for wor
 
 **Skip this phase entirely if `--improve` was NOT in the user's invocation.**
 
-After the Final Run Summary, check every result written to `.context/evals/`:
+After the Final Run Summary, check every result written to `$EVALS_DIR`:
 
 ```bash
-LATEST=$(ls -t "$REPO_ROOT/.context/evals"/*.json | head -1)
+LATEST=$(ls -t "$EVALS_DIR"/*.json | head -1)
 jq '[.entries[] | select((.evidence.judge_scores | (.mission_match < 5 or .instruction_adherence < 5 or .no_fabrication < 5 or .tool_selection_fit < 5)) and .passed == true)]' "$LATEST"
 ```
 
@@ -842,7 +862,7 @@ The seeded mission to pass to relentless:
 - Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts
 - Build gate: `pnpm prompts:build` from repo root after every edit (must exit 0)
 - Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build
-- Read result: `jq '.entries[0].evidence.judge_scores' $(ls -t .context/evals/*.json | head -1)` — target: all 5
+- Read result: `jq '.entries[0].evidence.judge_scores' "$(ls -t "$EVALS_DIR"/*.json | head -1)"` — target: all 5
 - Regression guard: run `/eval --workflow [passing_workflow_ids]` once all scores reach 5
 - Exit: all 5/5 stable across 2 consecutive eval runs AND fresh-context second-opinion judge agrees improvement is real
 
@@ -866,5 +886,5 @@ Fix the infrastructure issue first (see Final Run Summary above).
 2. **Filter tool calls.** Only count tool calls whose name starts with `leadbay_`. ToolSearch, WebFetch, Bash etc. from leaked superpowers are noise — exclude them from all invariant checks and the judge prompt.
 3. **Judge is always a fresh-context subagent.** Never judge in the same context as the session runner — the judge must be blind to the session's "feel" and reason only from the evidence passed to it.
 4. **WORKFLOWS.md is the only contract source.** Never hardcode workflow metadata in this skill. Always re-read WORKFLOWS.md for every run.
-5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so Phase 7 can render the dashboard. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
+5. **Preserve dashboard compatibility.** The JSON written to `$EVALS_DIR` must match the `EvalEntry` schema exactly so Phase 7 can render the dashboard. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
 6. **Phase gates are mandatory.** Every phase has a gate block. If a gate is not emitted, the phase did not complete. Do not advance without emitting the gate verbatim.
