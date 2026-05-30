@@ -244,9 +244,11 @@ at the end, not in the body's lead. Length isn't the metric; signal is —
 but if you're past a screenful, you're probably doing too much or restating.
 Say each fact once: if you keep section headers, don't *also* prepend a
 paragraph that restates them — let the lead carry context and cost and the
-sections carry repro, with no sentence repeating another. Before you file,
-resolve every placeholder; never leave a literal `$TOKEN` (like a raw
-`$REPORTER`) in the body.
+sections carry repro, with no sentence repeating another. A repro tail at
+the end is for handles the prose doesn't already carry (IDs, tool names,
+env) — don't restate body facts there, and don't close with a sentence that
+re-states the cost. Before you file, resolve every placeholder; never leave
+a literal `$TOKEN` (like a raw `$REPORTER`) in the body.
 
 **3. Title.** Problem-shaped, names who + what concisely. Bugs:
 `<who> <what failed> <when/where>`. Features: `<who> can't <do what> — <why
