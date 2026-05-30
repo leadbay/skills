@@ -28,6 +28,11 @@
 #                                        where the agent writes "DRY:
 #                                        nothing to reuse" without
 #                                        actually grepping.
+#   outcome-scoring-audit FILE         — v7.3 hardening: iteration eval
+#                                        must explicitly declare that all
+#                                        scoring came from produced
+#                                        outputs, not prompt/code analysis,
+#                                        and list the artefacts reviewed.
 #   q-saturated ART_DIR [WIN] [DELTA]  — Q TOTAL moving-avg plateau check
 #                                        (default DELTA scales with Q range:
 #                                        12 for ≥100-scale, 0.5 for ≤10-scale)
@@ -155,6 +160,16 @@ Subcommands:
           line OR a path-with-extension reference
         - "### Coupling check" names a module path
       Catches "DRY: nothing to reuse" without an actual grep.
+
+  outcome-scoring-audit FILE
+      v7.3 hardening: the iteration file must include:
+        ## Outcome-scoring audit
+        Scoring source: OUTCOMES_ONLY
+        Prompt/code analysis used for scoring: NO
+        Output artefacts reviewed:
+        - <at least one produced output artefact>
+      Fails if the audit is absent, if scoring admits prompt/code use,
+      or if no produced output artefact is listed.
 
   q-saturated ART_DIR [WINDOW] [MAX_DELTA]
       Read Q TOTAL from the last WINDOW iter-NN.md files in ART_DIR
@@ -517,6 +532,48 @@ case "$cmd" in
       exit 1
     fi
     echo "PLAN_SUBSTANTIVE: funcs=$funcs_n edges=$edges_n dry=ok coupling=ok"
+    ;;
+
+  outcome-scoring-audit)
+    file="${1:-}"
+    if [ -z "$file" ] || [ ! -f "$file" ]; then
+      echo "Usage: lb-relentless-gate outcome-scoring-audit FILE" >&2
+      exit 2
+    fi
+    if ! grep -qF "## Outcome-scoring audit" "$file"; then
+      echo "OUTCOME_SCORING_AUDIT_MISSING: $file has no '## Outcome-scoring audit' section" >&2
+      echo "  → Scoring prompt/code instead of produced outputs is a Deadly Sin; add the audit and rescore from outputs." >&2
+      exit 1
+    fi
+    if ! grep -qE '^Scoring source:[[:space:]]*OUTCOMES_ONLY[[:space:]]*$' "$file"; then
+      echo "OUTCOME_SCORING_SOURCE_INVALID: expected 'Scoring source: OUTCOMES_ONLY'" >&2
+      exit 1
+    fi
+    if ! grep -qE '^Prompt/code analysis used for scoring:[[:space:]]*NO[[:space:]]*$' "$file"; then
+      echo "OUTCOME_SCORING_USES_PROMPT_OR_CODE: expected 'Prompt/code analysis used for scoring: NO'" >&2
+      echo "  → Prompt/code analysis may be diagnostic only; it cannot be scoring evidence." >&2
+      exit 1
+    fi
+    if grep -qiE '^Prompt/code analysis used for scoring:[[:space:]]*(YES|PARTIAL|SOME|Y)' "$file"; then
+      echo "OUTCOME_SCORING_USES_PROMPT_OR_CODE: audit admits prompt/code-based scoring" >&2
+      exit 1
+    fi
+    artefacts=$(awk '
+      /^Output artefacts reviewed:/ { in_b=1; next }
+      in_b && /^## / { in_b=0 }
+      in_b && /^[[:space:]]*-[[:space:]]+./ { print }
+    ' "$file") || true
+    artefact_n=$(printf "%s\n" "$artefacts" | grep -c . || true)
+    if [ "$artefact_n" -lt 1 ]; then
+      echo "OUTCOME_SCORING_NO_ARTEFACTS: audit lists no produced output artefacts" >&2
+      echo "  → List screenshots/logs/API responses/generated files/transcripts/side effects reviewed for scoring." >&2
+      exit 1
+    fi
+    if printf "%s\n" "$artefacts" | grep -qiE '(^|[[:space:]])(none|n/a|todo|tbd)([[:space:]]|$)'; then
+      echo "OUTCOME_SCORING_ARTEFACTS_THIN: artefact list contains none/n/a/todo/tbd" >&2
+      exit 1
+    fi
+    echo "OUTCOME_SCORING_AUDIT_OK: artefacts=$artefact_n"
     ;;
 
   mission-bar-met)

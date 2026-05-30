@@ -37,7 +37,9 @@ description: |
   second subagent verifying each prior finding was addressed before
   adding new ones. The agent runs an *optimisation journey* against
   MISSION-derived qualitative criteria scored 0–100 by judgment
-  looking at live output. Plan + self-review before each build
+  looking ONLY at outputs produced by the prompt/code in real use.
+  Prompt/code analysis is diagnostic only and never scoring evidence.
+  Plan + self-review before each build
   (DRY/race/coupling/blast-radius). Loud iteration numbers + journey
   table at the end. Built for "I'm leaving for the night, ship
   something I'd be proud of by morning" sessions — the agent owns
@@ -45,7 +47,7 @@ description: |
   Triggers: "relentless", "relentless mode", "overnight", "night shift",
   "iterate until perfect", "work autonomously", "I'll be away — keep going",
   "don't stop until it's great", "make it bulletproof".
-version: 7.2.0
+version: 7.3.0
 allowed-tools:
   - Bash
   - Read
@@ -352,7 +354,9 @@ You will:
      `## Final decision: PROCEED | REVISED | ABORT`. Build cannot
      start until `plan-reviewed` gate passes.
    - **BUILD → COMMIT → MERGE → DEPLOY LIVE → EVALUATE** (run every
-     B/E/F observable AND score every Q-criterion 0–100 by judgment)
+     B/E/F observable AND score every Q-criterion 0–100 by judgment
+     on actual outputs produced by the prompt/code; prompt/code
+     analysis is forbidden as scoring evidence)
      **→ JUDGE → write iter-NN.md** including (v4-required) a
      `## Q-target outcome: IMPROVED | NO_MOVEMENT | REGRESSED` line
      comparing actual vs projected → **run the Milan Check** at end
@@ -429,6 +433,28 @@ Each is now a hard rule. Read this table BEFORE the Iron Laws.
 | v6's per-iteration plan + self-review (4a-iii) had the shape of an engineering review without the substance. The `plan-reviewed` gate just checked header presence; an agent could write "DRY: nothing to reuse, looks clean" under each heading and pass. No file-path evidence required, no enumerated edge cases, no actual grep cited. | v7 adds two new required plan sections: `## Functions / methods to add or modify` (≥1 entry shaped like `<file.ext>:<name>: ADD\|MODIFY`) and `## Edge cases this slice must handle` (≥3 enumerated). New `plan-substantive` gate (run after `plan-reviewed`) checks: (a) ≥1 path-shaped function entry, (b) ≥3 edge-case bullets, (c) DRY check cites either a `Searched: <pattern>` line OR a path-with-extension, (d) Coupling check names a module path. Self-review sub-sections updated with evidence-required wording. Style-guide check sub-section now reads `wiki/style/<repo>.md` (or invokes `/distill-style` first if missing) and cites at least one applicable rule. |
 | For LLM-driven pipelines, /relentless reviewed validators/code in isolation but never the actual outputs the validators are supposed to filter. Five fresh-context second-opinion subagents read `validators.ts`, test files, and SKILL.md prose — none read a single proposed plan body, capability_map artefact, or research artefact. Verdict: subagent #4 and #5 CLEAN because the validators are correct *against constructed adversarial fixtures*. Then the user demanded "show me a real plan" and immediately surfaced THREE bugs the validators+subagents had not caught: (a) `style_check` orchestrator silently skipped the sign-off check on touchpoint 3 (validator code correct, prompt wiring wrong); (b) `capability_map` was hallucinating LinkedIn slugs from training-data priors and asserting `discovered_via: composio_list_tools_by_toolkit` when Composio's catalog never returned them — an R-1.0 violation with no deterministic backstop; (c) plan touchpoint bodies had operator-voice slips ("I work with field operations teams on...") and pitchy follow-ups that plan_review only borderline-flagged at D6=7/D9=6 — no deterministic validator existed for R-operator-pitch. Code-only review of an LLM agent's filters is shallower than it looks: a validator that passes 100% of its own unit tests can still let real LLM output through because the LLM doesn't emit the fixture-shaped inputs the validator was tested against. | v7.2 adds a mandatory **end-to-end output review** sub-phase. (1) Phase 2c MUST include ≥1 B-row of shape `B: end-to-end agent run produces an artefact bundle (plan + validation + plan_review + capability_map + at least one style/* artefact)` and ≥1 Q-row scoring `the actual proposed plan body — would a critical human reader find any defect a validator would let through?`. (2) New phase 4a-viii-bis: after the deterministic eval, the agent MUST trigger an end-to-end agent run against the smallest representative scenario, dump the resulting artefacts to `iter-NN-evidence/agent-run/`, and read each artefact body line-by-line for defects the validators didn't catch. Findings are logged in iter-NN.md under `## Output review (4a-viii-bis)` with one `bug` line per defect citing artefact + line + which validator should have caught it. (3) Second-opinion subagent prompts (Phase 4a-xiv) MUST include actual artefact bodies in the materials block, not just code. Specifically the prompt template requires lines: `=== LATEST PLAN BODY ===`, `=== LATEST CAPABILITY_MAP ===`, `=== LATEST PLAN_REVIEW VERDICT ===`. A subagent prompt that contains only file paths (or only `validators.ts` + tests) is a Phase-4a-xiv violation; the gate `second-opinion-substantive` checks the materials list for ≥3 artefact-body sections. (4) New gate `output-review-present` at iter-NN.md: refuses PROCEED if no `## Output review (4a-viii-bis)` section exists for the latest iteration with ≥1 `bug` line OR `bug-free: confirmed by reading artefact bodies` (forcing a deliberate read, not silent skip). The principle: validators against fixtures prove the validator works; validators against real LLM output prove the *system* works. /relentless on an LLM-driven pipeline must do both. |
 
+### Deadly Sin — Prompt/code scoring instead of outcome scoring
+
+If you score the prompt, skill text, validator, source code, test
+file, or diff instead of the outputs produced when that prompt/code is
+actually used, the evaluation is totally, 100% useless for this
+process. It may help you decide what to change next. It proves
+nothing about quality.
+
+The score must describe observed behaviour, not expected behaviour.
+For a prompt or skill, run it on realistic source inputs and score the
+generated output. For code, execute the code through the relevant
+workflow and score the UI state, API response, generated file, DB row,
+log, side effect, screenshot, or transcript it produces. Reading the
+prompt/code can explain a bug after you see it in an output; it cannot
+be the evidence that earns a score.
+
+Hard stop: if ANY part of scoring is based on prompt/code analysis
+instead of produced outputs, the score is invalid, the iteration file
+is invalid, and passage to Judge, Milan Check, second opinion, or
+Phase 5 is PROHIBITED. Re-run the prompt/code, collect actual outputs,
+and rescore from those outputs.
+
 ---
 
 ## Iron Laws (v2)
@@ -494,7 +520,16 @@ These are non-negotiable. Violating any voids the contract.
    the "I'll pick this up next turn" stop. Both are lethal to a
    relentless run; both are now banned distinctly.
 
-8. **Pass IF AND ONLY IF any further improvement is actually
+8. **Outcome-only scoring.** Prompt/code review is diagnostic, never
+   evaluative. Reading a prompt, skill, validator, source file, diff,
+   or unit test tells you what the system is supposed to do; it does
+   not tell you what it actually does. Any Q score, PASS/FAIL, Milan
+   row, or second-opinion verdict based on prompt/code analysis instead
+   of actual produced outputs is void. The agent may not advance past
+   Evaluate until the iteration file proves scoring came from real
+   outputs.
+
+9. **Pass IF AND ONLY IF any further improvement is actually
    impossible.** Not "scores look high enough." Not "I tried for a
    few iterations." Not "I can name 5 follow-ups but they're
    deferred." If you can name a fixable improvement, the work IS
@@ -1020,7 +1055,14 @@ format):**
    test.** Q is the place where you look at the live output and ask
    "what would a brilliant human reviewer notice here?" — not "did
    the test return 200." Deterministic tests live in B/E/F.
-5. **Each rubric describes what a brilliant human would notice at
+5. **Each criterion is scored from produced outputs, never from
+   prompt/code analysis.** A criterion whose probe says "read the
+   prompt", "inspect the validator", "review the code", "check the
+   diff", or "look at the unit tests" is invalid. Those are planning
+   diagnostics. The probe must say what output you will collect from
+   a representative run and how a brilliant human would judge that
+   output.
+6. **Each rubric describes what a brilliant human would notice at
    each band**, not just metric thresholds. The probe describes the
    live evidence you look at.
 
@@ -1063,11 +1105,14 @@ it's relevant to the mission you wrote in 2a:
   don't email after 8pm, don't propose Friday afternoons)?
 - **Boring under load** — when the system is busy / queued / slow,
   does it stay calm and predictable, or does it get weird?
-- **Code quality through senior eyes** *(mandatory — always Q-N)* —
-  if a senior engineer read this diff, would they say "smart choices"
-  or "you have a lot to learn about software engineering"? This is the
-  one Q-criterion you don't get to skip — it forces you to evaluate
-  the code as code, not just the behaviour as behaviour.
+- **Implementation quality through outcome evidence** *(mandatory —
+  always Q-N)* — when the changed system is exercised in realistic
+  workflows, does it behave like it was built by a senior engineer:
+  predictable state transitions, no brittle edge behaviour, no
+  duplicated side effects, useful logs, debuggable failures? You may
+  read code to diagnose WHY an output is bad, but this Q score is
+  based on observed outputs and runtime artefacts, not on reading the
+  diff.
 
 (Pick the ones from this list that fit the mission. Add ones that
 aren't on this list when the mission demands them. Twelve is the
@@ -1367,7 +1412,8 @@ Each iteration is:
 │  4a-vi.   MERGE — rebase / resolve conflicts                    │
 │  4a-vii.  DEPLOY — push to LIVE; verify with `gate deploy`      │
 │  4a-viii. EVALUATE — run EVERY B/E/F observable AND score every │
-│           Q-criterion 0–100 by judgment looking at live output  │
+│           Q-criterion 0–100 by judgment looking at produced     │
+│           outputs only; write outcome-scoring audit             │
 │  4a-ix.   REVIEW-AGENT triage — bot/CI comments                 │
 │  4a-x.    JUDGE — set next iteration's goal                     │
 │  4a-xi.   WRITE iter-NN.md — full template; gate phase + banned │
@@ -1781,6 +1827,12 @@ in `02b-criteria.md`:
   Score against the 0–100 rubric you wrote in 2b. The score should
   reflect what a thoughtful person would actually say, not what fits
   the rubric mechanically.
+- Do NOT score by reading the prompt, skill, validator, source file,
+  diff, unit tests, or test fixtures. Those can explain why an output
+  is bad; they cannot prove the output is good. If your evidence cell
+  would say `SKILL.md`, `validators.ts`, `prompt.md`, `git diff`, or
+  `unit tests`, stop. Produce an artefact by running the system and
+  score that artefact instead.
 - In the "Notes" column, write what specifically would push the
   score higher. This is the seed for the next iteration's plan.
 - If you find yourself scoring everything 70–80, you're either
@@ -1797,6 +1849,11 @@ Two anti-shortcut rules:
   +5 in one iteration. That usually means you scored optimistically
   rather than judgmentally. A real iteration moves 1–3 criteria
   meaningfully and leaves the rest near unchanged.
+- **No prompt/code scoring.** If any Q score or PASS/FAIL was based on
+  analysis of the prompt/code rather than outputs produced by running
+  it, the whole evaluation is void. Passage to 4a-ix or later is
+  prohibited until you re-run the prompt/code and rescore from
+  outputs.
 
 **No skip markers.** If your test framework supports skip markers
 (pytest `@pytest.mark.skip`, jest `xtest`, RSpec `xit`, etc.) and you
@@ -1841,6 +1898,34 @@ Q TOTAL (sum of scores): SUM_N (Δ vs N-1: ±X)
 Q AVG: AVG_N
 Q MOVING_AVG (last 5 iters incl. this): MA_N
 ```
+
+Immediately after the eval table, add the audit block. This is a hard
+gate, not documentation:
+
+```markdown
+## Outcome-scoring audit
+Scoring source: OUTCOMES_ONLY
+Prompt/code analysis used for scoring: NO
+Output artefacts reviewed:
+- Q1: iter-N-evidence/Q1-... — <produced output reviewed>
+- Q2: iter-N-evidence/Q2-... — <produced output reviewed>
+- ...
+Prompt/code analysis used only for diagnosis: <none | file/path + why>
+```
+
+Write the eval table and audit block into `iter-NN.md` immediately,
+then run:
+
+```bash
+NZ=$(printf '%02d' $N)
+ITER_FILE="$ART_DIR/iter-$NZ.md"
+"$_LB_BIN/lb-relentless-gate" outcome-scoring-audit "$ITER_FILE"
+```
+
+If this gate fails, the iteration cannot proceed to Review-agent
+triage, Judge, Milan Check, second opinion, or Phase 5. Re-run the
+prompt/code in a representative scenario, save the produced outputs,
+and rescore from those outputs.
 
 Saving the score history matters: the Milan Check reads the last 5
 iterations' Q TOTAL to detect saturation. Always include the row even
@@ -1947,6 +2032,14 @@ iteration-summary table, so keep it short and substantive>
 PASS: M/TOTAL · FAIL: K/TOTAL · DEFERRED: D · REGRESSED: J
 Q TOTAL (sum of scores): SUM_N (Δ vs N-1: ±X)
 
+## Outcome-scoring audit
+Scoring source: OUTCOMES_ONLY
+Prompt/code analysis used for scoring: NO
+Output artefacts reviewed:
+- Q1: iter-N-evidence/Q1-... — <produced output reviewed>
+- Q2: iter-N-evidence/Q2-... — <produced output reviewed>
+Prompt/code analysis used only for diagnosis: <none | file/path + why>
+
 ## Q-target outcome: IMPROVED | NO_MOVEMENT | REGRESSED | NOT_TARGETED
 - Targeted criterion: Q<id> from iter-NN-plan.md
 - Projected score: P/100
@@ -1984,6 +2077,7 @@ ITER_FILE="$ART_DIR/iter-$NZ.md"
 # (write the file)
 "$_LB_BIN/lb-relentless-gate" phase "Iteration $N" "$ITER_FILE" 35 "## Eval"
 "$_LB_BIN/lb-relentless-gate" banned "$ITER_FILE"
+"$_LB_BIN/lb-relentless-gate" outcome-scoring-audit "$ITER_FILE"
 "$_LB_BIN/lb-learnings-log" '{"skill":"relentless","type":"operational","key":"iteration-FEATURE_SLUG-'$N'","insight":"GOAL|EVAL_RESULT|NEXT_GOAL","confidence":8,"source":"observed","files":["TOUCHED_FILES"]}'
 ```
 
@@ -2194,6 +2288,14 @@ Materials:
 === LATEST ITERATION (iter-NN.md) ===
 <paste latest iter file, including its Eval table and scores>
 
+=== OUTPUTS THAT WERE SCORED ===
+<paste or excerpt the actual produced outputs cited by the latest
+ Outcome-scoring audit: generated issue bodies, UI screenshots
+ described in text, API responses, logs, DB rows, generated files,
+ transcripts, side effects. Do NOT substitute prompt/code excerpts
+ for these outputs. Prompt/code may be included later for diagnosis,
+ but it is not scoring evidence.>
+
 === LATEST AGENT-RUN ARTEFACTS (LLM-driven pipelines only) ===
 <paste actual artefact bodies for the smallest representative
  end-to-end run — e.g. for a planner pipeline:
@@ -2213,6 +2315,9 @@ impact. For each, state:
 - WHY a brilliant human would notice it (tied to the mission, a
   specific Q-criterion, or a defect in the artefact body itself)
 - WHETHER it's fixable in this session (vs an external blocker)
+- WHETHER the score/verdict was based on produced outputs rather than
+  prompt/code analysis; if not, your verdict MUST be
+  CONTINUE_LOOP_REQUIRED
 - For LLM-driven systems: which validator SHOULD have caught it
   (and why didn't it — orchestrator wiring vs. fixture mismatch
   vs. missing rule)
@@ -2232,6 +2337,7 @@ SECOND OPINION #1 (independent reviewer) — <feature-slug> — <UTC ts>
 Reviewer: fresh-context Agent subagent (no conversation history)
 Iteration when called: <NN>
 Materials reviewed: 02a-mission.md, 02b-criteria.md, iter-NN.md,
+                    scored produced outputs from iter-N-evidence/,
                     plan/<sid>, capability_map/current,
                     plan_review/<sid>, validation/<sid>, style/email
 ═══════════════════════════════════════════════════════════════════
@@ -2635,6 +2741,16 @@ Will he be impressed by:
     Considered but didn't:   <e.g., didn't test against real third-
                              party sandbox X; reason>
 
+  Outcome-only scoring
+    Verdict:                 yes/no
+    Evidence:                iter-NN.md Outcome-scoring audit says
+                             Scoring source: OUTCOMES_ONLY and lists
+                             produced artefacts for every Q score; no
+                             Q/PASS/FAIL evidence is prompt/code review
+    Considered but didn't:   <a prompt/code inspection you did for
+                             diagnosis only, and the output that made
+                             it relevant>
+
   Exploration proof
     Verdict:                 yes/no
     Evidence:                at iter X, attempted Q-improvement
@@ -2657,6 +2773,9 @@ Will he suspect:
   Validation-seeking:                risk: low/medium/high — banned phrases?
   Slop disguised as done:            risk: low/medium/high — why
   Skipped tests passing as DONE:     risk: low/medium/high — pytest skips?
+  Prompt/code scoring substituted
+  for output scoring:                risk: low/medium/high — did every
+                                      score cite produced artefacts?
   Blind eye to obvious upside:       risk: low/medium/high — did we ignore
                                       something an outside reviewer would
                                       immediately raise?
