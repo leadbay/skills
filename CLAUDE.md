@@ -27,6 +27,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 | `/learnings-from-pr` | Pre-PR knowledge capture — invoke AFTER implementation, BEFORE `git push` |
 | `/distill-style` | Generate or refresh `wiki/style/<repo>.md` from the dominant reviewer's PR comments |
 | `/diagnose` | Deep diagnostic root cause analysis (no code changes) |
+| `/mcp-analysis` | Diagnose MCP user frustration / wanted features from PostHog telemetry (read-only) |
 | `/relentless` | Overnight autonomous build-deploy-eval-iterate loop on a live system |
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence retro |
@@ -44,6 +45,8 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
 - "weekly retro", "what did we ship" → `/org-retro`
 - "sales retro", "user activity" → `/sales-retro`
 - "diagnose this", "root cause" → `/diagnose`
+- "why are users frustrated", "analyze MCP usage", "what features do users want",
+  "diagnose MCP friction", "MCP user analysis" → `/mcp-analysis`
 - "relentless mode", "overnight", "iterate until perfect", "I'll be away — keep going",
   "make it bulletproof", "don't stop until it's great" → `/relentless`
 - "report this bug", "file an issue", "write a github issue", "open an issue", "[For Actis]",
