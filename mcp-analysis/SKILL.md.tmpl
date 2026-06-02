@@ -5,9 +5,11 @@ description: |
   features they implicitly want — from the real PostHog telemetry stream.
 
   Pulls the last N days of MCP events (tool calls, errors, friction reports,
-  and verbatim `triggered_by` prompts), reconstructs per-user session traces,
-  fans out parallel theme-analysis subagents, runs an adversarial-verify pass
-  that REFUTES weak claims, and synthesises an evidence-cited markdown report.
+  and verbatim `triggered_by` prompts), reads the daily trend to flag MAJOR
+  CHANGES (error-rate spikes, brand-new failure modes / regressions, volume &
+  version shifts), reconstructs per-user session traces, fans out parallel
+  theme-analysis subagents, runs an adversarial-verify pass that REFUTES weak
+  claims, and synthesises an evidence-cited markdown report.
 
   This is a diagnostic skill — it reads telemetry and reasons about it. It
   writes no code and files nothing automatically.
@@ -19,7 +21,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.1.0
+version: 0.2.0
 allowed-tools:
   - Bash
   - Read
@@ -154,18 +156,81 @@ If GATE is FAIL: stop. Do not query without a key or a window.
 
 ## Phase 1 — Pull the MCP telemetry
 
-Run these HogQL queries (scope every one to MCP: `event LIKE 'mcp %' OR event
-LIKE 'agent_memory_%'`, within the window; add `AND distinct_id = '<user>'`
-when `--user` is set). PostHog caps **concurrent queries at 3 per team** — run
-them sequentially, not in parallel.
+All queries go to `POST $POSTHOG_HOST/api/projects/@current/query/` with
+`{"query":{"kind":"HogQLQuery","query":"<SQL>"}}` and `Authorization: Bearer
+$PH_KEY`. PostHog caps **concurrent queries at 3 per team** — run them
+**sequentially**, never in parallel. `now() - interval <DAYS> day` is the
+window; when `--user` is set, add `AND distinct_id = '<user>'` to every query.
 
-1. **Friction reports** — `category, severity, user_quote, tool_called, details, distinct_id, timestamp` from `mcp friction reported`.
-2. **Failed tool calls** — `tool, error_code, count, distinct_id` from `mcp tool called` where `ok = false`.
-3. **Prompts** — `timestamp, distinct_id, tool, ok, error_code, triggered_by` from `mcp tool called` where `triggered_by` is non-empty, ordered by user + time.
-4. **Per-tool volume + success** — `tool, count, ok, failed, avg(duration_ms)`.
-5. **Coverage stats** — total tool calls vs calls carrying `triggered_by` (for the Iron Law #4 coverage caveat), and distinct user count.
+Run these EXACT queries (they are the contract — don't paraphrase; HogQL has
+gotchas, e.g. `HAVING` on a windowed aggregate fails, so the new-user query
+uses a subselect):
 
-Save raw results to `.context/mcp-analysis/<date>-raw.json` for auditability.
+```sql
+-- 1. Friction reports
+SELECT toDateTime(timestamp) AS ts, distinct_id AS u, properties.category AS cat,
+       properties.severity AS sev, properties.tool_called AS tool,
+       properties.user_quote AS quote, properties.details AS details
+FROM events WHERE event='mcp friction reported' AND timestamp >= now() - interval <DAYS> day
+ORDER BY ts DESC;
+
+-- 2. Failed tool calls by tool + error code
+SELECT properties.tool AS tool, properties.error_code AS err, count() AS n
+FROM events WHERE event='mcp tool called' AND properties.ok=false
+  AND timestamp >= now() - interval <DAYS> day
+GROUP BY tool, err ORDER BY n DESC;
+
+-- 3. Prompts (intent) — only calls carrying triggered_by
+SELECT toDateTime(timestamp) AS ts, distinct_id AS u, properties.tool AS tool,
+       properties.ok AS ok, properties.error_code AS err, properties.triggered_by AS prompt
+FROM events WHERE event='mcp tool called' AND properties.triggered_by != ''
+  AND timestamp >= now() - interval <DAYS> day
+ORDER BY u, ts;
+
+-- 4. Per-tool volume + success
+SELECT properties.tool AS tool, count() AS calls, countIf(properties.ok=true) AS ok,
+       countIf(properties.ok=false) AS failed, round(avg(properties.duration_ms)) AS avg_ms
+FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day
+GROUP BY tool ORDER BY calls DESC;
+
+-- 5. Coverage (Iron Law #4) — what fraction of calls carry intent
+SELECT count() AS total, countIf(properties.triggered_by != '') AS with_intent,
+       count(DISTINCT distinct_id) AS users
+FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day;
+```
+
+**Major-changes / trends queries (these are the load-bearing addition — they
+surface regressions and spikes that per-row analysis misses):**
+
+```sql
+-- 6. Daily trend: volume, errors, error-rate, active users
+SELECT toDate(timestamp) AS d, count() AS calls, countIf(properties.ok=false) AS fails,
+       count(DISTINCT distinct_id) AS users
+FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day
+GROUP BY d ORDER BY d;
+
+-- 7. Error-code FIRST appearance — catches NEW failure modes (sudden regressions).
+--    An error whose first day is recent is a regression, not background noise.
+SELECT properties.error_code AS err, toDate(min(timestamp)) AS first_seen,
+       toDate(max(timestamp)) AS last_seen, count() AS n
+FROM events WHERE event='mcp tool called' AND properties.ok=false
+  AND timestamp >= now() - interval <DAYS> day
+GROUP BY err ORDER BY first_seen DESC;
+
+-- 8. New users in the recent week (subselect — HAVING on the min() fails in HogQL)
+SELECT u, fs FROM (
+  SELECT distinct_id AS u, toDate(min(timestamp)) AS fs
+  FROM events WHERE event LIKE 'mcp%' AND timestamp >= now() - interval <DAYS> day
+  GROUP BY u
+) WHERE fs >= today() - 7 ORDER BY fs DESC;
+
+-- 9. Version adoption in the recent week (fragmentation / stuck-on-old signal)
+SELECT properties.mcp_version AS v, count(DISTINCT distinct_id) AS users
+FROM events WHERE event LIKE 'mcp%' AND timestamp >= now() - interval 7 day
+GROUP BY v ORDER BY users DESC;
+```
+
+Save all raw results to `.context/mcp-analysis/<date>-raw.json` for auditability.
 
 **Phase 1 Gate — emit this block before Phase 2:**
 
@@ -176,6 +241,9 @@ PHASE 1 GATE — Data pulled
 [✓/✗] Failed calls: N rows
 [✓/✗] Prompts (triggered_by): N rows
 [✓/✗] Prompt coverage: N of M total calls (__%)
+[✓/✗] Daily trend: N days · error-rate range __%–__%
+[✓/✗] Error first-appearances pulled (regression detection): YES
+[✓/✗] New users (recent 7d): N · version adoption pulled: YES
 [✓/✗] Distinct users in window: N
 ════════════════════════════════
 GATE: PASS / FAIL — [if any query errored, name it]
@@ -211,7 +279,30 @@ GATE: PASS / FAIL
 
 ---
 
-## Phase 3 — Parallel theme analysis (Agent fan-out)
+## Phase 3 — Major-changes read + parallel theme analysis
+
+### 3a — Major changes / trends (deterministic, read the trend queries)
+
+Before theming, read queries 6–9 and extract what *moved* over the window. This
+is the highest-signal section — a sudden spike is more actionable than a steady
+background failure. Surface:
+
+- **Error-rate trajectory** — compute `fails/calls` per day from query 6. Flag
+  any day where it jumps materially vs the prior baseline (e.g. 1% → 50%). A
+  spike is a **regression**, not noise.
+- **New failure modes** — from query 7, any `error_code` whose `first_seen` is
+  inside the recent days didn't exist before → it's a NEW break. Name it, name
+  the day, name the tool. (This is exactly how a real run caught a
+  `LAST_PROMPT_REQUIRED` spike that appeared from nothing mid-window.)
+- **Volume / adoption shifts** — notable rise/fall in daily calls or active
+  users (query 6); new users this week (query 8); version fragmentation or a
+  cohort stuck on an old version (query 9).
+
+Each major-change claim cites the dates + numbers it's built on (Iron Law #1).
+Correlation is a hypothesis, not proof — say "coincides with", not "caused by",
+unless an error trace proves the mechanism.
+
+### 3b — Theme analysis (Agent fan-out)
 
 Spawn one analysis subagent per theme cluster (group related traces — e.g.
 "lens/audience creation", "auth/connection", "update adoption", "import flow").
@@ -228,11 +319,13 @@ and returns structured findings:
 **Phase 3 Gate — emit this block before Phase 4:**
 
 ```
-PHASE 3 GATE — Themes analysed
+PHASE 3 GATE — Changes + themes analysed
 ════════════════════════════════
+[✓/✗] Error-rate trajectory read · spike days flagged: [dates or none]
+[✓/✗] New failure modes (first_seen recent): [codes or none]
+[✓/✗] Volume / new-user / version shifts noted: YES
 [✓/✗] Theme subagents spawned: N
-[✓/✗] Findings returned: N
-[✓/✗] Every finding carries evidence: YES/NO
+[✓/✗] Findings returned: N · every finding carries evidence: YES/NO
 ════════════════════════════════
 GATE: PASS / FAIL — [drop any finding with no evidence; Iron Law #1]
 ```
@@ -273,7 +366,16 @@ direct, specific names and numbers, no filler. Structure:
 # MCP Analysis — last <N> days (<date>)
 
 ## TL;DR
-3-5 bullets: the highest-confidence frustrations + the single most valuable fix.
+3-5 bullets: the single biggest CHANGE this window (a spike / regression if
+there is one — lead with it), the highest-confidence frustration, and the most
+valuable fix.
+
+## Major changes & trends
+What MOVED over the window. Lead with any error-rate spike or NEW failure mode
+(error code that first appeared mid-window = a regression — give the date, the
+tool, the count). Then volume / active-user shifts, new users this week, and
+version-adoption changes. Every claim cites its dates + numbers. Say "coincides
+with", not "caused by", unless a trace proves the mechanism.
 
 ## Frustration themes
 Per theme: what's happening · root cause (mechanism) · who hit it · evidence (verbatim).
@@ -301,6 +403,7 @@ accumulate and can be diffed week-over-week.
 ```
 PHASE 5 GATE — Report complete
 ════════════════════════════════
+[✓/✗] Major changes section present (spike/regression led if any): YES
 [✓/✗] Themes: N    Fixes: N    Feature requests: N
 [✓/✗] Every claim cites evidence (Iron Law #1): YES
 [✓/✗] Blind spots stated (Iron Law #4): YES
