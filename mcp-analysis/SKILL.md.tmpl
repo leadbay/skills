@@ -9,7 +9,8 @@ description: |
   CHANGES (error-rate spikes, brand-new failure modes / regressions, volume &
   version shifts), reconstructs per-user session traces, fans out parallel
   theme-analysis subagents, runs an adversarial-verify pass that REFUTES weak
-  claims, and synthesises an evidence-cited markdown report.
+  claims, and synthesises an evidence-cited markdown report ending in a
+  prioritised Recommendations list (what to fix/build next, ranked).
 
   This is a diagnostic skill — it reads telemetry and reasons about it. It
   writes no code and files nothing automatically.
@@ -21,7 +22,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.2.1
+version: 0.2.2
 allowed-tools:
   - Bash
   - Read
@@ -240,6 +241,13 @@ GROUP BY v ORDER BY users DESC;
 
 Save all raw results to `.context/mcp-analysis/<date>-raw.json` for auditability.
 
+**Parsing note (live gotcha):** user prompts (`triggered_by`) and friction
+`user_quote`/`details` can contain raw newlines/control chars that break strict
+JSON tooling — a `jq` over the whole results array can choke on one bad row.
+Don't let one malformed prompt abort the pull: parse defensively (e.g. `jq -R`
+fallback, or count rows from the saved file), and rely on the coverage query
+(#5) for the authoritative prompt count rather than re-parsing query #3.
+
 **Phase 1 Gate — emit this block before Phase 2:**
 
 ```
@@ -396,6 +404,19 @@ Each fix is a recommendation with its evidence — never a claim it's been done.
 Only those that passed the ≥2-utterance rule. Each: the feature · the users ·
 the verbatim prompts that imply it.
 
+## Recommendations (prioritised — what to do next)
+The action layer. Pull every SUPPORTED fix + feature request into ONE ranked
+to-do list, ordered by impact × confidence (highest first). This is the part a
+reader acts on, so keep it crisp — one line each:
+
+`P1/P2/P3 · <action> · why (impact) · [code-verifiable | needs-investigation] · evidence ref`
+
+Lead with anything that addresses a major-change regression (a fresh spike
+usually outranks a steady background issue). Each recommendation must trace back
+to a finding above — no new claims appear here (Iron Law #1). Still
+recommendations, not actions (Iron Law #6): the skill proposes the to-do list,
+it does not do it.
+
 ## Weak signals (single-utterance — not yet requests)
 Things worth watching that didn't meet the bar.
 
@@ -413,6 +434,7 @@ PHASE 5 GATE — Report complete
 ════════════════════════════════
 [✓/✗] Major changes section present (spike/regression led if any): YES
 [✓/✗] Themes: N    Fixes: N    Feature requests: N
+[✓/✗] Recommendations section: N prioritised items (P1..) — each traces to a finding
 [✓/✗] Every claim cites evidence (Iron Law #1): YES
 [✓/✗] Blind spots stated (Iron Law #4): YES
 [✓/✗] Report saved: .context/mcp-analysis/<date>.md
