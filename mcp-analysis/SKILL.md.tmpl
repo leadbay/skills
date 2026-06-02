@@ -1,0 +1,443 @@
+---
+name: mcp-analysis
+description: |
+  Diagnose WHY Leadbay MCP users are frustrated, HOW to fix it, and WHAT
+  features they implicitly want — from the real PostHog telemetry stream.
+
+  Pulls the last N days of MCP events (tool calls, errors, friction reports,
+  and verbatim `triggered_by` prompts), reads the daily trend to flag MAJOR
+  CHANGES (error-rate spikes, brand-new failure modes / regressions, volume &
+  version shifts), reconstructs per-user session traces, fans out parallel
+  theme-analysis subagents, runs an adversarial-verify pass that REFUTES weak
+  claims, and synthesises an evidence-cited markdown report ending in a
+  prioritised Recommendations list (what to fix/build next, ranked).
+
+  This is a diagnostic skill — it reads telemetry and reasons about it. It
+  writes no code and files nothing automatically.
+
+  Usage:
+    /mcp-analysis                 (last 30 days)
+    /mcp-analysis --days 7        (last 7 days)
+    /mcp-analysis --days 14 --user guillaume@helvo.fr   (focus one user)
+
+  Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
+  "what features do users want", "diagnose MCP friction", "MCP user analysis".
+version: 0.2.2
+allowed-tools:
+  - Bash
+  - Read
+  - Agent
+---
+
+<!-- include: shared/preamble.md -->
+<!-- include: shared/posthog.md -->
+<!-- include: shared/voice.md -->
+<!-- include: shared/ask-user-format.md -->
+<!-- include: shared/completion-status.md -->
+
+# /mcp-analysis — MCP Frustration & Feature-Signal Diagnostic
+
+Turn the MCP telemetry stream into a diagnosis. You answer three questions,
+in order of confidence:
+
+1. **Why are users frustrated?** — cluster the friction signals + failed
+   sessions into themes, each tied to evidence.
+2. **How do we fix it?** — confidence-ranked fixes, splitting
+   "code-verifiable" from "needs investigation".
+3. **What features do users implicitly want?** — inferred ONLY from prompts
+   that almost-worked or got worked around, each backed by ≥2 distinct user
+   utterances.
+
+You are reading real users' verbatim words and real business context. Be
+precise, cite evidence, and never invent signal that isn't in the data.
+
+---
+
+## The Iron Laws
+
+These rules are inviolable. No phase gate can pass while any Iron Law is violated.
+
+**Iron Law #1 — Every claim cites evidence.**
+A frustration theme, a root cause, or a feature request that does not quote a
+specific friction report, error trace, or verbatim prompt is a hallucination.
+Drop it. An uncited claim in the report is worse than a missing one.
+
+**Iron Law #2 — Feature requests need ≥2 distinct user utterances.**
+"Users want X" requires at least two *different* users (or two clearly
+separate sessions) whose prompts point at X. A single utterance is an
+anecdote, not a signal — list it under "weak signals", never as a request.
+
+**Iron Law #3 — Patterns, not statistics.**
+The dataset is small (tens of users, single-digit friction reports). Speak in
+"pattern / hypothesis / recurring", never "23% of users" or "statistically
+significant". Fabricated precision is a lie about confidence.
+
+**Iron Law #4 — Name the blind spots, every run.**
+The report MUST state: (a) survivorship bias — only users who kept trying
+leave traces; the ones who hit a wall and left are nearly invisible; (b)
+prompt coverage — only calls carrying `triggered_by` have intent, which is a
+minority of all calls. Omitting these overstates confidence.
+
+**Iron Law #5 — The verify pass is adversarial, not confirmatory.**
+The Phase 4 subagents are instructed to REFUTE each claim, defaulting to
+"unsupported" when evidence is thin. A verify pass that rubber-stamps is
+Goodhart's law — it exists to kill confident-but-wrong findings, not to bless them.
+
+**Iron Law #6 — No code, no filing.**
+This skill diagnoses. It does not edit code, open PRs, or file issues. Fix
+proposals are *recommendations with evidence*, not actions. Crossing that line
+turns a read-only analysis into an unreviewed change.
+
+**Iron Law #7 — No silent phase failures.**
+If a PostHog query or a subagent errors, print the error and stop that phase.
+A report built on a half-failed data pull is indistinguishable from a real
+signal and corrupts every downstream conclusion.
+
+---
+
+## The Deadly Sins
+
+Specific failure modes that destroy the analysis. Guard against each actively.
+
+1. **Inventing a feature request from one frustrated prompt.** One user yelling
+   "WHY ISN'T THERE X" is a data point, not a roadmap. Iron Law #2 exists
+   because this is the single most likely hallucination.
+
+2. **Reporting the friction CATEGORY as the root cause.** `silent_failure` is a
+   label, not a diagnosis. The root cause is *why* it failed — trace the
+   session, read the error, find the mechanism.
+
+3. **Confusing "user retried 5×" with "feature is popular".** A retry loop is
+   usually frustration (no feedback, a race, a crash), not engagement. Read the
+   sequence before calling volume a positive signal.
+
+4. **Letting the synthesis subagent see the verify verdicts as conclusions.**
+   The verifier's job is to refute; the synthesiser's job is to merge survivors.
+   Priming the synthesiser with "these all passed" defeats the adversarial pass.
+
+5. **Treating prompt-less calls as intentless noise to ignore.** They still
+   carry tool/error/timing signal for session traces. Only the *intent* is
+   missing — say so, don't silently drop the user.
+
+6. **Skipping a gate because the data "looks obvious".** The gate block is what
+   makes the run auditable across weeks. Obvious-looking data is exactly where
+   an unstated assumption hides.
+
+---
+
+## Phase 0 — Parse arguments, resolve PostHog credentials
+
+Read the invocation for `--days` (default 30) and optional `--user <email>`.
+
+The PostHog Setup block above resolves `PH_KEY`. Confirm it is set. Capture the
+window and project:
+
+```bash
+DAYS="${ARG_DAYS:-30}"
+POSTHOG_HOST=https://eu.posthog.com
+# All queries: POST $POSTHOG_HOST/api/projects/@current/query/ with the HogQL body.
+echo "window: last ${DAYS}d  ·  user filter: ${ARG_USER:-<all>}"
+```
+
+**Phase 0 Gate — emit this block before Phase 1:**
+
+```
+PHASE 0 GATE
+════════════════════════════════
+[✓/✗] PH_KEY: present
+[✓/✗] Window: last ___ days
+[✓/✗] User filter: ___ (or <all>)
+════════════════════════════════
+GATE: PASS / FAIL — [explain any failures]
+```
+
+If GATE is FAIL: stop. Do not query without a key or a window.
+
+---
+
+## Phase 1 — Pull the MCP telemetry
+
+All queries go to `POST $POSTHOG_HOST/api/projects/@current/query/` with
+`{"query":{"kind":"HogQLQuery","query":"<SQL>"}}` and `Authorization: Bearer
+$PH_KEY`. PostHog caps **concurrent queries at 3 per team** — run them
+**sequentially**, never in parallel. `now() - interval <DAYS> day` is the
+window; when `--user` is set, add `AND distinct_id = '<user>'` to every query.
+
+Run these EXACT queries (they are the contract — don't paraphrase; HogQL has
+gotchas, e.g. `HAVING` on a windowed aggregate fails, so the new-user query
+uses a subselect):
+
+```sql
+-- 1. Friction reports
+SELECT toDateTime(timestamp) AS ts, distinct_id AS u, properties.category AS cat,
+       properties.severity AS sev, properties.tool_called AS tool,
+       properties.user_quote AS quote, properties.details AS details
+FROM events WHERE event='mcp friction reported' AND timestamp >= now() - interval <DAYS> day
+ORDER BY ts DESC;
+
+-- 2. Failed tool calls by tool + error code
+SELECT properties.tool AS tool, properties.error_code AS err, count() AS n
+FROM events WHERE event='mcp tool called' AND properties.ok=false
+  AND timestamp >= now() - interval <DAYS> day
+GROUP BY tool, err ORDER BY n DESC;
+
+-- 3. Prompts (intent) — only calls carrying triggered_by.
+--    NOTE: `!= ''` alone does NOT exclude NULLs in HogQL — you MUST also test
+--    IS NOT NULL or you over-count (this bit us live: coverage read as 100%).
+SELECT toDateTime(timestamp) AS ts, distinct_id AS u, properties.tool AS tool,
+       properties.ok AS ok, properties.error_code AS err, properties.triggered_by AS prompt
+FROM events WHERE event='mcp tool called'
+  AND properties.triggered_by IS NOT NULL AND properties.triggered_by != ''
+  AND timestamp >= now() - interval <DAYS> day
+ORDER BY u, ts;
+
+-- 4. Per-tool volume + success
+SELECT properties.tool AS tool, count() AS calls, countIf(properties.ok=true) AS ok,
+       countIf(properties.ok=false) AS failed, round(avg(properties.duration_ms)) AS avg_ms
+FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day
+GROUP BY tool ORDER BY calls DESC;
+
+-- 5. Coverage (Iron Law #4) — what fraction of calls carry intent.
+--    The IS NOT NULL guard is mandatory (see query 3) — without it with_intent
+--    equals total and the coverage caveat silently reads as 100%.
+SELECT count() AS total,
+       countIf(properties.triggered_by IS NOT NULL AND properties.triggered_by != '') AS with_intent,
+       count(DISTINCT distinct_id) AS users
+FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day;
+```
+
+**Major-changes / trends queries (these are the load-bearing addition — they
+surface regressions and spikes that per-row analysis misses):**
+
+```sql
+-- 6. Daily trend: volume, errors, error-rate, active users
+SELECT toDate(timestamp) AS d, count() AS calls, countIf(properties.ok=false) AS fails,
+       count(DISTINCT distinct_id) AS users
+FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day
+GROUP BY d ORDER BY d;
+
+-- 7. Error-code FIRST appearance — catches NEW failure modes (sudden regressions).
+--    An error whose first day is recent is a regression, not background noise.
+--    NOTE: wrap as min(toDate(...)), NOT toDate(min(...)) — HogQL compiles the
+--    latter to toDateOrNull(DateTime) which errors. Convert per-row, then min.
+SELECT properties.error_code AS err, min(toDate(timestamp)) AS first_seen,
+       max(toDate(timestamp)) AS last_seen, count() AS n
+FROM events WHERE event='mcp tool called' AND properties.ok=false
+  AND timestamp >= now() - interval <DAYS> day
+GROUP BY err ORDER BY first_seen DESC;
+
+-- 8. New users in the recent week (subselect — HAVING on the min() fails in HogQL)
+SELECT u, fs FROM (
+  SELECT distinct_id AS u, toDate(min(timestamp)) AS fs
+  FROM events WHERE event LIKE 'mcp%' AND timestamp >= now() - interval <DAYS> day
+  GROUP BY u
+) WHERE fs >= today() - 7 ORDER BY fs DESC;
+
+-- 9. Version adoption in the recent week (fragmentation / stuck-on-old signal)
+SELECT properties.mcp_version AS v, count(DISTINCT distinct_id) AS users
+FROM events WHERE event LIKE 'mcp%' AND timestamp >= now() - interval 7 day
+GROUP BY v ORDER BY users DESC;
+```
+
+Save all raw results to `.context/mcp-analysis/<date>-raw.json` for auditability.
+
+**Parsing note (live gotcha):** user prompts (`triggered_by`) and friction
+`user_quote`/`details` can contain raw newlines/control chars that break strict
+JSON tooling — a `jq` over the whole results array can choke on one bad row.
+Don't let one malformed prompt abort the pull: parse defensively (e.g. `jq -R`
+fallback, or count rows from the saved file), and rely on the coverage query
+(#5) for the authoritative prompt count rather than re-parsing query #3.
+
+**Phase 1 Gate — emit this block before Phase 2:**
+
+```
+PHASE 1 GATE — Data pulled
+════════════════════════════════
+[✓/✗] Friction reports: N rows
+[✓/✗] Failed calls: N rows
+[✓/✗] Prompts (triggered_by): N rows
+[✓/✗] Prompt coverage: N of M total calls (__%)
+[✓/✗] Daily trend: N days · error-rate range __%–__%
+[✓/✗] Error first-appearances pulled (regression detection): YES
+[✓/✗] New users (recent 7d): N · version adoption pulled: YES
+[✓/✗] Distinct users in window: N
+════════════════════════════════
+GATE: PASS / FAIL — [if any query errored, name it]
+```
+
+If GATE is FAIL (any query errored): stop. Do not analyse a partial pull.
+
+---
+
+## Phase 2 — Reconstruct session traces (deterministic, no LLM)
+
+Group prompts + failed calls per user, ordered by time, into readable session
+traces. A trace is the story: *what the user asked → what tool ran → what
+happened → what they did next*. Frustration is a sequence, not a row — these
+traces are the evidence base for everything downstream.
+
+Bucket users into:
+- **Friction-flagged** — users with ≥1 friction report
+- **Failure-heavy** — users with failed calls but no explicit friction
+- **Clean** — succeeded throughout (context for what "good" looks like)
+
+**Phase 2 Gate — emit this block before Phase 3:**
+
+```
+PHASE 2 GATE — Traces built
+════════════════════════════════
+[✓/✗] Friction-flagged users: N
+[✓/✗] Failure-heavy users: N
+[✓/✗] Traces reconstructed: N
+════════════════════════════════
+GATE: PASS / FAIL
+```
+
+---
+
+## Phase 3 — Major-changes read + parallel theme analysis
+
+### 3a — Major changes / trends (deterministic, read the trend queries)
+
+Before theming, read queries 6–9 and extract what *moved* over the window. This
+is the highest-signal section — a sudden spike is more actionable than a steady
+background failure. Surface:
+
+- **Error-rate trajectory** — compute `fails/calls` per day from query 6. Flag
+  any day where it jumps materially vs the prior baseline (e.g. 1% → 50%). A
+  spike is a **regression**, not noise.
+- **New failure modes** — from query 7, any `error_code` whose `first_seen` is
+  inside the recent days didn't exist before → it's a NEW break. Name it, name
+  the day, name the tool. (This is exactly how a real run caught a
+  `LAST_PROMPT_REQUIRED` spike that appeared from nothing mid-window.)
+- **Volume / adoption shifts** — notable rise/fall in daily calls or active
+  users (query 6); new users this week (query 8); version fragmentation or a
+  cohort stuck on an old version (query 9).
+
+Each major-change claim cites the dates + numbers it's built on (Iron Law #1).
+Correlation is a hypothesis, not proof — say "coincides with", not "caused by",
+unless an error trace proves the mechanism.
+
+### 3b — Theme analysis (Agent fan-out)
+
+Spawn one analysis subagent per theme cluster (group related traces — e.g.
+"lens/audience creation", "auth/connection", "update adoption", "import flow").
+Each subagent receives ONLY its cluster's raw traces + the success criteria,
+and returns structured findings:
+
+- `theme` — short label
+- `root_cause` — the mechanism (Deadly Sin #2: not the category)
+- `evidence` — verbatim quotes / error traces / prompt citations (Iron Law #1)
+- `proposed_fix` — with `confidence: high|medium|low` and
+  `kind: code-verifiable|needs-investigation` (Iron Law #6 — recommendation only)
+- `feature_signal` — any implicit feature ask, with the ≥2 utterances (Iron Law #2)
+
+**Phase 3 Gate — emit this block before Phase 4:**
+
+```
+PHASE 3 GATE — Changes + themes analysed
+════════════════════════════════
+[✓/✗] Error-rate trajectory read · spike days flagged: [dates or none]
+[✓/✗] New failure modes (first_seen recent): [codes or none]
+[✓/✗] Volume / new-user / version shifts noted: YES
+[✓/✗] Theme subagents spawned: N
+[✓/✗] Findings returned: N · every finding carries evidence: YES/NO
+════════════════════════════════
+GATE: PASS / FAIL — [drop any finding with no evidence; Iron Law #1]
+```
+
+---
+
+## Phase 4 — Adversarial verify (refute weak claims)
+
+For each finding, spawn a fresh-context verifier subagent prompted to **REFUTE**
+it — "default to UNSUPPORTED unless the cited evidence clearly proves the
+claim". For feature requests, the verifier independently checks the ≥2-utterance
+rule against the raw prompts. A claim survives only if the verifier returns
+SUPPORTED with the evidence it relied on.
+
+The verifier must NOT see other findings or any "these passed" framing
+(Deadly Sin #4) — it sees one claim + the raw evidence, nothing else.
+
+**Phase 4 Gate — emit this block before Phase 5:**
+
+```
+PHASE 4 GATE — Claims verified
+════════════════════════════════
+[✓/✗] Findings sent to verify: N
+[✓/✗] SUPPORTED: N    REFUTED/dropped: N
+[✓/✗] Feature requests meeting ≥2-utterance rule: N
+════════════════════════════════
+GATE: PASS / FAIL
+```
+
+---
+
+## Phase 5 — Synthesise the report
+
+Merge the SURVIVING findings into a markdown report. Use the `voice` above —
+direct, specific names and numbers, no filler. Structure:
+
+```
+# MCP Analysis — last <N> days (<date>)
+
+## TL;DR
+3-5 bullets: the single biggest CHANGE this window (a spike / regression if
+there is one — lead with it), the highest-confidence frustration, and the most
+valuable fix.
+
+## Major changes & trends
+What MOVED over the window. Lead with any error-rate spike or NEW failure mode
+(error code that first appeared mid-window = a regression — give the date, the
+tool, the count). Then volume / active-user shifts, new users this week, and
+version-adoption changes. Every claim cites its dates + numbers. Say "coincides
+with", not "caused by", unless a trace proves the mechanism.
+
+## Frustration themes
+Per theme: what's happening · root cause (mechanism) · who hit it · evidence (verbatim).
+
+## Root causes & fixes
+Ranked by confidence. Split: [code-verifiable] vs [needs-investigation].
+Each fix is a recommendation with its evidence — never a claim it's been done.
+
+## Inferred feature requests
+Only those that passed the ≥2-utterance rule. Each: the feature · the users ·
+the verbatim prompts that imply it.
+
+## Recommendations (prioritised — what to do next)
+The action layer. Pull every SUPPORTED fix + feature request into ONE ranked
+to-do list, ordered by impact × confidence (highest first). This is the part a
+reader acts on, so keep it crisp — one line each:
+
+`P1/P2/P3 · <action> · why (impact) · [code-verifiable | needs-investigation] · evidence ref`
+
+Lead with anything that addresses a major-change regression (a fresh spike
+usually outranks a steady background issue). Each recommendation must trace back
+to a finding above — no new claims appear here (Iron Law #1). Still
+recommendations, not actions (Iron Law #6): the skill proposes the to-do list,
+it does not do it.
+
+## Weak signals (single-utterance — not yet requests)
+Things worth watching that didn't meet the bar.
+
+## Blind spots & confidence (Iron Law #4)
+Survivorship bias · prompt coverage __% · sample size · anything the data can't tell us.
+```
+
+Print the report. Also save it to `.context/mcp-analysis/<date>.md` so runs
+accumulate and can be diffed week-over-week.
+
+**Phase 5 Gate — emit this block to close the run:**
+
+```
+PHASE 5 GATE — Report complete
+════════════════════════════════
+[✓/✗] Major changes section present (spike/regression led if any): YES
+[✓/✗] Themes: N    Fixes: N    Feature requests: N
+[✓/✗] Recommendations section: N prioritised items (P1..) — each traces to a finding
+[✓/✗] Every claim cites evidence (Iron Law #1): YES
+[✓/✗] Blind spots stated (Iron Law #4): YES
+[✓/✗] Report saved: .context/mcp-analysis/<date>.md
+════════════════════════════════
+GATE: PASS / FAIL
+```
