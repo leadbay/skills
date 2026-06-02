@@ -22,7 +22,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.2.0
+version: 0.2.1
 allowed-tools:
   - Bash
   - Read
@@ -248,10 +248,13 @@ FROM events WHERE event='mcp tool called' AND properties.ok=false
   AND timestamp >= now() - interval <DAYS> day
 GROUP BY tool, err ORDER BY n DESC;
 
--- 3. Prompts (intent) — only calls carrying triggered_by
+-- 3. Prompts (intent) — only calls carrying triggered_by.
+--    NOTE: `!= ''` alone does NOT exclude NULLs in HogQL — you MUST also test
+--    IS NOT NULL or you over-count (this bit us live: coverage read as 100%).
 SELECT toDateTime(timestamp) AS ts, distinct_id AS u, properties.tool AS tool,
        properties.ok AS ok, properties.error_code AS err, properties.triggered_by AS prompt
-FROM events WHERE event='mcp tool called' AND properties.triggered_by != ''
+FROM events WHERE event='mcp tool called'
+  AND properties.triggered_by IS NOT NULL AND properties.triggered_by != ''
   AND timestamp >= now() - interval <DAYS> day
 ORDER BY u, ts;
 
@@ -261,8 +264,11 @@ SELECT properties.tool AS tool, count() AS calls, countIf(properties.ok=true) AS
 FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day
 GROUP BY tool ORDER BY calls DESC;
 
--- 5. Coverage (Iron Law #4) — what fraction of calls carry intent
-SELECT count() AS total, countIf(properties.triggered_by != '') AS with_intent,
+-- 5. Coverage (Iron Law #4) — what fraction of calls carry intent.
+--    The IS NOT NULL guard is mandatory (see query 3) — without it with_intent
+--    equals total and the coverage caveat silently reads as 100%.
+SELECT count() AS total,
+       countIf(properties.triggered_by IS NOT NULL AND properties.triggered_by != '') AS with_intent,
        count(DISTINCT distinct_id) AS users
 FROM events WHERE event='mcp tool called' AND timestamp >= now() - interval <DAYS> day;
 ```
@@ -279,8 +285,10 @@ GROUP BY d ORDER BY d;
 
 -- 7. Error-code FIRST appearance — catches NEW failure modes (sudden regressions).
 --    An error whose first day is recent is a regression, not background noise.
-SELECT properties.error_code AS err, toDate(min(timestamp)) AS first_seen,
-       toDate(max(timestamp)) AS last_seen, count() AS n
+--    NOTE: wrap as min(toDate(...)), NOT toDate(min(...)) — HogQL compiles the
+--    latter to toDateOrNull(DateTime) which errors. Convert per-row, then min.
+SELECT properties.error_code AS err, min(toDate(timestamp)) AS first_seen,
+       max(toDate(timestamp)) AS last_seen, count() AS n
 FROM events WHERE event='mcp tool called' AND properties.ok=false
   AND timestamp >= now() - interval <DAYS> day
 GROUP BY err ORDER BY first_seen DESC;
