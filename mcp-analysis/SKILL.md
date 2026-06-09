@@ -17,7 +17,9 @@ description: |
   writes no code. It DOES archive a fixed-schema JSON summary of each run
   (schema_version 1) to the leadbay/mcp-dashboard repo under
   analysis/<date>-<window>d.json, committed + pushed, so runs diff
-  week-over-week. That archive is its only write action.
+  week-over-week. For each needs-investigation finding it also emits a
+  ready-to-paste prompt that hands the root-cause investigation + fix proposal
+  to a separate coding agent. That archive is its only write action.
 
   Usage:
     /mcp-analysis                 (last 30 days)
@@ -26,7 +28,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.3.0
+version: 0.4.0
 allowed-tools:
   - Bash
   - Read
@@ -488,6 +490,13 @@ to a finding above — no new claims appear here (Iron Law #1). Still
 recommendations, not actions (Iron Law #6): the skill proposes the to-do list,
 it does not do it.
 
+## Investigation prompts (for each `needs-investigation` item)
+For EVERY fix/recommendation tagged `needs-investigation`, emit a ready-to-paste
+prompt for a coding agent to FULLY investigate the root cause and propose a fix.
+One fenced block per item, built from the template in Phase 5b. `code-verifiable`
+items are skipped (they already have a concrete fix). If there are none this
+window, write "None — no needs-investigation findings."
+
 ## Weak signals (single-utterance — not yet requests)
 Things worth watching that didn't meet the bar.
 
@@ -508,10 +517,62 @@ PHASE 5 GATE — Report complete
 [✓/✗] Recommendations section: N prioritised items (P1..) — each traces to a finding
 [✓/✗] Every claim cites evidence (Iron Law #1): YES
 [✓/✗] Blind spots stated (Iron Law #4): YES
+[✓/✗] Investigation prompts: N (one per needs-investigation item, or "none")
 [✓/✗] Report saved: .context/mcp-analysis/<date>-<window>d.md
 ════════════════════════════════
 GATE: PASS / FAIL
 ```
+
+---
+
+## Phase 5b — Generate an investigation prompt per `needs-investigation` item
+
+For EACH fix/recommendation tagged `needs-investigation`, write a complete,
+ready-to-paste prompt that hands the problem to a SEPARATE coding agent to fully
+investigate the root cause and propose a fix. Skip `code-verifiable` items —
+they already have a concrete fix; a prompt would be busywork.
+
+This is still diagnosis, not action (Iron Law #6): the skill *writes the prompt*,
+it does not run the investigation or touch product code. The prompt assumes the
+receiving agent has the **leadclaw** repo and can read code + reproduce, but
+must NOT deploy, merge, or open PRs — it proposes a fix/diff for human review.
+
+Each prompt MUST be self-contained (the receiving agent has none of this run's
+context) and follow this template — fill every `<...>`, and embed the verbatim
+evidence so the agent can stand alone:
+
+````
+You are a senior engineer investigating a production issue in the **leadclaw**
+MCP server (pnpm monorepo: `packages/core` = shared lib, `packages/mcp` = stdio
+server). Work read-only first; propose a fix as a diff. Do NOT deploy, merge, or
+open a PR — stop at a reviewed proposal.
+
+## The problem
+<one-paragraph statement of the finding>
+
+## Evidence (from MCP telemetry, last <window>d ending <date>)
+<verbatim error traces / failing tools + counts / friction quotes — copy from the
+report's Evidence lines; quote literally, do not paraphrase>
+
+## Your task
+1. **Locate** the responsible code path in leadclaw (start by grepping for the
+   tool name `<leadbay_xxx>` under `packages/core/src/` — composite/ or tools/).
+2. **Find the root cause** — the mechanism, not the symptom. Trace why it fails.
+   If it needs a live repro, say how (the test account creds are expendable).
+3. **Propose a fix** — a concrete diff or patch, with the file path(s). Note any
+   risk, blast radius, and whether it's a one-liner or a redesign.
+4. **State your confidence** and what you could NOT verify.
+
+## Constraints
+- Read-only investigation + a proposed diff. No deploy, no merge, no PR.
+- If the evidence is too thin to locate a cause, say so — don't invent one.
+- Cite the file:line you base each conclusion on.
+````
+
+**Output both places** (per the report section + the archive in Phase 6):
+- Inline in the report under `## Investigation prompts`, one fenced block each.
+- As separate files in Phase 6: `analysis/<date>-<window>d-investigations/<slug>.md`
+  where `<slug>` is a kebab-case label of the finding (e.g. `auth-session-expiry`).
 
 ---
 
@@ -545,12 +606,18 @@ query). **Empty array = "none found this window", never omit a key.** Every
 populated finding carries its evidence/utterances/evidence_ref — drop any that
 can't (Iron Law #1).
 
+The JSON also carries an `investigations` array — one entry per Phase 5b prompt:
+`{ "slug": "...", "finding": "...", "evidence_ref": "...", "prompt_file": "analysis/<date>-<window>d-investigations/<slug>.md" }`.
+Empty array if there were no `needs-investigation` items.
+
 Write `analysis/<date>-<window>d.json` (e.g. `2026-06-09-1d.json`), copy the
-`.md` report next to it, and validate before committing:
+`.md` report next to it, write each Phase 5b prompt to its file, and validate
+before committing:
 
 ```bash
 # (write the JSON to $ARCHIVE/analysis/<date>-<window>d.json via your tooling)
 cp ".context/mcp-analysis/<date>-<window>d.md" "$ARCHIVE/analysis/<date>-<window>d.md"
+# (write each investigation prompt to $ARCHIVE/analysis/<date>-<window>d-investigations/<slug>.md)
 jq empty "$ARCHIVE/analysis/<date>-<window>d.json" || { echo "BAD JSON — fix before commit"; exit 1; }
 ```
 
@@ -573,6 +640,7 @@ PHASE 6 GATE — Summary archived
 ════════════════════════════════
 [✓/✗] JSON written: analysis/<date>-<window>d.json (schema_version 1)
 [✓/✗] jq parse-check passed: YES
+[✓/✗] Investigation prompts written: N file(s) (one per needs-investigation item, or 0)
 [✓/✗] Every JSON finding traces to the report (Iron Law #1): YES
 [✓/✗] Committed + pushed to leadbay/mcp-dashboard: YES / LOCAL-ONLY (why)
 ════════════════════════════════
