@@ -14,7 +14,10 @@ description: |
   prioritised Recommendations list (what to fix/build next, ranked).
 
   This is a diagnostic skill — it reads telemetry and reasons about it. It
-  writes no code and files nothing automatically.
+  writes no code. It DOES archive a fixed-schema JSON summary of each run
+  (schema_version 1) to the leadbay/mcp-dashboard repo under
+  analysis/<date>-<window>d.json, committed + pushed, so runs diff
+  week-over-week. That archive is its only write action.
 
   Usage:
     /mcp-analysis                 (last 30 days)
@@ -23,7 +26,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.2.2
+version: 0.3.0
 allowed-tools:
   - Bash
   - Read
@@ -492,8 +495,8 @@ Things worth watching that didn't meet the bar.
 Survivorship bias · prompt coverage __% · sample size · anything the data can't tell us.
 ```
 
-Print the report. Also save it to `.context/mcp-analysis/<date>.md` so runs
-accumulate and can be diffed week-over-week.
+Print the report. Also save it to `.context/mcp-analysis/<date>-<window>d.md` so
+runs accumulate locally and can be diffed week-over-week.
 
 **Phase 5 Gate — emit this block to close the run:**
 
@@ -505,7 +508,73 @@ PHASE 5 GATE — Report complete
 [✓/✗] Recommendations section: N prioritised items (P1..) — each traces to a finding
 [✓/✗] Every claim cites evidence (Iron Law #1): YES
 [✓/✗] Blind spots stated (Iron Law #4): YES
-[✓/✗] Report saved: .context/mcp-analysis/<date>.md
+[✓/✗] Report saved: .context/mcp-analysis/<date>-<window>d.md
+════════════════════════════════
+GATE: PASS / FAIL
+```
+
+---
+
+## Phase 6 — Archive the structured summary (JSON, versioned in git)
+
+Every run ALSO emits a fixed-schema JSON summary committed to the
+**leadbay/mcp-dashboard** repo, so the archive is queryable and diffable across
+weeks. This is mechanical serialization of the SURVIVING Phase 5 findings —
+nothing new (Iron Law #1: no claim in the JSON that isn't in the report). The
+JSON archive is the skill's only write action; it does not touch product code
+(Iron Law #6 stands).
+
+**Resolve the archive repo** — `$MCP_DASHBOARD_REPO`, fallback
+`~/Leadbay/mcp-dashboard`; clone if missing (idempotent):
+
+```bash
+ARCHIVE="${MCP_DASHBOARD_REPO:-$HOME/Leadbay/mcp-dashboard}"
+if [ ! -d "$ARCHIVE/.git" ]; then
+  gh repo clone leadbay/mcp-dashboard "$ARCHIVE"
+fi
+git -C "$ARCHIVE" pull -q --ff-only || true
+mkdir -p "$ARCHIVE/analysis"
+```
+
+**Build the JSON** to the schema in the archive's `analysis/README.md`
+(`schema_version: 1`). Map each report section to its field — `tldr`,
+`major_changes`, `frustration_themes`, `fixes`, `feature_requests`,
+`recommendations`, `weak_signals`, `blind_spots`, plus `window` + `scope`
+(distinct_users, tool_calls, prompt_coverage_pct from the Phase 1 coverage
+query). **Empty array = "none found this window", never omit a key.** Every
+populated finding carries its evidence/utterances/evidence_ref — drop any that
+can't (Iron Law #1).
+
+Write `analysis/<date>-<window>d.json` (e.g. `2026-06-09-1d.json`), copy the
+`.md` report next to it, and validate before committing:
+
+```bash
+# (write the JSON to $ARCHIVE/analysis/<date>-<window>d.json via your tooling)
+cp ".context/mcp-analysis/<date>-<window>d.md" "$ARCHIVE/analysis/<date>-<window>d.md"
+jq empty "$ARCHIVE/analysis/<date>-<window>d.json" || { echo "BAD JSON — fix before commit"; exit 1; }
+```
+
+**Commit + push:**
+
+```bash
+git -C "$ARCHIVE" add analysis/
+git -C "$ARCHIVE" commit -q -m "analysis: <date> last-<window>d run summary"
+git -C "$ARCHIVE" push -q origin main
+```
+
+If the push fails (no network / auth), DON'T fail the run — the JSON is written
+locally; report it as a concern and let the user push. Never fabricate a
+successful commit.
+
+**Phase 6 Gate — emit this block to close the run:**
+
+```
+PHASE 6 GATE — Summary archived
+════════════════════════════════
+[✓/✗] JSON written: analysis/<date>-<window>d.json (schema_version 1)
+[✓/✗] jq parse-check passed: YES
+[✓/✗] Every JSON finding traces to the report (Iron Law #1): YES
+[✓/✗] Committed + pushed to leadbay/mcp-dashboard: YES / LOCAL-ONLY (why)
 ════════════════════════════════
 GATE: PASS / FAIL
 ```
