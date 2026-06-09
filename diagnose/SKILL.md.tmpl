@@ -962,6 +962,117 @@ $B network               # capture the actual API response at the boundary
 
 ---
 
+## Phase 5.5: Root-Cause Statement Gate — MANDATORY before any ROOT_CAUSE_ESTABLISHED
+
+You may NOT write `STATUS: ROOT_CAUSE_ESTABLISHED` until you have output this block and every line holds. This gate exists because the failures that actually happen are not abstract — they are: stating a root cause that is really a symptom; asserting a cause with no artifact behind it; declaring "established" on the first cause of a multi-cause bug; building the diagnosis on an unverified premise ("X calls Y") whose falsifier was in a file you opened; and never reproducing. Each line below kills one of those.
+
+```
+ROOT-CAUSE STATEMENT GATE
+═══════════════════════════════════════════════════════════════════
+SYMPTOM    (what the user sees):              ______
+MECHANISM  (the immediate technical effect):  ______
+ROOT CAUSE (why the mechanism happens):       ______
+  → If SYMPTOM and ROOT CAUSE restate each other, you have NOT found the cause.
+    Ask "but why does that happen?" again. [symptom-mistaken-for-cause]
+  → DECOMPOSE the root-cause sentence into its clauses; tag each [PROVEN ← artifact] or
+    [UNPROVEN]. The TRIGGER clause — *why the broken mechanism actually gets exercised in
+    THIS incident* (what made it retry / fire repeatedly / receive the bad input / run out
+    of the resource) — is load-bearing and must be PROVEN, not narrated. A fluent sentence
+    that welds a proven mechanism to an unproven "...because some transient fault / load /
+    race was probably happening" trigger is the single most common false
+    ROOT_CAUSE_ESTABLISHED. If the trigger clause is [UNPROVEN]: state it as an explicit
+    hypothesis (not as the cause), drop to PROBABLE_CAUSE, and name the one artifact that
+    would prove it. [narrative-trigger / mechanism-proven-but-trigger-assumed]
+  → RESOURCE-EXHAUSTION / INTERRUPTION TRIGGER PROTOCOL: if your trigger is of the form "a
+    resource ran out" / "the job was cancelled" / "an interruption/timeout occurred" / "it
+    retried", that is a CLASS, not a proven trigger. Before it counts as PROVEN you must:
+    (a) NAME WHICH resource/limit, read from the CURRENT code/config — the pool size, the
+        timeout, the retry policy, the connection cap (these live in code NOW even when the
+        incident's live rows are gone; "some interruption" is not an answer, "the Hikari pool
+        max=N with a Ts timeout, here: <file:line>" is);
+    (b) SEARCH THE ERROR TRACKER FOR THE EXCEPTION CLASS / SIGNATURE, not only the specific
+        incident id (the id may have aged out while the class still spikes — e.g. search the
+        exception type + the time window, not just import_id=X);
+    (c) RECONCILE MAGNITUDE: does the SCALE of your evidence match the SCALE of the symptom?
+        (a 2x replica row does not explain a 14x incident; N retries must match the counter
+        growth.) A magnitude mismatch means the trigger is only PARTLY explained — keep going.
+    The trigger is part of the root cause, never a footnote you wave off as "doesn't change
+    the fix". [buried-trigger / exhaustion-class-not-named / magnitude-unreconciled]
+  → TRIGGER-CLASS DISAMBIGUATION: if ≥2 candidate trigger classes surface (e.g. a
+    cancellation / "Parent job is Cancelling" class AND an idle-in-transaction timeout AND
+    connection-pool pressure), they are usually NOT co-equal — one is UPSTREAM and CAUSES the
+    others. Order them causally (what produces what) and name the most-UPSTREAM proven class
+    as THE trigger. Ranking a downstream symptom as primary over its own cause is a framing
+    error (e.g. an idle-in-transaction timeout or a generic cancellation is the EFFECT of
+    pool/connection exhaustion when the pool is saturated — name the exhaustion, not just the
+    cancellation it emits). Prove the causal direction with an artifact (pool metric, the
+    exception's own cause, config); if you genuinely cannot order them, present them as
+    co-candidates, do NOT crown a false primary. [competing-classes-misranked / effect-named-over-cause]
+
+EVIDENCE CHAIN — every link needs a concrete artifact you actually obtained
+(a query result, a file:line you READ, a log line). A link with no artifact is a guess.
+  1. <claim>  ← <artifact: pasted query output / file:line content / log line>
+  2. <claim>  ← <artifact>
+  3. <claim>  ← <artifact>
+  → List any link whose artifact you could NOT obtain (env down, data aged out, no access).
+    If a LOAD-BEARING link has no artifact, you MUST drop to PROBABLE_CAUSE. [narrative-over-evidence / claim-without-proof]
+  → SECOND-SOURCE RULE — before you may record a load-bearing link as "could not obtain", you
+    must have tried at least TWO independent sources for it. When the primary source is gone
+    (the DB rows aged out, the env is down), the trigger is usually still recoverable from a
+    SECOND source: the error tracker (search the exact exception/signature + time window),
+    application logs, OR static reachability (read the code path that produces this state and
+    prove it CAN or CANNOT be reached, plus the recent commits that touch it). A link marked
+    unobtainable after only ONE attempted source is not honest calibration — it is giving up
+    early; go get the second source. Only after ≥2 genuine, different source attempts fail may
+    a load-bearing link stay UNVERIFIED → then drop to PROBABLE_CAUSE and name the single
+    source that, if available, would settle it. [not-verifying / stopped-digging-after-one-source]
+
+PREMISE CHECK — list every "A does B / A calls C" assumption your chain depends on, and the
+artifact that PROVES each (not assumes it). An assumed hop is an untested premise.
+  - Assumption: ______  ← proven by: <artifact, or "UNVERIFIED">
+  → Any UNVERIFIED load-bearing assumption caps you at PROBABLE_CAUSE. [the premise that was false in an opened file]
+
+DECISIVE CHECK — the single experiment/query that would prove you WRONG if it came out the
+other way. Paste its ACTUAL result.
+  Prediction if cause is real:   ______
+  Prediction if cause is false:  ______
+  Actual result observed:        ______
+  → If you have NOT run this (could not reproduce / no data), you cannot claim
+    ROOT_CAUSE_ESTABLISHED. Max status = PROBABLE_CAUSE. [didn't-reproduce / not-verifying]
+
+RULED-OUT ALTERNATIVE — the most plausible OTHER explanation (often the symptom itself, the
+"obvious" suspect, or the first thing you found) and the artifact that kills it.
+  Alternative:  ______
+  Killed by:    <artifact>
+  → "I couldn't think of one" means you anchored. Name it. [single-hypothesis anchoring]
+
+MULTI-CAUSE CHECK — could MORE THAN ONE independent break be REQUIRED to produce this symptom?
+  Did you trace the chain end-to-end and confirm EACH hop actually does what you assume?  ______
+  → If fixing your single named cause would NOT, on its own, make the symptom disappear,
+    there is another cause. Keep going. [missed-multicause / blast-radius]
+
+CONFIDENCE: __/10  — single piece of evidence that would move this to 10/10: ______
+  → 9-10 requires ALL of: every evidence link has an artifact, every load-bearing premise is
+    proven, the decisive check was actually run, and the top alternative is ruled out by
+    evidence. Otherwise cap at 8 and report PROBABLE_CAUSE. [confidence-inflation]
+  → NO-FIX-CORROBORATION: you may NOT raise confidence by pointing at a fix, a later/"future"
+    commit, a revert, or "someone already fixed this / a PR addresses it". During a real
+    incident the fix does not exist yet; confirming a cause with the fix is circular and is
+    the classic way a wrong cause scores 10/10. If your evidence chain leans on a fix/future
+    commit, strike that link and re-score on the pre-incident code + data alone. [fix-corroboration / answer-key]
+  → WEIGH-IN-WINDOW-SIGNAL: if a second source returns a signature that matches the symptom's
+    TIME WINDOW and shape (e.g. an error-tracker exception spiking in the same minutes, a pool
+    restart, a deploy at the onset), that is evidence FOR the hypothesis — count it. You may
+    only DISMISS an in-window matching signal as coincidence if you have a concrete artifact
+    that disproves the link; "probably unrelated" without an artifact is not a dismissal, it
+    is ignoring evidence you already hold. [dismissed-evidence-in-hand]
+═══════════════════════════════════════════════════════════════════
+```
+
+If DECISIVE CHECK has no actual observed result, or any load-bearing EVIDENCE CHAIN link or PREMISE lacks an artifact, set STATUS to PROBABLE_CAUSE and say exactly which artifact is missing. An honest PROBABLE_CAUSE outranks a false ROOT_CAUSE_ESTABLISHED every time.
+
+---
+
 ## Phase 6: Diagnostic Report
 
 Produce the final report. This is the deliverable — it must be complete enough that someone else (or the fixing agent) can act on it without asking follow-up questions.
