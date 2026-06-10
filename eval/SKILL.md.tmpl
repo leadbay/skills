@@ -19,7 +19,7 @@ description: |
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.8.0
+version: 1.9.0
 allowed-tools:
   - Bash
   - Read
@@ -137,12 +137,23 @@ If GATE is FAIL: stop. Do not proceed to Phase 1 until every box is checked.
 Read WORKFLOWS.md and extract, for each requested workflow ID:
 - `workflow_name` — from the `yaml expected` block
 - `prompt_name` — from the `yaml expected` block (`~` means null)
-- `required_calls` — list of tool names that MUST be called
-- `forbidden_calls` — list of tool names that MUST NOT be called
+- `required_calls` — list of tool names that MUST be called (session-wide)
+- `forbidden_calls` — list of tool names that MUST NOT be called (session-wide)
 - `required_order` — optional ordered sequence of tool names
 - `required_byproducts` — optional phrases that must appear in agent prose
 - `success_criteria` — list of strings the judge will evaluate
 - `scenario prompt` — from the `yaml scenario` block
+- `render_checks` — OPTIONAL list (output-formatting contract). Two entry kinds:
+  - plain strings → fold into `success_criteria` for the judge (Phase 5).
+  - `must_match:` / `must_not_match:` → mechanical regex over the FINAL agent
+    message, checked in Phase 4. Compiled with JS `RegExp` (no inline flags).
+- `turns` — OPTIONAL ordered list of user messages (multi-turn). When present,
+  it REPLACES `scenario prompt` (mutually exclusive). Each turn may carry:
+  - `prompt:` (required) — the user message for that turn
+  - `expect_calls:` — tools that MUST fire during that turn (Phase 4, per-turn)
+  - `forbid_calls:` — tools that must NOT fire during that turn (Phase 4)
+  - `carry_over:` — prose criteria the judge scores with the full transcript in
+    view (Phase 5) — this is how prior-context carry-over is asserted.
 
 ```bash
 cat "$REPO_ROOT/WORKFLOWS.md"
@@ -175,12 +186,15 @@ Extract all fields for each requested workflow ID. If a requested ID has no
 ```
 PHASE 1 GATE — Contracts parsed
 ════════════════════════════════
-Workflow #N  name: ______  prompt_name: ______  required_calls: [...]  scenario: "..."
-Workflow #M  name: ______  prompt_name: ______  required_calls: [...]  scenario: "..."
+Workflow #N  name: ______  prompt_name: ______  required_calls: [...]  mode: single | multi-turn(K turns)  render_checks: N  scenario/turns: "..."
+Workflow #M  name: ______  prompt_name: ______  required_calls: [...]  mode: ...
 [one line per workflow being run]
 ════════════════════════════════
-GATE: PASS / FAIL — [list any workflows with missing/incomplete contracts]
+GATE: PASS / FAIL — [list any workflows with missing/incomplete contracts, or any that declare BOTH a scenario prompt and turns:]
 ```
+
+A contract that declares both a `scenario prompt` and `turns:` is malformed —
+mark it FAIL and skip it (mutually exclusive, see WORKFLOWS.md schema).
 
 If GATE is FAIL: skip workflows with missing contracts. Proceed with the rest.
 
@@ -338,10 +352,11 @@ Determine the effective system prompt (ALWAYS pass one — never omit):
 EFFECTIVE_SYSTEM_PROMPT="${SYSTEM_PROMPT:-You are a Leadbay sales assistant. Use the available MCP tools to help the user.}"
 ```
 
-Run the session:
+**Single-turn run** (workflow has a `scenario prompt`, no `turns:`):
 ```bash
 SESSION_RAW="$TMPDIR/session.raw.jsonl"
 START_MS=$(date +%s%3N)
+SESSION_ID=$(cat /proc/sys/kernel/random/uuid)
 
 USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
   "$(echo "$SCENARIO_PROMPT" | sed 's/"/\\"/g')")
@@ -353,6 +368,7 @@ USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
   --input-format stream-json \
   --output-format stream-json \
   --verbose \
+  --session-id "$SESSION_ID" \
   --mcp-config "$TMPDIR/mcp-config.json" \
   --settings "$TMPDIR/settings.json" \
   --dangerously-skip-permissions \
@@ -367,7 +383,7 @@ USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
 EXIT=$?
 END_MS=$(date +%s%3N)
 DURATION_MS=$((END_MS - START_MS))
-echo "EXIT: $EXIT  DURATION_MS: $DURATION_MS"
+echo "EXIT: $EXIT  DURATION_MS: $DURATION_MS  TURN: 1"
 echo "RAW_LINES: $(wc -l < "$SESSION_RAW")"
 echo "=== STDERR ==="
 head -20 "$TMPDIR/stderr.txt"
@@ -377,11 +393,52 @@ echo "=== END RAW JSONL ==="
 rm -rf "$TMPDIR"
 ```
 
-Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT` value. Set `SCENARIO_PROMPT`,
-`SYSTEM_PROMPT`, and `MODEL` from the workflow contract parsed in Phase 1/2.
+**Multi-turn run** (workflow has `turns:`). `claude -p` exits after each result,
+so a multi-turn conversation is N sequential invocations sharing ONE session id:
+turn 1 sets `--session-id $SESSION_ID`, every later turn passes `--resume
+$SESSION_ID` so the agent carries prior context forward. The MCP server restarts
+per turn, so the 10s handshake delay applies to EACH turn. **Tag every tool
+call's turn number with the 1-based USER-turn index it fired in** — the
+extractor relies on this to attribute per-turn invariants (Phase 4) and
+carry-over (Phase 5).
 
-From the stream-json output, extract:
-- **tool_calls**: lines where `type=assistant` with `tool_use` content blocks → `name` + `input`. **STRIP all non-`leadbay_` names before returning** (Iron Law #2).
+```bash
+SESSION_ID=$(cat /proc/sys/kernel/random/uuid)
+START_MS=$(date +%s%3N)
+# TURN_PROMPTS is the ordered turns[].prompt list parsed in Phase 1.
+TURN_IDX=0
+for TURN_PROMPT in "${TURN_PROMPTS[@]}"; do
+  TURN_IDX=$((TURN_IDX + 1))
+  TURN_RAW="$TMPDIR/session.turn${TURN_IDX}.raw.jsonl"
+  USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
+    "$(echo "$TURN_PROMPT" | sed 's/"/\\"/g')")
+
+  # turn 1 establishes the session; later turns resume it.
+  if [ "$TURN_IDX" -eq 1 ]; then SESSION_FLAG=(--session-id "$SESSION_ID")
+  else SESSION_FLAG=(--resume "$SESSION_ID"); fi
+
+  { sleep 10; echo "$USER_MSG"; } | claude -p \
+    --input-format stream-json --output-format stream-json --verbose \
+    "${SESSION_FLAG[@]}" \
+    --mcp-config "$TMPDIR/mcp-config.json" --settings "$TMPDIR/settings.json" \
+    --dangerously-skip-permissions --strict-mcp-config --disable-slash-commands \
+    --allowedTools "mcp__leadbay-live__*,ask_user_input_v0" \
+    --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Glob,Grep,LS,Skill,LSP,Agent" \
+    --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
+    ${MODEL:+--model "$MODEL"} \
+    > "$TURN_RAW" 2>"$TMPDIR/stderr.turn${TURN_IDX}.txt"
+  echo "=== TURN $TURN_IDX (exit $?) ==="; cat "$TURN_RAW"; echo "=== END TURN $TURN_IDX ==="
+done
+END_MS=$(date +%s%3N); DURATION_MS=$((END_MS - START_MS))
+echo "DURATION_MS: $DURATION_MS  TURNS: $TURN_IDX"
+rm -rf "$TMPDIR"
+```
+
+Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT` value. Set `SCENARIO_PROMPT`
+(or `TURN_PROMPTS`), `SYSTEM_PROMPT`, and `MODEL` from the workflow contract parsed in Phase 1/2.
+
+From the stream-json output, extract (across ALL turns for multi-turn):
+- **tool_calls**: lines where `type=assistant` with `tool_use` content blocks → `name` + `input` + the 1-based **turn index** it fired in. **STRIP all non-`leadbay_` names before returning** (Iron Law #2).
 - **widget_calls**: separately capture any `ask_user_input_v0` tool_use blocks — do NOT strip these. Extract `input.questions[0].options` as an ordered array. This is how Claude Desktop actually presents next-steps to the user; the option order here is what the user sees, not the prose fallback.
 - **agent_prose**: text blocks from `type=assistant` that are NOT tool_use
 - **final_message**: `result` field from the `type=result` line
@@ -439,6 +496,16 @@ If present → `INVARIANT FAIL: leadbay_xxx was called (forbidden)`.
 
 **required_byproducts**: If set, verify each phrase appears in `agent_prose` or `final_message`.
 
+**render_checks (`must_match` / `must_not_match`)**: If set, compile each regex
+entry with JS `RegExp` semantics and run it over the FINAL agent message.
+`must_match` FAILs if the pattern is absent; `must_not_match` FAILs if present.
+(Plain-string render_checks are NOT checked here — they go to the judge in Phase 5.)
+
+**per-turn `expect_calls` / `forbid_calls`** (multi-turn only): Using the
+turn-tagged ledger, for each turn N verify every `expect_calls` name fired
+DURING turn N and no `forbid_calls` name fired during turn N. A call in the
+wrong turn does NOT satisfy that turn's `expect_calls`.
+
 Record each as `PASS` or `FAIL` with reason.
 
 **Phase 4 Gate — emit this block before Phase 5 (one per workflow):**
@@ -453,6 +520,10 @@ forbidden_calls:
   [✓/✗] leadbay_zzz — PASS: absent / FAIL: called at turn N
 required_order: [PASS / FAIL / N/A]
 required_byproducts: [PASS / FAIL / N/A — phrase "..." found/not found]
+render_checks (regex): [PASS / FAIL / N/A — /pattern/ matched/absent in final message]
+per-turn calls: [PASS / FAIL / N/A]
+  turn 1 expect_calls: [✓/✗ ...]  forbid_calls: [✓/✗ ...]
+  turn 2 ...
 ────────────────────────────────
 INVARIANTS: N/M PASS
 GATE: PASS / FAIL
@@ -465,8 +536,15 @@ This block is mandatory. Do not pass this gate by omitting it.
 ## Phase 5 — Judge (fresh-context subagent)
 
 Spawn a **judge subagent** via the Agent tool. Pass it only:
-- The `success_criteria` list from WORKFLOWS.md
-- The session evidence (tool call ledger, agent prose, final message, invariant results)
+- The **effective criteria** list: `success_criteria` from WORKFLOWS.md, PLUS
+  any plain-string `render_checks` entries, PLUS every `turns[].carry_over`
+  string. (The `must_match`/`must_not_match` render checks are NOT passed to the
+  judge — they were already checked mechanically in Phase 4.)
+- The session evidence (tool call ledger, agent prose, final message, invariant
+  results). For multi-turn workflows, the tool-call ledger MUST carry the turn
+  index per call and the prose MUST be ordered by turn, so the judge can reason
+  about carry-over (e.g. "the lead_id in the turn-2 research call equals the top
+  lead surfaced in turn 1").
 
 **DO NOT include your own assessment.** Do not say "the agent did well on X." Do not frame invariant results as conclusions. Pass the raw evidence and let the judge reason from it independently (Iron Law #3).
 
