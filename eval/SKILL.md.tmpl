@@ -4,8 +4,10 @@ description: |
   Run live eval sessions for one or more Leadbay MCP workflows.
   Reads contracts directly from WORKFLOWS.md, spawns a session subagent
   against the real Leadbay API, judges the result with a fresh-context
-  judge subagent, writes structured JSON to .context/evals/, and prints
-  a scorecard, and generates an HTML dashboard at `.context/evals/eval-report.html`.
+  judge subagent, archives the structured JSON to the leadbay/mcp-dashboard
+  repo (`evals/`) as shared version-controlled history, prints a scorecard,
+  and (re)builds the HTML eval dashboard (also served live at the Fly app's
+  `/evals` route).
 
   For fully unattended runs (no approval prompts), launch Claude Code with:
     claude --dangerously-skip-permissions
@@ -19,7 +21,7 @@ description: |
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.9.0
+version: 1.10.0
 allowed-tools:
   - Bash
   - Read
@@ -36,7 +38,7 @@ Run live eval sessions for Leadbay MCP workflows. Each eval:
 1. Spawns a real Claude session against the live Leadbay API
 2. Captures tool calls, prose, and token usage
 3. Judges the result with a fresh-context subagent
-4. Writes structured JSON to `.context/evals/` for the dashboard
+4. Archives structured JSON to the `leadbay/mcp-dashboard` repo (`evals/`) — shared, version-controlled history (local `.context/evals/` is a fallback only)
 
 ---
 
@@ -95,6 +97,7 @@ ls "$REPO_ROOT/WORKFLOWS.md" 2>/dev/null && echo "WORKFLOWS_MD: FOUND" || echo "
 
 Parse the user message for `--workflow N` (comma-separated), `--model M`, `--improve`, and `--verify N` flags.
 If no `--workflow` flag, run all workflows found in WORKFLOWS.md.
+Set `WORKFLOW_IDS` to the comma-separated list being run (e.g. `25,26,27`, or `all`) — Phase 6 uses it to name the archive file (`<timestamp>_wf25-26-27.json`).
 If `--improve` is present, set `IMPROVE_MODE=true` — Phase 8 will auto-invoke `/relentless` for any workflow with MM < 5. `--improve` also implicitly sets `VERIFY_MODE=true, VERIFY_ROUNDS=3`: every workflow that hits 5/5/5/5 must pass **3 consecutive stability rounds** before being marked complete. Workflows that fail any stability round re-enter the relentless improvement loop. While one workflow runs its 3 stability rounds, other workflows that haven't hit 5/5/5/5 continue being improved in parallel.
 If `--verify N` is present (without `--improve`), set `VERIFY_MODE=true, VERIFY_ROUNDS=N` — Phase 7b will run N more rounds after all workflows hit 5/5/5/5.
 
@@ -649,7 +652,7 @@ GATE: PASS / FAIL — [PASS if judge JSON is valid and all scores present; FAIL 
 
 ---
 
-## Phase 6 — Determine pass/fail and save result to .context/evals/
+## Phase 6 — Determine pass/fail and archive the run to the mcp-dashboard repo
 
 **Pass condition (ALL of the following must hold):**
 - Phase 3 gate PASS (no skill_execution_error)
@@ -660,25 +663,62 @@ GATE: PASS / FAIL — [PASS if judge JSON is valid and all scores present; FAIL 
 A 5/5 judge score with an invariant FAIL is still a FAIL (Deadly Sin #4).
 An invariant PASS with `mission_match` < 3 is still a FAIL.
 
-**Logging rule — write every result immediately, every time:**
-Every eval session result — including sessions run during `--improve` relentless iterations and `--verify` stability rounds — MUST be written to `.context/evals/` as soon as it completes. Do NOT wait until the end of the full run to batch-save. This ensures every iteration appears in the dashboard, not just the final summary.
+**Persistence — the durable home is the `leadbay/mcp-dashboard` repo, not the worktree.**
+Eval runs are committed to `mcp-dashboard/evals/` (one JSON per `/eval` invocation,
+EvalEntry-compatible — schema in that repo's `evals/README.md`). This is the
+shared, version-controlled history that survives Conductor worktree cleanup and
+is read by the hosted dashboard at `/evals`. The old per-worktree
+`$REPO_ROOT/.context/evals/` is now only a **local fallback** when the dashboard
+repo isn't checked out.
 
-- Each `/eval` invocation (including those triggered internally during `--improve`) gets its own `RUN_ID` and JSON file written immediately.
-- During `--improve` relentless iterations: tag each entry with `"suite": "relentless"`, `"_relentless_iter": N`, and `"_relentless_goal": "..."` so the dashboard can group and label them.
-- During `--verify` stability rounds: tag entries with `"suite": "verify"` and `"_verify_round": N`.
-- A plain `/eval` run uses `"suite": "eval"` (unchanged).
+**Logging rule — write every result immediately, every time:**
+Every eval session result — including `--improve` relentless iterations and
+`--verify` stability rounds — is written as soon as it completes. Do NOT batch
+at the end.
+
+- Each `/eval` invocation gets its own timestamped JSON file written immediately.
+- `--improve` iterations: tag each entry `"suite": "relentless"`, `"_relentless_iter": N`, `"_relentless_goal": "..."`.
+- `--verify` rounds: tag `"suite": "verify"`, `"_verify_round": N`.
+- A plain `/eval` run uses `"suite": "eval"`.
 
 ```bash
-EVALS_DIR="$REPO_ROOT/.context/evals"
-TRANSCRIPTS_DIR="$EVALS_DIR/transcripts"
-mkdir -p "$EVALS_DIR" "$TRANSCRIPTS_DIR"
+# Resolve the mcp-dashboard checkout. Prefer an env override, then the
+# conventional sibling clone, then a fresh shallow clone into a cache dir.
+# Fall back to the worktree-local .context/evals only if all of that fails
+# (e.g. offline) — that copy is ephemeral and NOT shared.
+DASH_REPO="${LEADBAY_MCP_DASHBOARD_DIR:-}"
+for cand in "$DASH_REPO" "$HOME/Leadbay/mcp-dashboard" "$HOME/leadbay/mcp-dashboard"; do
+  [ -n "$cand" ] && [ -d "$cand/.git" ] && DASH_REPO="$cand" && break
+done
+if [ -z "$DASH_REPO" ] || [ ! -d "$DASH_REPO/.git" ]; then
+  DASH_REPO="${LEADBAY_HOME:-$HOME/.leadbay}/mcp-dashboard"
+  if [ ! -d "$DASH_REPO/.git" ]; then
+    git clone --depth 1 git@github.com:leadbay/mcp-dashboard.git "$DASH_REPO" 2>/dev/null \
+      || git clone --depth 1 https://github.com/leadbay/mcp-dashboard.git "$DASH_REPO" 2>/dev/null || true
+  fi
+fi
 
-RUN_ID=$(date -u +%Y-%m-%dT%H-%M-%S)_$$
-RESULT_FILE="$EVALS_DIR/${RUN_ID}.json"
-echo "Saving to: $RESULT_FILE"
+if [ -d "$DASH_REPO/.git" ]; then
+  git -C "$DASH_REPO" pull -q --ff-only 2>/dev/null || true
+  EVALS_DIR="$DASH_REPO/evals"
+  ARCHIVE_TO_DASHBOARD=1
+else
+  echo "WARN: mcp-dashboard repo not available — falling back to local .context/evals (not shared)"
+  EVALS_DIR="$REPO_ROOT/.context/evals"
+  ARCHIVE_TO_DASHBOARD=0
+fi
+mkdir -p "$EVALS_DIR"
+
+# Filename: ISO timestamp + the workflow ids this run covered (e.g. wf25-26-27).
+RUN_ID=$(date -u +%Y-%m-%dT%H-%M-%S)
+WF_TAG="wf$(echo "$WORKFLOW_IDS" | tr ',' '-')"   # WORKFLOW_IDS from Phase 0
+RESULT_FILE="$EVALS_DIR/${RUN_ID}_${WF_TAG}.json"
+echo "Saving to: $RESULT_FILE  (archive_to_dashboard=$ARCHIVE_TO_DASHBOARD)"
 ```
 
-Each entry in `entries` follows the `EvalEntry` schema:
+The run file is the wrapped archive shape from `mcp-dashboard/evals/README.md`
+(`schema_version`, `generated_at`, `skill_version`, `git`, `summary`, `entries[]`).
+Each element of `entries[]` follows the `EvalEntry` schema:
 ```json
 {
   "name": "PROMPT_NAME/workflow-N",
@@ -721,6 +761,29 @@ Each entry in `entries` follows the `EvalEntry` schema:
 }
 ```
 
+**Commit + push the run to the dashboard repo** (only when `ARCHIVE_TO_DASHBOARD=1`).
+This is what makes history shared and durable — mirror how `/mcp-analysis`
+archives into the same repo. Commit only the JSON (and optional `.md` scorecard);
+never the generated `*.html` (gitignored).
+
+```bash
+if [ "$ARCHIVE_TO_DASHBOARD" = "1" ]; then
+  git -C "$DASH_REPO" add "evals/$(basename "$RESULT_FILE")" 2>/dev/null
+  # include a sibling .md scorecard if you wrote one
+  [ -f "${RESULT_FILE%.json}.md" ] && git -C "$DASH_REPO" add "evals/$(basename "${RESULT_FILE%.json}.md")"
+  if ! git -C "$DASH_REPO" diff --cached --quiet; then
+    git -C "$DASH_REPO" commit -q -m "evals: ${RUN_ID} ${WF_TAG} — $(echo "$SUMMARY_LINE")" \
+      && git -C "$DASH_REPO" push -q 2>/dev/null \
+      && echo "archived + pushed run to mcp-dashboard/evals/" \
+      || echo "WARN: committed locally but push failed — run 'git -C $DASH_REPO push' later"
+  fi
+fi
+```
+
+`SUMMARY_LINE` is a one-liner like `3/3 passed (wf25-27)`. If the push fails
+(offline / no creds), the commit is still local in the dashboard clone — report
+it as DONE_WITH_CONCERNS and tell the user to push it.
+
 ---
 
 ## Phase 7 — Print summary table and generate HTML dashboard
@@ -747,9 +810,35 @@ Print the summary table:
        → Grand total: 27 + 946878 + 82125 = 1,029,030 in / 6152 out
 ```
 
-Then generate the HTML dashboard by running `gen-dashboard.py`. Prefer the repo-root copy (`$REPO_ROOT/gen-dashboard.py`) — it is version-controlled and may be newer. Fall back to `$EVALS_DIR/gen-dashboard.py` if the repo-root copy is absent. **Do NOT overwrite either copy** — if neither exists, write to `$REPO_ROOT/gen-dashboard.py` (see design spec below). This preserves improvements made outside of eval runs.
+Then (re)generate the HTML dashboard from the **committed run archive**. When the
+run was archived to the dashboard repo (`ARCHIVE_TO_DASHBOARD=1`), the canonical
+renderer is that repo's TypeScript `eval-dashboard.ts` — it reads every
+`evals/*.json` and emits one self-contained HTML page (same view the hosted Fly
+server serves at `/evals`):
 
-The Python script must produce a **self-contained single-file HTML dashboard** matching this exact design:
+```bash
+if [ "$ARCHIVE_TO_DASHBOARD" = "1" ] && [ -f "$DASH_REPO/eval-dashboard.ts" ]; then
+  TSX_BIN=$(find "$DASH_REPO/node_modules" -name tsx -path '*/.bin/tsx' 2>/dev/null | head -1)
+  [ -z "$TSX_BIN" ] && (cd "$DASH_REPO" && npm install --no-audit --no-fund >/dev/null 2>&1) && \
+    TSX_BIN=$(find "$DASH_REPO/node_modules" -name tsx -path '*/.bin/tsx' 2>/dev/null | head -1)
+  DASHBOARD="$DASH_REPO/evals/eval-report.html"   # gitignored — local artifact
+  "$TSX_BIN" "$DASH_REPO/eval-dashboard.ts" "$DASH_REPO/evals" "$DASHBOARD" \
+    && echo "Dashboard: file://$DASHBOARD"
+else
+  # Local-only fallback (no dashboard repo): use gen-dashboard.py against
+  # $EVALS_DIR as before. Prefer the repo-root copy; write one if absent.
+  echo "Local fallback — using gen-dashboard.py against $EVALS_DIR"
+fi
+```
+
+> Note: the hosted dashboard at `https://leadbay-mcp-dashboard.fly.dev/evals`
+> updates when the dashboard repo is **redeployed** (the committed JSON is baked
+> into the image), not on each push. To refresh it: `cd $DASH_REPO && flyctl deploy -a leadbay-mcp-dashboard --ha=false`.
+
+For the **local-only fallback** path (no dashboard repo checked out), the
+Python `gen-dashboard.py` is still used and must produce a **self-contained
+single-file HTML dashboard** matching this exact design (the TS renderer in the
+dashboard repo follows the same spec):
 
 ### Section 1 — Header
 - Title: `⚡ Leadbay Eval Dashboard` (monospace, bold)
@@ -914,10 +1003,12 @@ If `--improve` is ALSO set: after `--verify` completes, run Phase 8 only for wor
 
 **Skip this phase entirely if `--improve` was NOT in the user's invocation.**
 
-After the Final Run Summary, check every result written to `.context/evals/`:
+After the Final Run Summary, check the latest result in `$EVALS_DIR` (the
+dashboard repo's `evals/` when archived there, else the local fallback — same
+variable Phase 6 resolved):
 
 ```bash
-LATEST=$(ls -t "$REPO_ROOT/.context/evals"/*.json | head -1)
+LATEST=$(ls -t "$EVALS_DIR"/*.json | head -1)
 jq '[.entries[] | select((.evidence.judge_scores | (.mission_match < 5 or .instruction_adherence < 5 or .no_fabrication < 5 or .tool_selection_fit < 5)) and .passed == true)]' "$LATEST"
 ```
 
@@ -974,8 +1065,8 @@ The seeded mission to pass to relentless:
 - Failing criteria: [list each with ✗ prefix, or "none — quality-only improvement"]
 - Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts. **CRITICAL surface rule for routing_mode workflows:** if the workflow contract has `routing_mode: true`, the session runs with **server-instructions only** and the prompt BODY is NEVER injected (slash commands are disabled). Editing `packages/promptforge/prompts/<prompt_name>.md.tmpl` will have **zero effect** on a routing_mode eval. For routing_mode workflows the correct fix surface is whatever the model actually reads in routing mode — the **server instructions** (`packages/promptforge/snippets/server-instructions/*.md`, plus the inline paragraphs in `packages/mcp/src/server.ts` such as SCHEDULED_TASK_PARAGRAPH / ARTIFACT_PROPOSAL_PARAGRAPH) and the **tool descriptions**. Confirm which surface the failing behaviour lives on BEFORE editing; a prompt-body edit that passes in non-routing mode can still fail the routing_mode eval.
 - Build gate: `pnpm prompts:build` from repo root after every edit (must exit 0)
-- Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build — **each test run MUST write its result to `.context/evals/` per the Phase 6 logging rule**; tag with `"suite": "relentless"`, `"_relentless_iter": N`, `"_relentless_goal": "..."` so the dashboard tracks every iteration
-- Read result: `jq '.entries[0].evidence.judge_scores' $(ls -t .context/evals/*.json | head -1)` — target: all 5
+- Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build — **each test run MUST archive its result per the Phase 6 logging rule** (to the dashboard repo's `evals/`, or the local fallback); tag with `"suite": "relentless"`, `"_relentless_iter": N`, `"_relentless_goal": "..."` so the dashboard tracks every iteration
+- Read result: `jq '.entries[0].evidence.judge_scores' "$(ls -t "$EVALS_DIR"/*.json | head -1)"` — target: all 5
 - Regression guard: run `/eval --workflow [passing_workflow_ids]` once all scores reach 5
 - Exit: all 5/5/5/5 stable across **3 consecutive** eval runs (matches the per-workflow completion gate — NOT 2) AND fresh-context second-opinion judge agrees improvement is real
 - **Escape hatch (do NOT loop forever on an unwinnable eval):** if **3 consecutive improvement iterations** target the SAME failing invariant/criterion and produce **NO movement** on it (the live output is materially unchanged despite the fix being verifiably on the surface the model reads), STOP improving that workflow and escalate. The suspect is no longer the prompt — it is the eval condition or the contract itself. Common causes: (1) the test account/fixture produces a pathological input (e.g. a 100%-off-ICP batch) where the agent's "wrong" behaviour is arguably correct; (2) the invariant conflicts with correct behaviour (e.g. "capture X every run" when X is already in agent memory — see the memory-reset step in Phase 3); (3) a harness confound (e.g. the widget tool name is not in `--allowedTools`). Report it as `STATUS: BLOCKED` with the specific invariant, the 3 no-movement iterations as evidence, and a recommendation to the user (adjust the fixture, the contract, or the harness) — NOT as a product FAIL to keep grinding on.
@@ -1000,5 +1091,5 @@ Fix the infrastructure issue first (see Final Run Summary above).
 2. **Filter tool calls.** Only count tool calls whose name starts with `leadbay_`. ToolSearch, WebFetch, Bash etc. from leaked superpowers are noise — exclude them from all invariant checks and the judge prompt.
 3. **Judge is always a fresh-context subagent.** Never judge in the same context as the session runner — the judge must be blind to the session's "feel" and reason only from the evidence passed to it.
 4. **WORKFLOWS.md is the only contract source.** Never hardcode workflow metadata in this skill. Always re-read WORKFLOWS.md for every run.
-5. **Preserve dashboard compatibility.** The JSON written to `.context/evals/` must match the `EvalEntry` schema exactly so Phase 7 can render the dashboard. If the schema needs to evolve, update both the skill and `evidence.ts` in the eval-framework repo.
+5. **Preserve dashboard compatibility.** Each `entries[]` element must match the `EvalEntry` schema (and the run file the wrapped archive schema in `mcp-dashboard/evals/README.md`) so both the TS renderer (`eval-dashboard.ts`) and the legacy `gen-dashboard.py` read it. If the schema evolves, bump `schema_version` and update the skill, `mcp-dashboard/evals/README.md`, `eval-dashboard.ts`, and `evidence.ts` together.
 6. **Phase gates are mandatory.** Every phase has a gate block. If a gate is not emitted, the phase did not complete. Do not advance without emitting the gate verbatim.
