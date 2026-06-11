@@ -36,7 +36,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.5.0
+version: 0.5.1
 allowed-tools:
   - Bash
   - Read
@@ -508,8 +508,20 @@ it does not do it.
 For EVERY fix/recommendation tagged `needs-investigation`, emit a ready-to-paste
 prompt for a coding agent to FULLY investigate the root cause and propose a fix.
 One fenced block per item, built from the template in Phase 5b. `code-verifiable`
-items are skipped (they already have a concrete fix). If there are none this
-window, write "None — no needs-investigation findings."
+items are skipped (they already have a concrete fix).
+
+**If there are zero `needs-investigation` findings this window, do NOT bury it —
+state it loudly as the section's only content:**
+
+```
+NOTHING TO IMPROVE THIS WINDOW — 0 actionable (needs-investigation) findings.
+Reason: <pick the true one — e.g. "clean window, no failure themes survived
+verification" / "all fixes are code-verifiable (already actionable, no
+investigation needed)" / "data too thin to support a confident finding">.
+```
+
+This explicit "nothing to add" is a valid, expected outcome — a quiet window is
+good news, not a skill failure. Never invent a finding to fill the section.
 
 ## Weak signals (single-utterance — not yet requests)
 Things worth watching that didn't meet the bar.
@@ -688,10 +700,35 @@ approves. Use AskUserQuestion:
   one draft PR. Default cap is 1.
 
 If the user selects none / cancels: stop, report the analysis is done and no
-improve action was taken. If there are zero needs-investigation findings: print
-"No needs-investigation findings to improve — nothing to do." and stop.
+improve action was taken. If there are zero needs-investigation findings, print
+the loud headline:
 
-### 7b — Spawn the fix-subagent (one per approved finding, worktree-isolated)
+```
+NOTHING TO IMPROVE THIS WINDOW — 0 actionable (needs-investigation) findings.
+No fix-subagent spawned, no PR. <one-line reason>.
+```
+
+and stop.
+
+### 7b — Recap & final go (gate, before ANY code is written)
+
+The 7a gate picked WHICH finding. Before spawning a subagent that writes code,
+give a **small, concrete recap of the planned change** and get an explicit go.
+This is the "before you create the code, recap it for me" gate. Per approved
+finding, show in plain prose (not a fenced template):
+
+- **What's broken** (one line, from the finding's evidence).
+- **The intended fix** (one line — the mechanism the subagent will pursue;
+  honestly hedge if it's "investigate then fix" rather than a known one-liner).
+- **Blast radius** — which package/area it'll touch (best guess), that it adds a
+  WORKFLOWS row + eval scenario, and that it ends in a DRAFT PR (never merged).
+
+Then ask via AskUserQuestion: **A) Go — spawn the fix-subagent (recommended)
+B) Skip this finding C) Cancel improve**. Spawn NOTHING until the user picks A.
+If the recap reveals the fix is bigger/riskier than expected (a redesign, a
+cross-package change, a data migration), say so in the recap and recommend Skip.
+
+### 7c — Spawn the fix-subagent (one per approved finding, worktree-isolated)
 
 For each approved finding, spawn ONE subagent via the Agent tool with
 `isolation: worktree` so concurrent fixes never collide. The subagent's prompt
@@ -726,7 +763,7 @@ verify. Do not claim success you didn't observe.
 `<N>` is the workflow row the subagent created; it won't be known until step 3,
 so the prompt instructs the subagent to use the row it added.
 
-### 7c — Collect + report (no auto-merge)
+### 7d — Collect + report (no auto-merge)
 
 For each subagent, surface its structured report verbatim-ish:
 - ✅ fix applied + eval PASS + draft PR opened → give the PR URL.
@@ -742,7 +779,9 @@ returns `null` (died), report it and move on — do not retry silently.
 ```
 PHASE 7 GATE — Improve loop
 ════════════════════════════════
-[✓/✗] needs-investigation findings: N · approved to act on: M (default cap 1)
+[✓/✗] needs-investigation findings: N (if 0 → loud "NOTHING TO IMPROVE", stopped)
+[✓/✗] Scope confirmed (7a) + per-finding recap & go (7b) before any spawn: YES
+[✓/✗] approved to act on: M (default cap 1)
 [✓/✗] Fix-subagents spawned: M (worktree-isolated)
 [✓/✗] Per finding: fix applied? · eval workflow + verdict · draft PR URL (or why not)
 [✓/✗] Eval-FAILED fixes did NOT open a PR: YES
