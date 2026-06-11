@@ -12,22 +12,30 @@ description: |
   claims, and synthesises an evidence-cited markdown report ending in a
   prioritised Recommendations list (what to fix/build next, ranked).
 
-  This is a diagnostic skill — it reads telemetry and reasons about it. It
-  writes no code. It DOES archive a fixed-schema JSON summary of each run
-  (schema_version 1) to the leadbay/mcp-dashboard repo under
+  This is a diagnostic skill — by default it reads telemetry and reasons about
+  it (it writes no product code). It DOES archive a fixed-schema JSON summary of
+  each run (schema_version 1) to the leadbay/mcp-dashboard repo under
   analysis/<date>-<window>d.json, committed + pushed, so runs diff
   week-over-week. For each needs-investigation finding it also emits a
   ready-to-paste prompt that hands the root-cause investigation + fix proposal
-  to a separate coding agent. That archive is its only write action.
+  to a separate coding agent.
+
+  With --improve it goes further: it spawns a fix-subagent for a chosen
+  needs-investigation finding that investigates the root cause in leadclaw,
+  applies a fix, adds a WORKFLOWS.md row + eval scenario reproducing the bug,
+  runs /eval to PROVE the fix, and opens a draft PR — all gated behind explicit
+  confirmation and capped (default: top 1 finding). This is the only path that
+  touches product code, and only via a reviewed draft PR.
 
   Usage:
     /mcp-analysis                 (last 30 days)
     /mcp-analysis --days 7        (last 7 days)
     /mcp-analysis --days 14 --user guillaume@helvo.fr   (focus one user)
+    /mcp-analysis --days 7 --improve   (analyze, then fix+eval+draft-PR the top finding)
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.4.0
+version: 0.5.0
 allowed-tools:
   - Bash
   - Read
@@ -132,7 +140,8 @@ Specific failure modes that destroy the analysis. Guard against each actively.
 
 ## Phase 0 — Parse arguments, resolve PostHog credentials
 
-Read the invocation for `--days` (default 30) and optional `--user <email>`.
+Read the invocation for `--days` (default 30), optional `--user <email>`, and
+the optional `--improve` flag (off by default).
 
 The PostHog Setup block above resolves `PH_KEY`. Confirm it is set. Capture the
 window and project:
@@ -140,9 +149,13 @@ window and project:
 ```bash
 DAYS="${ARG_DAYS:-30}"
 POSTHOG_HOST=https://eu.posthog.com
-# All queries: POST $POSTHOG_HOST/api/projects/@current/query/ with the HogQL body.
-echo "window: last ${DAYS}d  ·  user filter: ${ARG_USER:-<all>}"
+# IMPROVE=1 when the invocation contains --improve, else 0.
+echo "window: last ${DAYS}d  ·  user filter: ${ARG_USER:-<all>}  ·  improve: ${IMPROVE:-0}"
 ```
+
+`--improve` does NOT change Phases 1–6 — the analysis + archive run identically.
+It only activates Phase 7 (the fix loop) AFTER the report is complete and
+archived. A run without `--improve` is read-only as always.
 
 **Phase 0 Gate — emit this block before Phase 1:**
 
@@ -152,6 +165,7 @@ PHASE 0 GATE
 [✓/✗] PH_KEY: present
 [✓/✗] Window: last ___ days
 [✓/✗] User filter: ___ (or <all>)
+[✓/✗] Improve mode: ON / OFF
 ════════════════════════════════
 GATE: PASS / FAIL — [explain any failures]
 ```
@@ -575,6 +589,96 @@ PHASE 6 GATE — Summary archived
 [✓/✗] Investigation prompts written: N file(s) (one per needs-investigation item, or 0)
 [✓/✗] Every JSON finding traces to the report (Iron Law #1): YES
 [✓/✗] Committed + pushed to leadbay/mcp-dashboard: YES / LOCAL-ONLY (why)
+════════════════════════════════
+GATE: PASS / FAIL
+```
+
+---
+
+## Phase 7 — Improve loop (ONLY when `--improve` is set)
+
+If `IMPROVE` is not set, STOP after Phase 6 — the run is complete. Everything
+below runs ONLY with `--improve`.
+
+This is the one path where the skill causes a product-code change. It does so
+ONLY through a **reviewed draft PR** that an eval has validated. It NEVER merges,
+deploys, or pushes to a default branch. Iron Law #6 still holds for the analysis
+itself; Phase 7 is an explicit, gated, opt-in extension.
+
+### 7a — Confirm scope (gate)
+
+From the SURVIVING `needs-investigation` findings (Phase 5b), rank by the
+Recommendations priority (P1 first). Present them and ask which to act on,
+**defaulting to the single top finding** — do not act on more than the user
+approves. Use AskUserQuestion:
+
+- Re-ground: project = leadclaw MCP; window = last <N>d; this will spawn a
+  fix-subagent that edits code and opens a DRAFT PR.
+- List each needs-investigation finding (P-rank + one-line) as an option.
+- Recommend: the top P1 finding only.
+- Make clear: each selected finding = one subagent + one branch + one eval run +
+  one draft PR. Default cap is 1.
+
+If the user selects none / cancels: stop, report the analysis is done and no
+improve action was taken. If there are zero needs-investigation findings: print
+"No needs-investigation findings to improve — nothing to do." and stop.
+
+### 7b — Spawn the fix-subagent (one per approved finding, worktree-isolated)
+
+For each approved finding, spawn ONE subagent via the Agent tool with
+`isolation: worktree` so concurrent fixes never collide. The subagent's prompt
+is the finding's Phase 5b investigation prompt PLUS the following execution
+contract appended:
+
+````
+You are running an autonomous fix-and-validate task in the leadclaw repo.
+You may edit code, add tests/scenarios, run the eval, and open a DRAFT PR.
+You may NOT: merge, push to main, mark the PR ready, or deploy.
+
+Steps (do them in order; STOP and report if any step can't be completed):
+1. Branch off origin/main: ArtyETH06/mcp-fix-<slug>.
+2. Investigate + apply the fix (root cause, not symptom). Keep the diff minimal.
+3. Reproduce-as-eval: add or update a WORKFLOWS.md row whose scenario exercises
+   the failing behavior from the evidence above, plus any fixture the scenario
+   needs. This is what makes the fix eval-provable.
+4. Run the workspace gate: `pnpm -r test` and `pnpm -r typecheck` MUST be green.
+5. Run the eval for the new/updated workflow: `/eval --workflow <N>` (the row you
+   added/changed). The eval must show the corrected behavior PASS. If the eval
+   FAILS, do NOT open a PR — report the eval output and your best diagnosis, and
+   stop. A fix that doesn't pass its own eval is not a fix.
+6. Only if tests + typecheck + eval all pass: open a **draft** PR with
+   `gh pr create --draft`, body linking the analysis finding + the eval verdict.
+   Set assignee + a label + the Product project per repo convention.
+
+Report back as structured text: branch, files changed, eval verdict
+(PASS/FAIL + which workflow), PR URL (or why no PR), and anything you could not
+verify. Do not claim success you didn't observe.
+````
+
+`<N>` is the workflow row the subagent created; it won't be known until step 3,
+so the prompt instructs the subagent to use the row it added.
+
+### 7c — Collect + report (no auto-merge)
+
+For each subagent, surface its structured report verbatim-ish:
+- ✅ fix applied + eval PASS + draft PR opened → give the PR URL.
+- ⚠ fix applied but eval FAILED → no PR; show the eval output so the human
+  decides. This is a SUCCESS of the loop (it caught a bad fix), not a failure.
+- ✗ subagent couldn't locate a cause / blocked → report what it tried.
+
+NEVER merge or mark ready. The human reviews every draft PR. If a subagent
+returns `null` (died), report it and move on — do not retry silently.
+
+**Phase 7 Gate — emit this block to close an --improve run:**
+
+```
+PHASE 7 GATE — Improve loop
+════════════════════════════════
+[✓/✗] needs-investigation findings: N · approved to act on: M (default cap 1)
+[✓/✗] Fix-subagents spawned: M (worktree-isolated)
+[✓/✗] Per finding: fix applied? · eval workflow + verdict · draft PR URL (or why not)
+[✓/✗] Eval-FAILED fixes did NOT open a PR: YES
+[✓/✗] Nothing merged / marked ready / deployed (Iron Law #6 boundary): YES
 ════════════════════════════════
 GATE: PASS / FAIL
 ```
