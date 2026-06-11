@@ -21,13 +21,14 @@ description: |
   ready-to-paste prompt that hands the root-cause investigation + fix proposal
   to a separate coding agent.
 
-  With --improve it goes further: it spawns a fix-subagent for a chosen
-  needs-investigation finding that investigates the root cause in leadclaw,
-  applies a fix, adds a WORKFLOWS.md row + eval scenario reproducing the bug,
-  then ITERATES the fix against /eval (up to 3 rounds) until the eval passes, and
-  opens a draft PR — all gated behind explicit confirmation and capped (default:
-  top 1 finding). This is the only path that touches product code, and only via a
-  reviewed draft PR.
+  With --improve it goes further, plan-first: for a chosen needs-investigation
+  finding it (1) runs a READ-ONLY investigation subagent that returns a concrete
+  build plan (root cause + exact files to change + eval scenario), (2) shows the
+  plan and waits for explicit approval before any code, then (3) runs a build
+  subagent that adds the eval scenario, proves it FAILS on the unfixed code,
+  applies the fix, iterates against /eval (≤3 rounds) until it PASSES, archives
+  the eval run, and opens a draft PR. Capped (default: top 1) and never merges.
+  This is the only path that touches product code, and only via a reviewed draft PR.
 
   Usage:
     /mcp-analysis                 (last 30 days)
@@ -37,7 +38,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.5.2
+version: 0.6.0
 allowed-tools:
   - Bash
   - Read
@@ -711,72 +712,85 @@ No fix-subagent spawned, no PR. <one-line reason>.
 
 and stop.
 
-### 7b — Recap & final go (gate, before ANY code is written)
+### 7b — Investigate & plan (read-only subagent — NO code written yet)
 
-The 7a gate picked WHICH finding. Before spawning a subagent that writes code,
-give a **small, concrete recap of the planned change** and get an explicit go.
-This is the "before you create the code, recap it for me" gate. Per approved
-finding, show in plain prose (not a fenced template):
-
-- **What's broken** (one line, from the finding's evidence).
-- **The intended fix** (one line — the mechanism the subagent will pursue;
-  honestly hedge if it's "investigate then fix" rather than a known one-liner).
-- **Blast radius** — which package/area it'll touch (best guess), that it adds a
-  WORKFLOWS row + eval scenario, and that it ends in a DRAFT PR (never merged).
-
-Then ask via AskUserQuestion: **A) Go — spawn the fix-subagent (recommended)
-B) Skip this finding C) Cancel improve**. Spawn NOTHING until the user picks A.
-If the recap reveals the fix is bigger/riskier than expected (a redesign, a
-cross-package change, a data migration), say so in the recap and recommend Skip.
-
-### 7c — Spawn the fix-subagent (one per approved finding, worktree-isolated)
-
-For each approved finding, spawn ONE subagent via the Agent tool with
-`isolation: worktree` so concurrent fixes never collide. The subagent's prompt
-is the finding's Phase 5b investigation prompt PLUS the following execution
-contract appended:
+The 7a gate picked WHICH finding. Do NOT jump straight to fixing. First spawn a
+**read-only investigation subagent** (Agent tool, `isolation: worktree`) whose
+ONLY job is to find the root cause and return a concrete BUILD PLAN — it must
+NOT edit code, add files, or open anything. Prompt = the finding's Phase 5b
+investigation prompt PLUS:
 
 ````
-You are running an autonomous fix-and-validate task in the leadclaw repo.
-You may edit code, add tests/scenarios, run the eval, and open a DRAFT PR.
-You may NOT: merge, push to main, mark the PR ready, or deploy.
+READ-ONLY. Do not edit, create, or delete any file. Do not branch, commit, or
+PR. Your sole output is a build plan for a fix.
 
-Steps (do them in order; STOP and report if any step can't be completed):
+Investigate the root cause in leadclaw (grep the tool name under
+packages/core/src/composite|tools/, read the code, live-probe if useful — test
+creds are expendable). Then return a PLAN with EXACTLY these fields:
+- ROOT CAUSE: the mechanism, with file:line.
+- FILES TO CHANGE: each path + a one-line description of the intended edit.
+- EVAL SCENARIO: the WORKFLOWS.md row you'd add (intent + scenario) to reproduce
+  the bug, + any fixture needed.
+- RISK: one-liner / minimal diff / redesign? blast radius? anything that could
+  break adjacent behavior.
+- CONFIDENCE + what you could NOT determine read-only.
+
+Do not write code. The plan is the deliverable.
+````
+
+### 7c — Show the plan, get explicit approval (gate, before ANY code)
+
+Surface the subagent's plan to the user in plain prose — ROOT CAUSE, the exact
+FILES TO CHANGE (path + intended edit), the EVAL SCENARIO, RISK, and confidence.
+This is the "tell me what you're going to build before you build it" gate: the
+user sees the concrete change, not a hand-wavy recap.
+
+Then AskUserQuestion: **A) Build this plan (recommended) B) Revise the plan
+(say what to change → re-run 7b with the steer) C) Skip this finding
+D) Cancel improve.** Write NO code until the user picks A. If the plan reveals a
+redesign / cross-package change / data migration, say so and recommend Skip or
+Revise. If confidence is low or the root cause is "couldn't determine read-only",
+recommend against building.
+
+### 7d — Build & validate (only after plan approval, worktree-isolated)
+
+Once the plan is approved, spawn the BUILD subagent (Agent tool, fresh
+`isolation: worktree`) with the approved plan + this contract:
+
+````
+You are executing an APPROVED build plan in the leadclaw repo. Implement exactly
+the approved plan — if you discover it needs to materially deviate (different
+files, bigger scope), STOP and report rather than silently expanding.
+You may edit code, add tests/scenarios, run the eval, archive the eval, and open
+a DRAFT PR. You may NOT: merge, push to main, mark ready, or deploy.
+
+Steps (in order; STOP and report if any can't be completed):
 1. Branch off origin/main: ArtyETH06/mcp-fix-<slug>.
-2. Investigate + apply the fix (root cause, not symptom). Keep the diff minimal.
-3. Reproduce-as-eval: add or update a WORKFLOWS.md row whose scenario exercises
-   the failing behavior from the evidence above, plus any fixture the scenario
-   needs. This is what makes the fix eval-provable.
-4. Run the workspace gate: `pnpm -r test` and `pnpm -r typecheck` MUST be green.
-5. Eval-and-improve LOOP (up to 3 attempts): run `/eval --workflow <N>` (the row
-   you added/changed).
-   - If it PASSES → go to step 6.
-   - If it FAILS → read the eval output, REVISE the fix to address what the eval
-     caught, re-run `pnpm -r test`/typecheck (step 4), and eval again. Repeat,
-     counting attempts.
-   - This is the "run eval to improve it" loop: the eval is the feedback signal
-     that drives the fix to correctness, not a one-shot checkpoint.
-   - Cap at 3 eval attempts. If still FAILING after the 3rd, STOP — do NOT open a
-     PR. Report every attempt (what the eval caught + what you changed each round)
-     and your best diagnosis of why it won't converge. A fix that can't pass its
-     own eval in 3 tries needs a human, not a 4th blind attempt.
-   - Each revision must stay a real fix (root cause), never gaming the scenario
-     to make the eval green. If you find yourself weakening the scenario to pass,
-     STOP — that's the anti-pattern; report it.
-6. Only after the eval PASSES (within the cap): open a **draft** PR with
-   `gh pr create --draft`, body linking the analysis finding + the eval verdict +
-   how many eval rounds it took. Set assignee + a label + the Product project per
-   repo convention.
+2. Add the eval scenario FIRST: add the WORKFLOWS.md row from the plan + any
+   fixture. Note its workflow number N.
+3. BEFORE/AFTER PROOF — establish the bug is real and the eval catches it:
+   run `/eval --workflow N` on the UNFIXED code. It MUST FAIL (red). If it
+   passes before any fix, the scenario doesn't actually reproduce the bug —
+   STOP and report (a green-before-fix eval proves nothing).
+4. Apply the fix from the plan (root cause, minimal diff).
+5. `pnpm -r test` and `pnpm -r typecheck` MUST be green.
+6. Eval-and-improve LOOP (max 3): run `/eval --workflow N`. PASS → step 7.
+   FAIL → read output, revise the fix (not the scenario), re-run tests, eval
+   again. Cap 3. Still failing after 3 → STOP, no PR, report every round.
+   Never weaken the scenario to force green (anti-gaming) — STOP if tempted.
+7. Archive the eval run: the /eval skill pushes its JSON to leadbay/mcp-dashboard;
+   confirm that archive landed (or, if it didn't, push it / report why not).
+8. Open a DRAFT PR (`gh pr create --draft`): body links the analysis finding,
+   the BEFORE=FAIL / AFTER=PASS eval verdicts, and eval round count. Set
+   assignee + a label + the Product project per repo convention.
 
-Report back as structured text: branch, files changed, eval verdict
-(PASS/FAIL + which workflow) + number of eval rounds, PR URL (or why no PR), and
-anything you could not verify. Do not claim success you didn't observe.
+Report (structured): branch, root cause (file:line), files changed, before-eval
+verdict (must be FAIL), after-eval verdict + rounds, eval archived? (yes/where),
+tests+typecheck result, draft PR URL (or why none), anything unverified. Never
+claim success you didn't observe.
 ````
 
-`<N>` is the workflow row the subagent created; it won't be known until step 3,
-so the prompt instructs the subagent to use the row it added.
-
-### 7d — Collect + report (no auto-merge)
+### 7e — Collect + report (no auto-merge)
 
 For each subagent, surface its structured report verbatim-ish:
 - ✅ fix applied + eval PASS (in ≤3 rounds) + draft PR opened → give the PR URL
@@ -795,11 +809,13 @@ returns `null` (died), report it and move on — do not retry silently.
 PHASE 7 GATE — Improve loop
 ════════════════════════════════
 [✓/✗] needs-investigation findings: N (if 0 → loud "NOTHING TO IMPROVE", stopped)
-[✓/✗] Scope confirmed (7a) + per-finding recap & go (7b) before any spawn: YES
-[✓/✗] approved to act on: M (default cap 1)
-[✓/✗] Fix-subagents spawned: M (worktree-isolated)
-[✓/✗] Per finding: fix applied? · eval rounds (≤3) + final verdict · draft PR URL (or why not)
-[✓/✗] Fixes that never passed eval (after 3 rounds) did NOT open a PR: YES
+[✓/✗] Scope confirmed (7a): M findings (default cap 1)
+[✓/✗] Investigate-and-PLAN ran read-only first (7b) — no code before the plan: YES
+[✓/✗] Plan shown + user approved each build (7c) before any code: YES
+[✓/✗] Build subagents spawned only after approval (7d): M (worktree-isolated)
+[✓/✗] BEFORE-fix eval FAILED (proves the scenario reproduces the bug): YES
+[✓/✗] AFTER-fix eval PASSED in ≤3 rounds · eval run archived to mcp-dashboard: YES
+[✓/✗] Fixes that never passed eval did NOT open a PR: YES
 [✓/✗] Nothing merged / marked ready / deployed (Iron Law #6 boundary): YES
 ════════════════════════════════
 GATE: PASS / FAIL
