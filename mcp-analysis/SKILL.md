@@ -24,9 +24,10 @@ description: |
   With --improve it goes further: it spawns a fix-subagent for a chosen
   needs-investigation finding that investigates the root cause in leadclaw,
   applies a fix, adds a WORKFLOWS.md row + eval scenario reproducing the bug,
-  runs /eval to PROVE the fix, and opens a draft PR — all gated behind explicit
-  confirmation and capped (default: top 1 finding). This is the only path that
-  touches product code, and only via a reviewed draft PR.
+  then ITERATES the fix against /eval (up to 3 rounds) until the eval passes, and
+  opens a draft PR — all gated behind explicit confirmation and capped (default:
+  top 1 finding). This is the only path that touches product code, and only via a
+  reviewed draft PR.
 
   Usage:
     /mcp-analysis                 (last 30 days)
@@ -36,7 +37,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.5.1
+version: 0.5.2
 allowed-tools:
   - Bash
   - Read
@@ -747,17 +748,29 @@ Steps (do them in order; STOP and report if any step can't be completed):
    the failing behavior from the evidence above, plus any fixture the scenario
    needs. This is what makes the fix eval-provable.
 4. Run the workspace gate: `pnpm -r test` and `pnpm -r typecheck` MUST be green.
-5. Run the eval for the new/updated workflow: `/eval --workflow <N>` (the row you
-   added/changed). The eval must show the corrected behavior PASS. If the eval
-   FAILS, do NOT open a PR — report the eval output and your best diagnosis, and
-   stop. A fix that doesn't pass its own eval is not a fix.
-6. Only if tests + typecheck + eval all pass: open a **draft** PR with
-   `gh pr create --draft`, body linking the analysis finding + the eval verdict.
-   Set assignee + a label + the Product project per repo convention.
+5. Eval-and-improve LOOP (up to 3 attempts): run `/eval --workflow <N>` (the row
+   you added/changed).
+   - If it PASSES → go to step 6.
+   - If it FAILS → read the eval output, REVISE the fix to address what the eval
+     caught, re-run `pnpm -r test`/typecheck (step 4), and eval again. Repeat,
+     counting attempts.
+   - This is the "run eval to improve it" loop: the eval is the feedback signal
+     that drives the fix to correctness, not a one-shot checkpoint.
+   - Cap at 3 eval attempts. If still FAILING after the 3rd, STOP — do NOT open a
+     PR. Report every attempt (what the eval caught + what you changed each round)
+     and your best diagnosis of why it won't converge. A fix that can't pass its
+     own eval in 3 tries needs a human, not a 4th blind attempt.
+   - Each revision must stay a real fix (root cause), never gaming the scenario
+     to make the eval green. If you find yourself weakening the scenario to pass,
+     STOP — that's the anti-pattern; report it.
+6. Only after the eval PASSES (within the cap): open a **draft** PR with
+   `gh pr create --draft`, body linking the analysis finding + the eval verdict +
+   how many eval rounds it took. Set assignee + a label + the Product project per
+   repo convention.
 
 Report back as structured text: branch, files changed, eval verdict
-(PASS/FAIL + which workflow), PR URL (or why no PR), and anything you could not
-verify. Do not claim success you didn't observe.
+(PASS/FAIL + which workflow) + number of eval rounds, PR URL (or why no PR), and
+anything you could not verify. Do not claim success you didn't observe.
 ````
 
 `<N>` is the workflow row the subagent created; it won't be known until step 3,
@@ -766,9 +779,11 @@ so the prompt instructs the subagent to use the row it added.
 ### 7d — Collect + report (no auto-merge)
 
 For each subagent, surface its structured report verbatim-ish:
-- ✅ fix applied + eval PASS + draft PR opened → give the PR URL.
-- ⚠ fix applied but eval FAILED → no PR; show the eval output so the human
-  decides. This is a SUCCESS of the loop (it caught a bad fix), not a failure.
+- ✅ fix applied + eval PASS (in ≤3 rounds) + draft PR opened → give the PR URL
+  and how many eval rounds it took.
+- ⚠ eval still FAILED after 3 improve rounds → no PR; show each round (what the
+  eval caught + what changed) so the human decides. The loop converging-or-not is
+  the signal; a non-converging fix needs a human, not a silent PR.
 - ✗ subagent couldn't locate a cause / blocked → report what it tried.
 
 NEVER merge or mark ready. The human reviews every draft PR. If a subagent
@@ -783,8 +798,8 @@ PHASE 7 GATE — Improve loop
 [✓/✗] Scope confirmed (7a) + per-finding recap & go (7b) before any spawn: YES
 [✓/✗] approved to act on: M (default cap 1)
 [✓/✗] Fix-subagents spawned: M (worktree-isolated)
-[✓/✗] Per finding: fix applied? · eval workflow + verdict · draft PR URL (or why not)
-[✓/✗] Eval-FAILED fixes did NOT open a PR: YES
+[✓/✗] Per finding: fix applied? · eval rounds (≤3) + final verdict · draft PR URL (or why not)
+[✓/✗] Fixes that never passed eval (after 3 rounds) did NOT open a PR: YES
 [✓/✗] Nothing merged / marked ready / deployed (Iron Law #6 boundary): YES
 ════════════════════════════════
 GATE: PASS / FAIL
