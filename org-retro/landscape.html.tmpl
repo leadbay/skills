@@ -174,12 +174,13 @@
   <div class="sub"><b>{{DATE_RANGE_LONG}}</b> · Code · Infra · Data Pipeline</div>
 </header>
 
-<!-- Headline stats: 5 cards. Tag a card .win for a milestone, .infra for infra news, .code for code volume. -->
+<!-- Headline stats: 5 cards. NO raw commit count — it is not a contribution metric. -->
+<!-- Use milestone/value-oriented headlines: top win, releases, repos active, infra, pipeline. -->
 <div class="stats">
-  <div class="stat code">
-    <div class="label">Active builders</div>
-    <div class="value">{{N_BUILDERS}}</div>
-    <div class="delta">{{BUILDER_NAMES}}</div>
+  <div class="stat win">
+    <div class="label">{{HEADLINE_WIN_LABEL}}</div>
+    <div class="value">{{HEADLINE_WIN_VALUE}}</div>
+    <div class="delta">{{HEADLINE_WIN_DELTA}}</div>
   </div>
   <div class="stat win">
     <div class="label">Releases shipped</div>
@@ -187,9 +188,9 @@
     <div class="delta">{{RELEASE_SUMMARY}}</div>
   </div>
   <div class="stat code">
-    <div class="label">Commits</div>
-    <div class="value">{{N_COMMITS}}</div>
-    <div class="delta">{{N_REPOS}} repos active</div>
+    <div class="label">Repos active</div>
+    <div class="value">{{N_REPOS}}</div>
+    <div class="delta">{{BUILDER_NAMES}}</div>
   </div>
   <div class="stat infra">
     <div class="label">{{INFRA_LABEL}}</div>
@@ -205,27 +206,15 @@
 
 <div class="cols">
 
-  <!-- LEFT: Builder leaderboard + Top wins -->
+  <!-- LEFT: Top wins (NO commit-count leaderboard — value of improvement is the only ranking) -->
   <div>
     <section>
-      <h2>🏆 Builder Scoreboard</h2>
-      <table class="lb">
-        <thead>
-          <tr><th></th><th>Builder</th><th class="right">Commits</th><th>Where</th></tr>
-        </thead>
-        <tbody>
-          <!-- Apply identity-merge BEFORE this table (milstan, amaury/kinrar, nicolas/jenecomprendpas, etc.). -->
-          <!-- Include dependabot as separate 🤖 row if it has ≥3 PRs. -->
-          <!-- ROW: <tr><td class="medal">{{MEDAL}}</td><td>{{NAME}}</td><td class="right num">{{N}}</td><td>{{WHERE}}</td></tr> -->
-          {{BUILDER_ROWS}}
-        </tbody>
-      </table>
-    </section>
-
-    <section style="margin-top:12px;">
-      <h2>🥇 Top wins</h2>
+      <h2>🥇 Top Wins <span class="tag">ranked by impact, not commit count</span></h2>
       <div class="top-wins">
-        <!-- 3-5 repo-cards. Use .gold/.silver/.bronze for ranking, .infra for infra-track wins. -->
+        <!-- 5-8 repo-cards. Rank by VALUE OF IMPROVEMENT shipped (product/user/infra/team impact), -->
+        <!-- never by commit volume. Credit people by name inside each card. .gold/.silver/.bronze -->
+        <!-- for the top 3, .infra for infra-track wins, .code for code wins, default brand for misc. -->
+        <!-- ROW: <div class="repo-card {{CLASS}}"><div class="title">{{EMOJI}} {{WIN}} — {{WHO}}</div><div class="meta">{{WHY IT MATTERS}}</div></div> -->
         {{TOP_WINS_CARDS}}
       </div>
     </section>

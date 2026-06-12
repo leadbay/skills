@@ -2,7 +2,7 @@
 ---
 name: org-retro
 description: Weekly org-wide engineering retro — engineering message + data-coverage message (Discord-compatible)
-version: 0.3.0
+version: 0.4.0
 ---
 
 ## Preamble (run first)
@@ -131,9 +131,13 @@ git log origin/main --since="$START" --format="%b" | grep -i "Co-Authored-By" | 
 
 **CRITICAL: Output MUST be under 1950 characters (one Discord message).**
 
+**NO COMMIT-COUNT LEADERBOARD.** Commit counts are NOT a measure of substantial contribution — a single high-leverage migration or a well-designed feature outweighs dozens of small commits, and auto-syncs / dependabot / refactors inflate the count meaninglessly. Rank contributions by the **value of the actual improvement shipped**, never by commit volume. Do not print a per-person commit tally anywhere.
+
+Use commits/releases only as raw material to *find* the wins — then judge each win on what it does for the product, the user, the infra, or the team. Credit the person(s) by name inside each win, but never as a ranked scoreboard.
+
 ```
 📊 Leadbay Org Retro — {date range}
-{contributors} contributors · {repos} repos · {releases} releases
+{repos} repos active · {releases} releases
 
 DATA PIPELINE
   {worldview claims summary — 2 lines max}
@@ -142,29 +146,27 @@ DATA PIPELINE
 RELEASES
   {repo}  {version range}  ({count} releases)
 
-{REPO SECTIONS — only repos with significant activity}
-  {contributors}
-  • {2-5 bullets of key work}
+TOP WINS  (ranked by value of improvement, not commit count)
+🥇 {ship} ({who}) — {why it matters: product/user/infra/team impact}
+🥈 {ship} ({who}) — {why}
+🥉 {ship} ({who}) — {why}
+   {2-4 more notable wins as flat bullets if space allows}
 
-{one-liner for small repos}
-
-LEADERBOARD
-  {name:12}  {repos} repos  {extra if notable}
-
-TOP WINS
-🥇 {ship} ({who}) — {why}
-🥈 ...
-🥉 ...
+{REPO SECTIONS — only repos with shipped value worth naming}
+  {repo} ({who}) — {1-2 dense lines of the substantive work}
 
 SIGNALS
-{2-5 noteworthy items with emoji}
+{2-5 noteworthy items with emoji: milestones, risks, new contributors, infra moves}
 ```
 
 **Rules:**
+- **No commit-count leaderboard, no per-person commit tallies.** Value of improvement is the only ranking axis.
+- Credit people by name inside wins and repo lines, generously — just never as a ranked count.
+- New contributors / interns get a warm SIGNAL line (welcome them), not a scoreboard rank.
 - Claims are field-level writes, not entities. Say "field updates" not "leads."
 - Round large numbers: "4.2M" not "4,212,206"
 - Only include genuinely noteworthy SIGNALS.
-- If over char limit: cut smallest repos, trim bullets, reduce leaderboard.
+- If over char limit: cut smallest repo lines, trim bullets, keep the top wins.
 
 ---
 
