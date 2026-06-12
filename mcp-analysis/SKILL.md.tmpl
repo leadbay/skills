@@ -29,7 +29,9 @@ description: |
   plan and waits for explicit approval before any code, then (3) runs a build
   subagent that adds the eval scenario, proves it FAILS on the unfixed code,
   applies the fix, iterates against /eval (≤3 rounds) until it PASSES, archives
-  the eval run, and opens a draft PR. Capped (default: top 1) and never merges.
+  the eval run, opens a draft PR, and (4) SELF-REVIEWS that PR with /review —
+  applying only the auto-fix-class findings, re-proving the eval stays green,
+  and pushing to the same draft. Capped (default: top 1) and never merges.
   This is the only path that touches product code, and only via a reviewed draft PR.
 
   Usage:
@@ -40,7 +42,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.7.0
+version: 0.8.0
 allowed-tools:
   - Bash
   - Read
@@ -789,21 +791,47 @@ Steps (in order; STOP and report if any can't be completed):
 8. Open a DRAFT PR (`gh pr create --draft`): body links the analysis finding,
    the BEFORE=FAIL / AFTER=PASS eval verdicts, and eval round count. Set
    assignee + a label + the Product project per repo convention.
+9. SELF-REVIEW the PR you just opened, and close the loop on it:
+   a. Run the `/review` skill against this branch (it does the adversarial
+      Claude+Codex pass + fix-first classification + specialists). You are
+      reviewing YOUR OWN fix — re-read the originating finding and confirm the
+      diff actually resolves THAT finding, not merely that the eval is green.
+   b. Apply ONLY the fixes `/review` classifies as AUTO-FIX (mechanical /
+      low-risk). Do NOT apply ASK-class fixes (the judgment calls) — collect
+      them into a list for the human instead. Never modify existing test files
+      to apply a fix; add coverage in NEW files only (repo invariant).
+   c. RE-PROVE GREEN after applying auto-fixes: re-run `pnpm -r test` +
+      `pnpm -r typecheck` + `/eval --workflow N`. If an auto-fix breaks the
+      eval or tests, REVERT that specific fix (don't loop trying to save it)
+      and note it in the ASK list for the human. The eval staying green is the
+      hard gate — a review fix never gets to regress the behaviour the PR fixed.
+   d. Push the applied auto-fixes to the SAME draft PR. It stays DRAFT — never
+      mark ready, never merge. Add a PR comment summarising: what `/review`
+      auto-fixed, what it flagged as ASK (left for the human), and that the
+      eval still passes.
+   If `/review` is unavailable in this environment, skip 9 and say so in the
+   report — do not fabricate a review pass.
 
 Report (structured): branch, root cause (file:line), files changed, before-eval
 verdict (must be FAIL), after-eval verdict + rounds, eval archived? (yes/where),
-tests+typecheck result, draft PR URL (or why none), anything unverified. Never
-claim success you didn't observe.
+tests+typecheck result, draft PR URL (or why none), self-review verdict
+(auto-fixes applied + count, ASK items left for human, eval still green after
+review? yes/no), anything unverified. Never claim success you didn't observe.
 ````
 
 ### 7e — Collect + report (no auto-merge)
 
 For each subagent, surface its structured report verbatim-ish:
 - ✅ fix applied + eval PASS (in ≤3 rounds) + draft PR opened → give the PR URL
-  and how many eval rounds it took.
+  and how many eval rounds it took. Also surface the **self-review** result
+  (7d step 9): how many `/review` auto-fixes were applied, the ASK items left
+  for the human to decide, and confirmation the eval is still green after the
+  review fixes landed. If a review fix had to be reverted to keep the eval
+  green, name it.
 - ⚠ eval still FAILED after 3 improve rounds → no PR; show each round (what the
   eval caught + what changed) so the human decides. The loop converging-or-not is
-  the signal; a non-converging fix needs a human, not a silent PR.
+  the signal; a non-converging fix needs a human, not a silent PR. (No
+  self-review when there's no PR.)
 - ✗ subagent couldn't locate a cause / blocked → report what it tried.
 
 NEVER merge or mark ready. The human reviews every draft PR. If a subagent
@@ -821,6 +849,7 @@ PHASE 7 GATE — Improve loop
 [✓/✗] Build subagents spawned only after approval (7d): M (worktree-isolated)
 [✓/✗] BEFORE-fix eval FAILED (proves the scenario reproduces the bug): YES
 [✓/✗] AFTER-fix eval PASSED in ≤3 rounds · eval run archived to mcp-dashboard: YES
+[✓/✗] Self-review (7d.9): /review ran on the PR · only AUTO-FIX applied · eval still green: YES
 [✓/✗] Fixes that never passed eval did NOT open a PR: YES
 [✓/✗] Nothing merged / marked ready / deployed (Iron Law #6 boundary): YES
 ════════════════════════════════
