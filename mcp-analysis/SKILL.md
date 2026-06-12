@@ -43,7 +43,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.8.0
+version: 0.8.1
 allowed-tools:
   - Bash
   - Read
@@ -864,11 +864,29 @@ Steps (in order; STOP and report if any can't be completed):
       Claude+Codex pass + fix-first classification + specialists). You are
       reviewing YOUR OWN fix — re-read the originating finding and confirm the
       diff actually resolves THAT finding, not merely that the eval is green.
+      Two environment facts proven by a live test of this step (don't relearn
+      them the hard way):
+      - `/review` is AskUserQuestion-driven; it only auto-decides when running
+        spawned/orchestrated. You ARE a spawned subagent, so it auto-picks the
+        recommended option — good. Do NOT run `/review` in a way that would
+        block on an interactive prompt you can't answer.
+      - `/review` (a gstack skill) reads its checklist via a RELATIVE path
+        (`.claude/skills/review/checklist.md`) that resolves to a symlink-only
+        dir where the file isn't present — a known upstream gstack path bug. If
+        that read fails, the real files live at
+        `~/.claude/skills/gstack/review/checklist.md` (and
+        `~/.claude/skills/gstack/review/greptile-triage.md`,
+        `~/.claude/skills/gstack/review/specialists/`). Read them from there so
+        the structured + specialist passes run, instead of degrading to
+        adversarial-only or halting at the Step-2 STOP.
    b. Apply ONLY the fixes `/review` classifies as AUTO-FIX (mechanical /
       low-risk). Do NOT apply ASK-class fixes (the judgment calls) — collect
       them into a list for the human instead. Never modify existing test files
       to apply a fix; add coverage in NEW files only (repo invariant).
-   c. RE-PROVE GREEN after applying auto-fixes: re-run `pnpm -r test` +
+   c. RE-PROVE GREEN after applying auto-fixes. BUILD ORDER MATTERS in a fresh
+      worktree: run `pnpm prompts:build && pnpm -r build` FIRST, otherwise
+      `@leadbay/core` won't resolve and typecheck/test fail with a misleading
+      "Cannot find module" that is NOT a PR defect. Then run `pnpm -r test` +
       `pnpm -r typecheck` + `/eval --workflow N`. If an auto-fix breaks the
       eval or tests, REVERT that specific fix (don't loop trying to save it)
       and note it in the ASK list for the human. The eval staying green is the
@@ -877,7 +895,8 @@ Steps (in order; STOP and report if any can't be completed):
       mark ready, never merge. Add a PR comment summarising: what `/review`
       auto-fixed, what it flagged as ASK (left for the human), and that the
       eval still passes.
-   If `/review` is unavailable in this environment, skip 9 and say so in the
+   If `/review` genuinely can't run here (skill absent, not just the relative-
+   path read failing — try the gstack path first), skip 9 and say so in the
    report — do not fabricate a review pass.
 
 Report (structured): branch, root cause (file:line), files changed, before-eval
