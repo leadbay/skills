@@ -11,7 +11,10 @@ description: |
   version shifts), reconstructs per-user session traces, fans out parallel
   theme-analysis subagents, runs an adversarial-verify pass that REFUTES weak
   claims, and synthesises an evidence-cited markdown report ending in a
-  prioritised Recommendations list (what to fix/build next, ranked).
+  prioritised Recommendations list (what to fix/build next, ranked). Every
+  proposed feature is labelled likely-composite vs likely-granular (a best-guess
+  tool shape with rationale) so the receiving coding agent builds it in the
+  right place.
 
   This is a diagnostic skill — by default it reads telemetry and reasons about
   it (it writes no product code). It DOES archive a fixed-schema JSON summary of
@@ -38,7 +41,7 @@ description: |
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.6.0
+version: 0.7.0
 allowed-tools:
   - Bash
   - Read
@@ -205,6 +208,34 @@ Specific failure modes that destroy the analysis. Guard against each actively.
 6. **Skipping a gate because the data "looks obvious".** The gate block is what
    makes the run auditable across weeks. Obvious-looking data is exactly where
    an unstated assumption hides.
+
+---
+
+## Composite vs granular — classify every proposed tool
+
+When this skill proposes a NEW tool (a feature request or a recommendation that
+implies building one), it labels the likely shape so the receiving coding agent
+builds it in the right place. The leadclaw rule (canonical in that repo's
+`CLAUDE.md`):
+
+- **Composite** (`core/src/composite/`, registered in a `composite*Tools`
+  array, exposed by default) — orchestrates ≥2 API calls, business logic,
+  transforms, or pagination. A workflow.
+  e.g. `pull_leads` (resolve lens → list → fan out AI scores → normalize).
+- **Granular** (`core/src/tools/`, registered in a `granular*Tools` array, only
+  exposed under `LEADBAY_MCP_ADVANCED=1`) — a single near-raw API relay,
+  input validation only, no orchestration.
+  e.g. `like_lead` (one `POST /leads/:id/like`).
+
+**Rule:** multiple API calls or business logic → composite; single relay → granular.
+
+**Honesty (Iron Law #6 + Iron Law #3).** This skill reads telemetry, not code.
+The label is a BEST GUESS from the feature's *described behaviour*, never a
+verdict. Tag it `likely-composite` / `likely-granular` with one line of why
+("implies chaining N calls" / "a single relay to `POST /...`"). The coding
+agent confirms or corrects it against the real API surface. Do not assert a kind
+you can't justify from the feature's behaviour — when genuinely ambiguous, say
+`likely-composite (uncertain)` and let the investigation settle it.
 
 ---
 
@@ -419,7 +450,13 @@ and returns structured findings:
 - `evidence` — verbatim quotes / error traces / prompt citations (Iron Law #1)
 - `proposed_fix` — with `confidence: high|medium|low` and
   `kind: code-verifiable|needs-investigation` (Iron Law #6 — recommendation only)
-- `feature_signal` — any implicit feature ask, with the ≥2 utterances (Iron Law #2)
+- `feature_signal` — any implicit feature ask, with the ≥2 utterances (Iron Law #2).
+  When a feature_signal is present, it ALSO carries (see § "Composite vs granular"):
+  - `tool_kind: likely-composite | likely-granular` — the best-guess shape of the
+    tool this feature would need.
+  - `tool_kind_rationale` — one sentence justifying the guess from the feature's
+    described behaviour ("implies chaining lens-resolve + score + draft" →
+    composite; "a single archive-by-id relay" → granular). Never a code verdict.
 
 **Phase 3 Gate — emit this block before Phase 4:**
 
@@ -491,14 +528,21 @@ Each fix is a recommendation with its evidence — never a claim it's been done.
 
 ## Inferred feature requests
 Only those that passed the ≥2-utterance rule. Each: the feature · the users ·
-the verbatim prompts that imply it.
+the verbatim prompts that imply it · and a **Likely shape** line classifying the
+tool it would need (see § "Composite vs granular"):
+
+`Likely shape: composite | granular (likely[, uncertain]) — <one-line rationale>`
+
+Carry `tool_kind` + `tool_kind_rationale` straight from the feature_signal. The
+shape is a hint for whoever builds it, not a verdict — keep the honesty caveat.
 
 ## Recommendations (prioritised — what to do next)
 The action layer. Pull every SUPPORTED fix + feature request into ONE ranked
 to-do list, ordered by impact × confidence (highest first). This is the part a
-reader acts on, so keep it crisp — one line each:
+reader acts on, so keep it crisp — one line each. Recommendations that propose
+building a tool carry the likely shape inline; pure fixes (no new tool) omit it:
 
-`P1/P2/P3 · <action> · why (impact) · [code-verifiable | needs-investigation] · evidence ref`
+`P1/P2/P3 · <action> · why (impact) · [composite | granular, likely — if it builds a tool] · [code-verifiable | needs-investigation] · evidence ref`
 
 Lead with anything that addresses a major-change regression (a fresh spike
 usually outranks a steady background issue). Each recommendation must trace back
@@ -543,6 +587,7 @@ PHASE 5 GATE — Report complete
 [✓/✗] Major changes section present (spike/regression led if any): YES
 [✓/✗] Themes: N    Fixes: N    Feature requests: N
 [✓/✗] Recommendations section: N prioritised items (P1..) — each traces to a finding
+[✓/✗] Every proposed feature/tool labelled likely-composite/likely-granular + rationale: YES (or "no new tools proposed")
 [✓/✗] Every claim cites evidence (Iron Law #1): YES
 [✓/✗] Blind spots stated (Iron Law #4): YES
 [✓/✗] Investigation prompts: N (one per needs-investigation item, or "none")
@@ -587,15 +632,34 @@ report's Evidence lines; quote literally, do not paraphrase>
    tool name `<leadbay_xxx>` under `packages/core/src/` — composite/ or tools/).
 2. **Find the root cause** — the mechanism, not the symptom. Trace why it fails.
    If it needs a live repro, say how (the test account creds are expendable).
-3. **Propose a fix** — a concrete diff or patch, with the file path(s). Note any
-   risk, blast radius, and whether it's a one-liner or a redesign.
-4. **State your confidence** and what you could NOT verify.
+3. **If the fix is a NEW tool, decide composite vs granular FIRST.** leadclaw's
+   rule (`CLAUDE.md`): multiple API calls or business logic → **composite**
+   (`packages/core/src/composite/`, registered in a `composite*Tools` array in
+   `index.ts`, exposed by default); a single near-raw API relay with validation
+   only → **granular** (`packages/core/src/tools/`, a `granular*Tools` array,
+   exposed only under `LEADBAY_MCP_ADVANCED=1`). The telemetry analysis guessed
+   **`<tool_kind>`** because *<tool_kind_rationale>* — confirm or correct that
+   against the real API surface, then state the target directory + export array.
+   (Skip this step if the fix modifies an existing tool rather than adding one.)
+4. **Propose a fix** — a concrete diff or patch, with the file path(s). For a new
+   tool, follow the repo's "Adding a new tool — 3 files" convention (template +
+   impl + `index.ts` registration). Note risk, blast radius, and whether it's a
+   one-liner or a redesign.
+5. **State your confidence** and what you could NOT verify.
 
 ## Constraints
 - Read-only investigation + a proposed diff. No deploy, no merge, no PR.
 - If the evidence is too thin to locate a cause, say so — don't invent one.
 - Cite the file:line you base each conclusion on.
+- The composite/granular guess above is from telemetry, not code — treat it as a
+  hypothesis to verify, not a given.
 ````
+
+Fill `<tool_kind>` / `<tool_kind_rationale>` from the finding's
+`tool_kind` / `tool_kind_rationale` when it came from a feature_signal. If the
+finding is a pure bug-fix with no new tool, replace step 3's placeholders with
+"n/a — this is a fix to existing behaviour, not a new tool" rather than leaving
+empty `<...>`.
 
 **Output both places** (per the report section + the archive in Phase 6):
 - Inline in the report under `## Investigation prompts`, one fenced block each.
@@ -633,6 +697,16 @@ mkdir -p "$ARCHIVE/analysis"
 query). **Empty array = "none found this window", never omit a key.** Every
 populated finding carries its evidence/utterances/evidence_ref — drop any that
 can't (Iron Law #1).
+
+Each `feature_requests[]` entry ALSO carries the optional fields
+`tool_kind` (`likely-composite` | `likely-granular`) and `tool_kind_rationale`,
+straight from the report's "Likely shape" line; each `recommendations[]` entry
+that proposes building a tool carries an optional `tool_kind`. These are
+additive to `schema_version 1` (older runs simply omit them). Keeping them in
+the archive lets the composite/granular split diff week-over-week. (Follow-up,
+not required for this skill to function: add these optional keys to the
+`feature_requests` / `recommendations` schema in
+`leadbay/mcp-dashboard` `analysis/README.md`.)
 
 The JSON also carries an `investigations` array — one entry per Phase 5b prompt:
 `{ "slug": "...", "finding": "...", "evidence_ref": "...", "prompt_file": "analysis/<date>-<window>d-investigations/<slug>.md" }`.
