@@ -22,7 +22,7 @@ description: |
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.11.0
+version: 1.11.1
 allowed-tools:
   - Bash
   - Read
@@ -1179,11 +1179,28 @@ The seeded mission to pass to relentless:
   body ending `Closes <issue-URL>` if tied to one, then STOPS. The loop does NOT
   merge, deploy, or mark the PR ready — a human reviews it. A CODE fix is a real
   `leadbay/leadclaw` product change, so this matters even more than for prompts.
+- **ONE PR PER FEATURE, not per workflow.** A "feature" is a *distinct fix* (a
+  given prompt edit or code change), not a workflow. So:
+  - **N workflows, N distinct root causes → N branches, N draft PRs.** Each fix
+    is its own branch off `main` + its own draft PR. Never pile unrelated fixes
+    onto one branch / one mega-PR — they get reviewed and merged independently.
+  - **N workflows that fail for the SAME single root cause → ONE branch, ONE
+    draft PR** (the one fix). List every workflow it resolves in the PR body
+    ("Fixes workflows 1, 21, 23 — all blocked by the same pull_leads bug").
+  - Decide grouping by the FIX, not the symptom: if two workflows need edits to
+    different files/surfaces, they are different features → different PRs, even
+    if discovered in the same `/eval --improve` run.
 - **Escape hatch (do NOT loop forever on an unwinnable eval):** if **3 consecutive improvement iterations** target the SAME failing invariant/criterion and produce **NO movement** on it (the live output is materially unchanged despite the fix being verifiably on the surface the model reads — prompt OR code), STOP improving that workflow and escalate. The suspect is no longer your chosen surface — it is the OTHER surface or the eval itself. Common causes: (1) the test account/fixture produces a pathological input (e.g. a 100%-off-ICP batch) where the agent's "wrong" behaviour is arguably correct; (2) the invariant conflicts with correct behaviour (e.g. "capture X every run" when X is already in agent memory — see the memory-reset step in Phase 3); (3) a harness confound (e.g. the widget tool name is not in `--allowedTools`); (4) you diagnosed PROMPT but the cause is in code (or vice-versa), or scoped the code change too narrowly — name the broader file/surface it likely needs. Report it as `STATUS: BLOCKED` with the specific invariant, the 3 no-movement iterations as evidence, and a recommendation to the user — NOT as a product FAIL to keep grinding on.
 
 Execute relentless Phase 0 immediately — set up the artifact spine, write 00-contract.md, then proceed through all phases without stopping. Iron Law #7 applies: do not end the turn until Phase 5 verdict is PROCEED TO REPORT.
 
-**If multiple workflows need improvement:** handle them sequentially. Finish one (MM:5 confirmed) before starting the next.
+**If multiple workflows need improvement:** handle them sequentially — finish
+one (5/5/5/5 stable ×3 confirmed) and **open its draft PR** before starting the
+next. Group by root cause per the one-PR-per-feature rule above: workflows that
+share a single fix ride one PR (note all of them in the body); workflows with
+distinct fixes each get their own branch + draft PR. A single `/eval --improve`
+run can therefore end with **several draft PRs open** — one per distinct fix —
+never one branch carrying unrelated changes.
 
 **Case 3 — workflow has passed == false due to skill_execution_error:**
 Do NOT invoke relentless. Skill errors require human diagnosis, not prompt editing.
