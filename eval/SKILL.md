@@ -18,11 +18,11 @@ description: |
     /eval --workflow 1,3,5
     /eval              (runs all workflows)
     /eval --workflow 1 --model claude-opus-4-7
-    /eval --workflow 9 --improve   (eval + auto self-improve if any score < 5; each workflow must hit 5/5/5/5 THREE consecutive times before being marked complete — others keep improving in parallel)
+    /eval --workflow 9 --improve   (eval + auto self-improve if any score < 5; diagnoses whether the root cause is the PROMPT or the CODE and fixes whichever — prompt template OR packages/core tool code + tests, full gates — until 5/5/5/5 THREE consecutive times, then opens a draft PR; never merges)
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.10.0
+version: 1.11.0
 allowed-tools:
   - Bash
   - Read
@@ -1073,6 +1073,28 @@ Run **3 consecutive verification rounds** for each workflow that hits 5/5/5/5. U
 
 **Case 2 — one or more workflows have ANY score < 5 (MM, IA, NF, or TSF) AND passed == true (real product signal, not skill error):**
 
+**Phase 8a — Diagnose the root-cause SURFACE first (before choosing a fix target).**
+A low score is either a PROMPT problem (the agent had the right data + tools but
+chose / rendered / ordered / routed wrong → fix the instruction surface) or a
+CODE problem (a tool returned wrong, missing, or malformed data; a transform
+dropped a field; an API call failed or mis-paginated → no prompt edit can fix
+it). Classify from the eval evidence (judge reasoning + tool ledger + final
+message + invariant failures):
+
+- **PROMPT signals** — required `leadbay_*` tools fired and returned `ok=true`
+  with sensible payloads, but the agent rendered the wrong shape, ordered options
+  wrong, skipped a phase, over/under-delivered, or misrouted. The data was there;
+  the *behaviour* was wrong.
+- **CODE signals** — a `leadbay_*` tool returned `ok=false` / an error code / an
+  empty or malformed payload the judge flagged as missing-data or
+  fabrication-risk; the agent did the right thing with what it got but the *tool
+  output itself* was wrong; the failure reproduces regardless of how the agent
+  is prompted.
+
+Write the verdict as `root_cause_surface: PROMPT | CODE | MIXED` with one line of
+evidence. MIXED → fix the CODE cause first (it usually unblocks the prompt
+symptom), then re-diagnose.
+
 For each such workflow, construct the relentless mission string and invoke the `relentless` skill.
 
 Build the mission string from the eval JSON:
@@ -1080,7 +1102,19 @@ Build the mission string from the eval JSON:
 - `prompt_name` — from `evidence.session.prompt_name`
 - `current_scores` — MM/IA/NF/TSF from `evidence.judge_scores` (report all four, highlight any < 5)
 - `failing_criteria` — from `[evidence.per_criterion[] | select(.pass == false) | .criterion]` (may be empty if only scores < 5 but all criteria passed — still worth improving)
-- `fix_target` — `packages/promptforge/prompts/<prompt_name>.md.tmpl` (if prompt_name is set and not `~`); otherwise `packages/promptforge/tool-descriptions/` (tool descriptions need investigation)
+- `root_cause_surface` — `PROMPT | CODE | MIXED` from Phase 8a, with its evidence line.
+- `fix_target` — **routed by `root_cause_surface`:**
+  - **PROMPT** → `packages/promptforge/prompts/<prompt_name>.md.tmpl` (if
+    prompt_name is set and not `~`); otherwise `packages/promptforge/tool-descriptions/`.
+    (For `routing_mode: true` workflows the prompt body is never injected — the
+    fix surface is the server-instruction snippets + tool descriptions; see the
+    routing-mode rule in the mission below.)
+  - **CODE** → the implicated implementation in `packages/core/src/`: the failing
+    tool's `composite/<tool>.ts` or `tools/<tool>.ts`, its `client.ts` call, or the
+    transform/helper it uses. Locate by grepping the `leadbay_*` tool name under
+    `packages/core/src/`.
+  - **MIXED** → the CODE target first; after it lands, re-run Phase 8a on the
+    re-eval to decide whether a PROMPT fix is still needed.
 - `passing_workflows` — all other workflow IDs that currently pass (for regression guard)
 
 Announce before invoking:
@@ -1089,7 +1123,8 @@ Scores below 5/5 on [workflow_name]: MM:[N] IA:[N] NF:[N] TSF:[N] — launching 
 Failing criteria (if any):
   [✗] "criterion text"
 Low scores to fix: [list dimensions < 5 and judge reasoning for each]
-Fix target: packages/promptforge/prompts/<prompt_name>.md.tmpl
+Root-cause surface: PROMPT | CODE | MIXED — [one-line evidence]
+Fix target: [routed path — a prompt .md.tmpl OR a packages/core/src/ file]
 Regression guard: workflows [N,N,...]
 ```
 
@@ -1101,13 +1136,50 @@ The seeded mission to pass to relentless:
 - Current scores: MM:[N] IA:[N] NF:[N] TSF:[N]
 - Judge reasoning on low scores: [paste judge reasoning for dimensions < 5]
 - Failing criteria: [list each with ✗ prefix, or "none — quality-only improvement"]
-- Fix target: [fix_target] — edit .md.tmpl source, NOT .generated.ts. **CRITICAL surface rule for routing_mode workflows:** if the workflow contract has `routing_mode: true`, the session runs with **server-instructions only** and the prompt BODY is NEVER injected (slash commands are disabled). Editing `packages/promptforge/prompts/<prompt_name>.md.tmpl` will have **zero effect** on a routing_mode eval. For routing_mode workflows the correct fix surface is whatever the model actually reads in routing mode — the **server instructions** (`packages/promptforge/snippets/server-instructions/*.md`, plus the inline paragraphs in `packages/mcp/src/server.ts` such as SCHEDULED_TASK_PARAGRAPH / ARTIFACT_PROPOSAL_PARAGRAPH) and the **tool descriptions**. Confirm which surface the failing behaviour lives on BEFORE editing; a prompt-body edit that passes in non-routing mode can still fail the routing_mode eval.
-- Build gate: `pnpm prompts:build` from repo root after every edit (must exit 0)
+- Root-cause surface (from Phase 8a): [PROMPT | CODE | MIXED] — [evidence line]
+- Fix target: [fix_target] — routed by the surface above. NEVER edit a
+  `.generated.ts` file directly (promptforge emits those).
+
+  **If the surface is PROMPT:** edit the `.md.tmpl` source. **CRITICAL rule for
+  routing_mode workflows:** if the workflow contract has `routing_mode: true`,
+  the session runs with **server-instructions only** and the prompt BODY is
+  NEVER injected (slash commands disabled). Editing
+  `packages/promptforge/prompts/<prompt_name>.md.tmpl` will have **zero effect**
+  on a routing_mode eval. There the fix surface is what the model actually reads
+  in routing mode — the **server instructions**
+  (`packages/promptforge/snippets/server-instructions/*.md`, plus inline
+  paragraphs in `packages/mcp/src/server.ts` such as SCHEDULED_TASK_PARAGRAPH /
+  ARTIFACT_PROPOSAL_PARAGRAPH) and the **tool descriptions**. Confirm which
+  surface the failing behaviour lives on BEFORE editing.
+
+  **If the surface is CODE:** edit the implicated implementation in
+  `packages/core/src/` (the failing tool's `composite/<tool>.ts` or
+  `tools/<tool>.ts`, its `client.ts` call, or the transform/helper it uses) and
+  ADD a test. Hard guardrails:
+  - **New tests in NEW files only** — never modify an existing test file (repo
+    rule). A behaviour-changing fix adds e.g.
+    `packages/core/test/unit/composite/<tool>-<fix>.test.ts`.
+  - **Stay scoped to the failing tool's blast radius** — edit the implicated
+    tool + its direct helpers/client call, not unrelated core. If the cause is
+    genuinely cross-cutting, keep the change minimal + reversible and say so.
+  - **Never** mass-delete, change unrelated tools, or touch `.generated.ts`.
+- Build gate — **routed by surface:**
+  - **PROMPT fix** → `pnpm prompts:build` from repo root after every edit (exit 0).
+  - **CODE fix** → the FULL workspace gate after every edit:
+    `pnpm -r build && pnpm -r test && pnpm -r typecheck` — ALL three must exit 0
+    before the iteration counts as complete. (`pnpm -r build` also recompiles
+    `packages/core` so `packages/mcp` picks up the code change before re-eval.)
 - Test: run `/eval --workflow [N]` (via the eval skill phases 0-7, NOT with --improve) after each build — **each test run MUST archive its result per the Phase 6 logging rule** (to the dashboard repo's `evals/`, or the local fallback); tag with `"suite": "relentless"`, `"_relentless_iter": N`, `"_relentless_goal": "..."` so the dashboard tracks every iteration
 - Read result: `jq '.entries[0].evidence.judge_scores' "$(ls -t "$EVALS_DIR"/*.json | head -1)"` — target: all 5
 - Regression guard: run `/eval --workflow [passing_workflow_ids]` once all scores reach 5
 - Exit: all 5/5/5/5 stable across **3 consecutive** eval runs (matches the per-workflow completion gate — NOT 2) AND fresh-context second-opinion judge agrees improvement is real
-- **Escape hatch (do NOT loop forever on an unwinnable eval):** if **3 consecutive improvement iterations** target the SAME failing invariant/criterion and produce **NO movement** on it (the live output is materially unchanged despite the fix being verifiably on the surface the model reads), STOP improving that workflow and escalate. The suspect is no longer the prompt — it is the eval condition or the contract itself. Common causes: (1) the test account/fixture produces a pathological input (e.g. a 100%-off-ICP batch) where the agent's "wrong" behaviour is arguably correct; (2) the invariant conflicts with correct behaviour (e.g. "capture X every run" when X is already in agent memory — see the memory-reset step in Phase 3); (3) a harness confound (e.g. the widget tool name is not in `--allowedTools`). Report it as `STATUS: BLOCKED` with the specific invariant, the 3 no-movement iterations as evidence, and a recommendation to the user (adjust the fixture, the contract, or the harness) — NOT as a product FAIL to keep grinding on.
+- **On exit, ship via the operating contract — never merge or deploy.** Whatever
+  the surface, the fix lands on a **branch off `main`** and the loop opens a
+  **draft PR** with metadata (assignee `ArtyETH06`, a label, the Product project),
+  body ending `Closes <issue-URL>` if tied to one, then STOPS. The loop does NOT
+  merge, deploy, or mark the PR ready — a human reviews it. A CODE fix is a real
+  `leadbay/leadclaw` product change, so this matters even more than for prompts.
+- **Escape hatch (do NOT loop forever on an unwinnable eval):** if **3 consecutive improvement iterations** target the SAME failing invariant/criterion and produce **NO movement** on it (the live output is materially unchanged despite the fix being verifiably on the surface the model reads — prompt OR code), STOP improving that workflow and escalate. The suspect is no longer your chosen surface — it is the OTHER surface or the eval itself. Common causes: (1) the test account/fixture produces a pathological input (e.g. a 100%-off-ICP batch) where the agent's "wrong" behaviour is arguably correct; (2) the invariant conflicts with correct behaviour (e.g. "capture X every run" when X is already in agent memory — see the memory-reset step in Phase 3); (3) a harness confound (e.g. the widget tool name is not in `--allowedTools`); (4) you diagnosed PROMPT but the cause is in code (or vice-versa), or scoped the code change too narrowly — name the broader file/surface it likely needs. Report it as `STATUS: BLOCKED` with the specific invariant, the 3 no-movement iterations as evidence, and a recommendation to the user — NOT as a product FAIL to keep grinding on.
 
 Execute relentless Phase 0 immediately — set up the artifact spine, write 00-contract.md, then proceed through all phases without stopping. Iron Law #7 applies: do not end the turn until Phase 5 verdict is PROCEED TO REPORT.
 
