@@ -22,7 +22,7 @@ description: |
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.12.1
+version: 1.12.2
 allowed-tools:
   - Bash
   - Read
@@ -1066,11 +1066,22 @@ Run **3 consecutive verification rounds** for each workflow that hits 5/5/5/5. U
   Verify round 3/3: ...
 ```
 
-- If all 3 rounds pass (MM ≥ 3 in each): print `✓ VERIFIED (3/3 stable)` and stop.
-- If any round fails: the fix is fragile — treat as Case 2 (invoke relentless on the failing workflow).
-- If all passed == false due to skill error (not product signal): skip verification and stop immediately.
+**Run the 3 rounds STRICTLY SEQUENTIALLY, fail-fast — NEVER in parallel.** Each
+round is a gate: run round 1, read its verdict, and start round 2 ONLY if round 1
+passed. Do NOT pre-spawn rounds 2 and 3 concurrently "to save wall-clock" — a
+failed earlier round makes the later ones wasted credits, and a regression needs
+immediate attention, not three more runs. (This is distinct from improving
+*different workflows* in parallel — the 3 rounds OF ONE workflow are serial.)
 
-**Why 3 rounds before stopping:** a prompt change that produces 5/5/5/5 once may regress on the next LLM sample. Three passing rounds demonstrates genuine stability, not a lucky sample.
+- If a round **fails (any score < 5, or `passed==false`): STOP immediately** —
+  do not run the remaining rounds. The fix is fragile; treat as Case 2 (re-enter
+  the improve loop on the failing criterion).
+- If all 3 rounds pass (5/5/5/5 each, run one after another): print
+  `✓ VERIFIED (3/3 stable)` and proceed to open the PR.
+- If `passed == false` due to skill error (not product signal): skip verification
+  and stop immediately.
+
+**Why 3 rounds before stopping:** a prompt change that produces 5/5/5/5 once may regress on the next LLM sample. Three passing rounds demonstrates genuine stability, not a lucky sample. (Three SEQUENTIAL rounds — see the fail-fast rule above; never burn all three up front.)
 
 **Case 2 — one or more workflows have ANY score < 5 (MM, IA, NF, or TSF) AND passed == true (real product signal, not skill error):**
 
