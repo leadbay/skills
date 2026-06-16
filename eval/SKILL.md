@@ -22,7 +22,7 @@ description: |
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.12.0
+version: 1.12.1
 allowed-tools:
   - Bash
   - Read
@@ -1186,14 +1186,25 @@ The seeded mission to pass to relentless:
   1. Run `/review` on the PR's diff.
   2. **Apply its auto-fix-class + CRITICAL findings** to the branch (mechanical/
      safe fixes and real bugs). Leave ASK-class / advisory findings for the human.
-  3. **Re-run the eval** for the affected workflow(s). **Eval is the source of
-     truth:** if a `/review` fix drops the score below 5/5/5/5, **revert that
-     specific change**, keep the eval-green state, and note it in the review
-     comment as "declined — regressed eval". (Never let a review fix break the
-     eval; eval wins.)
+  3. **Re-run the eval ONCE** for the affected workflow(s) — **a SINGLE run, not
+     3×.** The original fix already earned its 3-consecutive stability; a
+     `/review` tweak is a small cleanup on top of an already-stable fix, so one
+     run is enough to confirm it didn't break anything. (Don't burn 3× per review
+     tweak — that's the waste this avoids.)
+     - **The single run must be a full 5/5/5/5** (the bar the PR was opened at —
+       no dips, no quality erosion).
+     - **If it drops below 5/5/5/5: do NOT just revert — fix it.** Hand the
+       failing eval result back into the improve step and iterate (prompt or
+       code, same diagnosis routing) until the eval is 5/5/5/5 again WITH the
+       review fix in place. Reverting the review change is only the last resort
+       if the fix genuinely cannot coexist with 5/5/5/5 — then note it "declined
+       — regressed eval" in the comment. **Eval wins; the goal is both green.**
   4. **Re-run `/review`.** Stop when it returns **no CRITICAL and no auto-fix
      findings**, OR after **3 passes** (whichever first). Remaining advisory
-     findings are reported, not applied.
+     findings are reported, not applied. **No final 3× re-confirmation** — the
+     3-consecutive stability was already established before the PR opened, and
+     each review tweak was confirmed at 5/5/5/5 individually; a cumulative
+     re-stability pass would just burn runs.
   - **Push every applied fix to the same draft PR** (keep it current).
   - **Post one `/review` summary comment on the PR** — the surviving findings,
     what was auto-applied, and anything declined-for-eval. (This outward post is
