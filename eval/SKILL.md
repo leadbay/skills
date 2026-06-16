@@ -18,15 +18,16 @@ description: |
     /eval --workflow 1,3,5
     /eval              (runs all workflows)
     /eval --workflow 1 --model claude-opus-4-7
-    /eval --workflow 9 --improve   (eval + auto self-improve if any score < 5; diagnoses whether the root cause is the PROMPT or the CODE and fixes whichever — prompt template OR packages/core tool code + tests, full gates — until 5/5/5/5 THREE consecutive times, then opens a draft PR; never merges)
+    /eval --workflow 9 --improve   (eval + auto self-improve if any score < 5; diagnoses whether the root cause is the PROMPT or the CODE and fixes whichever — prompt template OR packages/core tool code + tests, full gates — until 5/5/5/5 THREE consecutive times, then opens a draft PR, self-reviews it with /review (auto-applying safe fixes, looping ≤3× until clean, eval stays green), posts a review comment; never merges)
     /eval --workflow 12,13,14 --verify 3   (without --improve: run N extra stability rounds after all workflows hit 5/5/5/5)
 
   Triggers: "/eval", "run eval", "run evals", "test workflow", "eval workflow"
-version: 1.11.1
+version: 1.12.0
 allowed-tools:
   - Bash
   - Read
   - Agent
+  - Skill
 ---
 
 ## Preamble (run first)
@@ -1176,9 +1177,31 @@ The seeded mission to pass to relentless:
 - **On exit, ship via the operating contract — never merge or deploy.** Whatever
   the surface, the fix lands on a **branch off `main`** and the loop opens a
   **draft PR** with metadata (assignee `ArtyETH06`, a label, the Product project),
-  body ending `Closes <issue-URL>` if tied to one, then STOPS. The loop does NOT
-  merge, deploy, or mark the PR ready — a human reviews it. A CODE fix is a real
+  body ending `Closes <issue-URL>` if tied to one. The loop does NOT merge,
+  deploy, or mark the PR ready — a human reviews it. A CODE fix is a real
   `leadbay/leadclaw` product change, so this matters even more than for prompts.
+- **After opening the PR, SELF-REVIEW it with `/review` — loop until clean.**
+  Once the draft PR exists, run `/review` on the diff and act on what it finds,
+  then re-review, up to **3 passes**:
+  1. Run `/review` on the PR's diff.
+  2. **Apply its auto-fix-class + CRITICAL findings** to the branch (mechanical/
+     safe fixes and real bugs). Leave ASK-class / advisory findings for the human.
+  3. **Re-run the eval** for the affected workflow(s). **Eval is the source of
+     truth:** if a `/review` fix drops the score below 5/5/5/5, **revert that
+     specific change**, keep the eval-green state, and note it in the review
+     comment as "declined — regressed eval". (Never let a review fix break the
+     eval; eval wins.)
+  4. **Re-run `/review`.** Stop when it returns **no CRITICAL and no auto-fix
+     findings**, OR after **3 passes** (whichever first). Remaining advisory
+     findings are reported, not applied.
+  - **Push every applied fix to the same draft PR** (keep it current).
+  - **Post one `/review` summary comment on the PR** — the surviving findings,
+    what was auto-applied, and anything declined-for-eval. (This outward post is
+    an explicit, sanctioned exception to the no-post-without-consent rule, ONLY
+    for this auto-self-review on a draft PR the loop itself just opened — it is
+    not a green light to post anywhere else.)
+  - **Then STOP.** Still no merge, no deploy, no ready — a human reviews. The
+    self-review just means the PR arrives already cleaned + the diff annotated.
 - **ONE PR PER FEATURE, not per workflow.** A "feature" is a *distinct fix* (a
   given prompt edit or code change), not a workflow. So:
   - **N workflows, N distinct root causes → N branches, N draft PRs.** Each fix
@@ -1195,12 +1218,13 @@ The seeded mission to pass to relentless:
 Execute relentless Phase 0 immediately — set up the artifact spine, write 00-contract.md, then proceed through all phases without stopping. Iron Law #7 applies: do not end the turn until Phase 5 verdict is PROCEED TO REPORT.
 
 **If multiple workflows need improvement:** handle them sequentially — finish
-one (5/5/5/5 stable ×3 confirmed) and **open its draft PR** before starting the
-next. Group by root cause per the one-PR-per-feature rule above: workflows that
-share a single fix ride one PR (note all of them in the body); workflows with
-distinct fixes each get their own branch + draft PR. A single `/eval --improve`
-run can therefore end with **several draft PRs open** — one per distinct fix —
-never one branch carrying unrelated changes.
+one (5/5/5/5 stable ×3 confirmed), **open its draft PR, and run the post-PR
+`/review` self-review loop on it** before starting the next. Group by root cause
+per the one-PR-per-feature rule above: workflows that share a single fix ride one
+PR (note all of them in the body); workflows with distinct fixes each get their
+own branch + draft PR + their own self-review. A single `/eval --improve` run can
+therefore end with **several draft PRs open** — one per distinct fix, each already
+self-reviewed — never one branch carrying unrelated changes.
 
 **Case 3 — workflow has passed == false due to skill_execution_error:**
 Do NOT invoke relentless. Skill errors require human diagnosis, not prompt editing.
