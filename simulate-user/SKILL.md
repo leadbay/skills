@@ -289,6 +289,12 @@ telemetry handle** (this is what makes events reach PostHog — the eval
 ```bash
 cat > "$TMPDIR/sim-mcp-server.ts" << 'TSEOF'
 // Production server + real telemetry → every leadbay_* call emits a PostHog event.
+// NOTE: everything runs inside async main() — NO top-level await. tsx transpiles
+// a bare .ts to CJS, and CJS rejects top-level await ("Top-level await is
+// currently not supported with the cjs output format"), so a top-level
+// `await server.connect(...)` makes the server fail to boot and the MCP shows
+// status:"failed" with zero tool calls. The eval live-mcp-server.ts uses the
+// same async-main shape for this reason.
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { LeadbayClient } from "@leadbay/core";
 import { buildServer } from "REPO_ROOT_PLACEHOLDER/packages/mcp/src/server.js";
@@ -298,15 +304,18 @@ const REGIONS: Record<string, string> = {
   us: "https://api-us.leadbay.app",
   fr: "https://api-fr.leadbay.app",
 };
-const token = process.env.LEADBAY_TOKEN!;
-const region = process.env.LEADBAY_REGION ?? "fr";
-const client = new LeadbayClient(REGIONS[region] ?? REGIONS.fr, token);
-// Telemetry handle: initTelemetry honours LEADBAY_TELEMETRY_ENABLED + LEADBAY_ENV.
-const telemetry = initTelemetry({ version: "sim" });
-const server = buildServer(client, { includeWrite: true, includeAdvanced: false, telemetry });
-await telemetry.identify(client);            // tags events with me.email + org
-const transport = new StdioServerTransport();
-await server.connect(transport);
+async function main(): Promise<void> {
+  const token = process.env.LEADBAY_TOKEN!;
+  const region = process.env.LEADBAY_REGION ?? "fr";
+  const client = new LeadbayClient(REGIONS[region] ?? REGIONS.fr, token);
+  // Telemetry handle: initTelemetry honours LEADBAY_TELEMETRY_ENABLED + LEADBAY_ENV.
+  const telemetry = initTelemetry({ version: "sim" });
+  try { await telemetry.identify(client); } catch {}   // tags events with me.email + org
+  const server = buildServer(client, { includeWrite: true, includeAdvanced: false, telemetry });
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+main().catch((err) => { process.stderr.write(`sim-mcp-server fatal: ${err}\n`); process.exit(1); });
 TSEOF
 sed -i "s#REPO_ROOT_PLACEHOLDER#$REPO_ROOT#g" "$TMPDIR/sim-mcp-server.ts"
 ```
@@ -578,6 +587,16 @@ Close with the completion status (DONE / DONE_WITH_CONCERNS / BLOCKED).
   is itself realistic ageing — but it means the sim account must NEVER be a real
   customer. Re-confirm `.env.simulate` points at the sim account before any run.
 - **If the user wants a score, not data**, route to `/eval`.
+- **Known live friction (first run, 2026-06-17, telesales-chaser):** the W1
+  write-back gap the study reported as "no MCP tool" is now partly closed —
+  `leadbay_report_outreach` exists and the agent routes to it correctly (note +
+  the right epilogue enum). BUT in a non-interactive session every call was
+  blocked: it returned *"User cancelled the outreach confirmation; nothing was
+  logged"* and the only escape the error names is a `gmail_message_id` /
+  `calendar_event_id` a cold phone call doesn't have. So the disposition write —
+  including the W1g meeting-planned money event — could not complete agentically.
+  Expect this; it is itself a headline finding, not a harness bug. (The harness
+  bug was the top-level-await launcher, now fixed above.)
 
 ## Operational Self-Improvement
 
