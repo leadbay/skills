@@ -78,6 +78,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/relentless` | Overnight perfectionist loop (v2): artifact-file phase gates, banned-phrase grep, iteration-1 must deploy live, Milan Check requires file-path evidence |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
+| `/simulate-user` | Drive the REAL MCP as an observed customer persona — generates production-shaped PostHog telemetry + a friction report of where tools fall short |
 
 ## Architecture
 
