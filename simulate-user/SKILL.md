@@ -116,10 +116,13 @@ poison that customer's dashboard. ALWAYS use the sim token from `.env.simulate`
 (`LEADBAY_SIM_TOKEN`), whose account exists only for simulation.
 
 **Iron Law #3 — Tag every sim so it is filterable out of true prod.**
-Always export `LEADBAY_ENV=simulation` for the server process. This stamps
-`environment=simulation` on every PostHog event so dashboard queries can include
-OR exclude sims deliberately. A sim that looks identical to real prod traffic is
-worse than no sim.
+The launcher passes `version: "sim"` to `initTelemetry`, which stamps
+`mcp_version = "sim"` on every PostHog event — real installs send a real semver,
+so `mcp_version = 'sim'` cleanly isolates (or excludes) sim data. Also export
+`LEADBAY_ENV=simulation` for the process, but know that this tag reaches Sentry
+only and does NOT appear on PostHog events (see Phase 5 CRITICAL note) — so
+`mcp_version`, not `environment`, is the PostHog filter. A sim that looks
+identical to real prod traffic is worse than no sim.
 
 **Iron Law #4 — Personas are observed, not invented.**
 Persona behaviour (cadence, action mix, the French call-note style, the
@@ -217,6 +220,58 @@ table. Pick the requested `--persona`, or choose one at random.
 The W-ids map to the observed workflow catalog (W1–W11) in the study. Personas
 deliberately drive the agent toward the write-back steps where the gaps live —
 that is how the gaps show up in the data.
+
+### Weighted selection — match the report's real cohort mix
+
+When no `--persona` is pinned, do NOT pick uniformly at random. Real usage is
+heavily skewed, and a uniform pick produces a tool mix that looks nothing like
+production. Weight the random draw to the study's observed volumes (the KPI
+banner + per-segment counts):
+
+| persona | weight | grounded in |
+|---|---|---|
+| `triager` | 30 | 14,255 disliked + 9,971 liked — by far the highest-volume motion |
+| `telesales-chaser` | 22 | 3,025 still_chasing + 1,667 notes + 1,259 could_not_reach — the heavy write loop |
+| `founder-buyer` | 14 | 7,200 purchase_lead_contact / 1,767 like→export |
+| `dataops-admin` | 10 | 85,847 lead_exported (but ~89% is one user — keep it a minority of *sessions*) |
+| `batch-export-team` | 8 | ~8,150 exports across 5 coordinated waves |
+| `field-logger` | 6 | dense but rare — 6 notes across 3 orgs |
+| `snooze-builder` | 5 | 23 instances, one org only |
+| `bot-pusher` | 5 | one account (Vocca) but high per-account volume |
+
+Over many `--runs`, the persona distribution should approximate these weights —
+so the aggregate tool mix (lots of pull/like/dislike, a solid core of
+follow-up/outreach writes, a thin tail of exports and wins) matches the report.
+A simple way: build a weighted bag and draw from it per run.
+
+```bash
+# weighted persona bag (repeat each id by its weight), draw one per run
+PERSONA_BAG=( $(for i in $(seq 30); do echo triager; done) \
+              $(for i in $(seq 22); do echo telesales-chaser; done) \
+              $(for i in $(seq 14); do echo founder-buyer; done) \
+              $(for i in $(seq 10); do echo dataops-admin; done) \
+              $(for i in $(seq 8);  do echo batch-export-team; done) \
+              $(for i in $(seq 6);  do echo field-logger; done) \
+              $(for i in $(seq 5);  do echo snooze-builder; done) \
+              $(for i in $(seq 5);  do echo bot-pusher; done) )
+# vary the draw per run index so a multi-run batch isn't all one persona:
+PERSONA_ID="${PERSONA_BAG[$(( (RUN_IDX * 7 + 3) % ${#PERSONA_BAG[@]} ))]}"
+```
+
+`--persona <id>` overrides the bag and pins every run to that id.
+
+### Make each run vary — no two identical sessions
+
+Repeated runs of the same persona must NOT be byte-identical, or the data reads
+as a loop, not a cohort. Vary per run:
+- **the lead worked** — let the agent pick a *different* lead each run (e.g. "le
+  2e de ma liste", "un lead dans le secteur hôtellerie"), not always the top one.
+- **the outcome** — bias outcomes to the report's real distribution: most chases
+  end `could_not_reach` / `still_chasing`, a minority `lost` (646 total), and
+  only ~1 in 13 reach `meeting_planned` (232 wins). Roll the outcome per run; do
+  NOT make every chase a win.
+- **the phrasing** — reword the intent each run (the `triggered_by` property is
+  captured verbatim in PostHog; identical phrasing across 50 events is a tell).
 
 ---
 
@@ -347,10 +402,10 @@ cat > "$TMPDIR/mcp-config.json" << MCPEOF
 MCPEOF
 ```
 
-> `LEADBAY_TELEMETRY_ENABLED=true` forces the PostHog handle on; `LEADBAY_ENV=simulation`
-> stamps `environment=simulation` on every event so the dashboard can include or
-> exclude sims (Iron Law #3). Do NOT set `NODE_ENV=test` — that short-circuits
-> `initTelemetry` to NOOP and you would get zero data.
+> `LEADBAY_TELEMETRY_ENABLED=true` forces the PostHog handle on. The launcher's
+> `version: "sim"` is what actually tags events filterably (`mcp_version=sim`);
+> `LEADBAY_ENV=simulation` only reaches Sentry (Phase 5 CRITICAL note). Do NOT set
+> `NODE_ENV=test` — that short-circuits `initTelemetry` to NOOP and you get zero data.
 
 Clean settings (no hooks, no plugins):
 
@@ -369,13 +424,24 @@ EFFECTIVE_SYSTEM_PROMPT="You are the Leadbay sales assistant inside a French B2B
 ```
 
 **Multi-turn run** — one session id, turn 1 sets `--session-id`, later turns
-`--resume`. The MCP server restarts per turn so the 10s handshake delay applies
-to each turn (lets the tsx server finish its stdio handshake before the first
-turn — without it the session starts `pending` and tool calls fail):
+`--resume`. The MCP server restarts per turn, so the stdio handshake must finish
+before each turn or the session starts `pending` and fires zero tools.
+
+Three things, learned live, are load-bearing here:
+- **`--verbose` is REQUIRED** with `--output-format stream-json`. Without it the
+  CLI emits an empty stream — a 0-line file with no error, silently losing the
+  whole session. (Caught live: a batch of 8 sessions all came back empty.)
+- **The handshake delay must be ≥16s**, not 10s. At 10s the first turn connects
+  but resumed turns race the per-turn server restart and land `pending`
+  (observed: turn 1 `connected`, turns 2–5 `pending`, 0 writes). 16s holds.
+- **Verify `status:"connected"` per turn and RETRY once on `pending`** — a fresh
+  server boot almost always connects. Never let a pending turn silently drop a
+  write.
 
 ```bash
 SESSION_ID=$(cat /proc/sys/kernel/random/uuid)
 START_MS=$(date +%s%3N)
+HANDSHAKE=16
 TURN_IDX=0
 for TURN_PROMPT in "${TURN_PROMPTS[@]}"; do
   TURN_IDX=$((TURN_IDX + 1))
@@ -385,24 +451,35 @@ for TURN_PROMPT in "${TURN_PROMPTS[@]}"; do
   if [ "$TURN_IDX" -eq 1 ]; then SESSION_FLAG=(--session-id "$SESSION_ID")
   else SESSION_FLAG=(--resume "$SESSION_ID"); fi
 
-  { sleep 10; echo "$USER_MSG"; } | claude -p \
-    --input-format stream-json --output-format stream-json --verbose \
-    "${SESSION_FLAG[@]}" \
-    --mcp-config "$TMPDIR/mcp-config.json" --settings "$TMPDIR/settings.json" \
-    --dangerously-skip-permissions --strict-mcp-config --disable-slash-commands \
-    --allowedTools "mcp__leadbay__*,ask_user_input_v0" \
-    --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Glob,Grep,LS,Skill,LSP,Agent" \
-    --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
-    ${MODEL:+--model "$MODEL"} \
-    > "$TURN_RAW" 2>"$TMPDIR/stderr.turn${TURN_IDX}.txt"
-  echo "=== TURN $TURN_IDX (exit $?) ==="; cat "$TURN_RAW"; echo "=== END TURN $TURN_IDX ==="
+  for ATTEMPT in 1 2; do
+    { sleep "$HANDSHAKE"; echo "$USER_MSG"; } | claude -p \
+      --input-format stream-json --output-format stream-json --verbose \
+      "${SESSION_FLAG[@]}" \
+      --mcp-config "$TMPDIR/mcp-config.json" --settings "$TMPDIR/settings.json" \
+      --dangerously-skip-permissions --strict-mcp-config --disable-slash-commands \
+      --allowedTools "mcp__leadbay__*,ask_user_input_v0" \
+      --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Skill,Agent" \
+      --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
+      ${MODEL:+--model "$MODEL"} \
+      > "$TURN_RAW" 2>"$TMPDIR/stderr.turn${TURN_IDX}.txt"
+    STATUS=$(jq -rc 'select(.subtype=="init")|.mcp_servers[0].status' "$TURN_RAW" 2>/dev/null | head -1)
+    if [ "$STATUS" = "connected" ]; then break; fi
+    echo "  turn $TURN_IDX attempt $ATTEMPT: mcp status=$STATUS — retrying once" >&2
+    HANDSHAKE=20   # bump on retry
+  done
+  echo "=== TURN $TURN_IDX (mcp=$STATUS) ==="; cat "$TURN_RAW"; echo "=== END TURN $TURN_IDX ==="
 done
 END_MS=$(date +%s%3N); DURATION_MS=$((END_MS - START_MS))
 echo "DURATION_MS: $DURATION_MS  TURNS: $TURN_IDX  SESSION_ID: $SESSION_ID"
 # Give PostHog's async flush time to ship before the tsx server is torn down.
-sleep 12
+sleep 15
 rm -rf "$TMPDIR"
 ```
+
+> Tool-list gotchas (both caught live): the server name is `leadbay` →
+> `mcp__leadbay__*`; and do NOT name `LS`/`Glob`/`Grep`/`LSP` in
+> `--disallowedTools` — the CLI warns *"Permission deny rule 'LS' matches no
+> known tool"*. The trimmed list above runs clean.
 
 Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT`. Set `TURN_PROMPTS`
 (from Phase 2) and `MODEL` from the persona/flags.
@@ -462,7 +539,7 @@ REPORT="$REPO_ROOT/.context/sims/${STAMP}_${PERSONA_ID}.friction.md"
 ```
 # Sim: <persona> — <STAMP>
 
-**Session:** <session_id> · region <fr> · environment=simulation · <duration>s
+**Session:** <session_id> · region <fr> · mcp_version=sim · <duration>s
 **Telemetry:** real PostHog events emitted under <sim account email> (see Phase 5).
 
 ## What the persona did
@@ -522,17 +599,30 @@ POSTHOG_HOST=https://eu.posthog.com
 All HogQL queries use: `POST $POSTHOG_HOST/api/projects/@current/query/`
 with header `Authorization: Bearer $PH_KEY` and body `{"query": {"kind": "HogQLQuery", "query": "..."}}`
 
-Query for the events this session just emitted, filtered to the sim environment
-so you do not scan all of prod:
+Query for the events this session just emitted. **Filter on `mcp_version`, NOT
+`environment`** — see the critical note below. The launcher tags sim runs with
+`mcp_version = "sim"`; real installs send a real semver (`0.21.1`, …), so
+`mcp_version = 'sim'` cleanly isolates sim data from production traffic.
+
+> **CRITICAL — proven live.** The event PostHog records is `"mcp tool called"`,
+> and the tool name lives in the **`tool`** property (NOT `tool_name`). The
+> `environment=simulation` tag you set via `LEADBAY_ENV` **never reaches the
+> PostHog event** — `LEADBAY_ENV` is wired only into Sentry's init in
+> `packages/mcp/src/telemetry.ts`; the PostHog `baseProps()` omits it. So a query
+> on `properties.environment = 'simulation'` returns ZERO against perfectly good
+> data and you will wrongly conclude the run failed. Filter on `mcp_version`
+> instead. (Adding `environment` to `baseProps()` is a worthwhile product change
+> — file it as a follow-up, don't block the sim on it.)
 
 ```bash
-SINCE_ISO=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-20M +%Y-%m-%dT%H:%M:%SZ)
+SINCE_ISO=$(date -u -d '30 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-30M +%Y-%m-%dT%H:%M:%SZ)
 read -r -d '' HOGQL <<SQL || true
-SELECT event, count() AS n, max(timestamp) AS last_seen
+SELECT properties.tool AS tool, properties.ok AS ok, count() AS n, max(timestamp) AS last_seen
 FROM events
-WHERE timestamp > toDateTime('${SINCE_ISO}')
-  AND properties.environment = 'simulation'
-GROUP BY event
+WHERE event = 'mcp tool called'
+  AND properties.mcp_version = 'sim'
+  AND timestamp > toDateTime('${SINCE_ISO}')
+GROUP BY tool, ok
 ORDER BY n DESC
 SQL
 curl -s -X POST "$POSTHOG_HOST/api/projects/@current/query/" \
@@ -541,34 +631,42 @@ curl -s -X POST "$POSTHOG_HOST/api/projects/@current/query/" \
 ```
 
 Report:
-- `[✓] N PostHog events landed under environment=simulation in the last 20 min` —
-  matching the `leadbay_*` tool calls in the trace, OR
-- `[✗] 0 events landed` → telemetry did NOT fire. Most likely cause: the run used
-  the eval `live-mcp-server.ts` (NOOP) instead of the production launcher, or
-  `LEADBAY_TELEMETRY_ENABLED=false` / `NODE_ENV=test` was set, or the PostHog
-  flush was torn down before the `sleep 12`. State which and that the run
-  produced NO dashboard data (Iron Law #1).
+- `[✓] N "mcp tool called" events landed (mcp_version=sim) in the last 30 min` —
+  cross-check the count + tool names against the `leadbay_*` calls in the trace, OR
+- `[✗] 0 events landed` → telemetry did NOT fire. Most likely cause, in order:
+  (1) you queried `environment` instead of `mcp_version` — re-check with the query
+  above; (2) `LEADBAY_TELEMETRY_ENABLED=false` / `NODE_ENV=test` was set, so
+  `initTelemetry` returned NOOP; (3) the run used the eval `live-mcp-server.ts`
+  (which has no telemetry handle) instead of this skill's production launcher;
+  (4) the PostHog flush was torn down before the `sleep 15`. State which, and
+  that the run produced NO dashboard data (Iron Law #1).
 
-> The mcp-dashboard (leadbay/mcp-dashboard, Fly) reads these same PostHog
-> events. Once landed, the sim session appears there alongside real customer
-> sessions, distinguishable by `environment=simulation`. No extra push step is
-> needed — the dashboard is downstream of PostHog.
+> The mcp-dashboard (leadbay/mcp-dashboard, Fly) reads these same PostHog events.
+> Once landed, the sim session appears there alongside real customer sessions,
+> isolable by `mcp_version = 'sim'`. No extra push step — the dashboard is
+> downstream of PostHog.
 
 ---
 
 ## Phase 6 — Loop for `--runs N` and summarize
 
-If `--runs N` > 1, repeat Phases 2–5 N times (re-pick a random persona each run
-if no `--persona` was pinned; keep the same persona if it was). Write one
-trace + friction file per run.
+If `--runs N` > 1, repeat Phases 2–5 N times. Re-draw the persona from the
+**weighted bag** each run if no `--persona` was pinned (so the cohort mix matches
+the report); keep the same persona if it was pinned. Vary the lead, outcome, and
+phrasing per run (Phase 1 "Make each run vary"). Write one trace + friction file
+per run.
+
+`--runs` is the volume lever: `--runs 30` over the weighted bag yields a few
+hundred real `mcp tool called` events with a production-shaped tool mix and no
+two identical sessions — all from the one sim account, all genuinely API-backed.
 
 Final summary to the user:
-- personas played, turns each, total `leadbay_*` calls,
-- total PostHog events confirmed landed (with `environment=simulation`),
+- personas played (with the actual distribution vs. the target weights), turns each, total `leadbay_*` calls,
+- total PostHog events confirmed landed (filtered `mcp_version = 'sim'`), broken down by tool + ok/error,
 - the **distinct gaps** found across all runs (deduped), ranked by how many
   observed users the study attributes to that motion,
 - where to look: `.context/sims/*.friction.md` locally + the mcp-dashboard
-  filtered to `environment=simulation`.
+  filtered to `mcp_version = 'sim'`.
 
 Close with the completion status (DONE / DONE_WITH_CONCERNS / BLOCKED).
 
@@ -587,6 +685,21 @@ Close with the completion status (DONE / DONE_WITH_CONCERNS / BLOCKED).
   is itself realistic ageing — but it means the sim account must NEVER be a real
   customer. Re-confirm `.env.simulate` points at the sim account before any run.
 - **If the user wants a score, not data**, route to `/eval`.
+- **Per-turn flush limitation (known, refinement pending).** The MCP server
+  restarts each turn, and the `sleep 15` flush guard only protects the LAST
+  turn — a successful tool call on turn 1 can have its async PostHog flush
+  dropped when turn 2's restart tears the process down (observed live:
+  `pull_followups` succeeded with real data but emitted no event; the later
+  `research_lead_by_id` landed). Net effect: multi-turn runs may UNDER-report
+  events vs. tool calls. For maximum event yield prefer **single-turn sessions in
+  a `--runs` loop** (each session fully flushes before teardown). The deep
+  multi-turn chain is still the right tool for rich *traces* / gap-finding; just
+  don't treat its PostHog count as complete. (Proper fix: drain the telemetry
+  flush at end of each turn, or keep one server process across turns.)
+- **Counting events: tool CALLS ≠ events.** A blocked write (e.g.
+  `report_outreach` hitting the confirmation gate, `is_error:true`) is rejected
+  before execution and correctly emits NO telemetry. So reconcile PostHog counts
+  against *successful* (`ok:true`) leadbay calls in the trace, not raw call count.
 - **Known live friction (first run, 2026-06-17, telesales-chaser):** the W1
   write-back gap the study reported as "no MCP tool" is now partly closed —
   `leadbay_report_outreach` exists and the agent routes to it correctly (note +
