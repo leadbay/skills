@@ -79,6 +79,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
 | `/simulate-user` | Drive the REAL MCP as an observed customer persona — generates production-shaped PostHog telemetry + a friction report of where tools fall short |
+| `/red-team-mcp` | Adversarial sibling of /simulate-user — plays an attacker against the REAL MCP (guardrail bypass, prompt injection, exfiltration), blind-judges each attempt, and writes a ranked security findings report |
 
 ## Architecture
 
