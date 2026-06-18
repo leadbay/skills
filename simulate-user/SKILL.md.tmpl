@@ -1,0 +1,541 @@
+---
+name: simulate-user
+description: |
+  Drive the REAL Leadbay MCP server as a synthetic paying customer, so the
+  product team can generate true production-shaped telemetry and discover where
+  the agent + tools fall short. Each run picks an observed customer persona
+  (from the fr_prod workflow study), plays that persona's multi-day sales chase
+  as a multi-turn `claude -p` conversation against the live API, and — because
+  it runs the production server with telemetry ON — every `leadbay_*` tool call
+  fires a real PostHog event that lands in the leadbay/mcp-dashboard exactly
+  like a customer session. A local trace + friction report capture what the
+  agent tried, what the tools could and could NOT do, and which observed
+  write-back gaps (notes, epilogue, buy-contact, export) the MCP still cannot
+  serve.
+
+  This is NOT /eval. /eval scores a single WORKFLOWS.md contract for
+  pass/fail correctness with a blind judge. /simulate-user reproduces a whole
+  human's realistic behaviour to PRODUCE data and surface gaps — there is no
+  pass/fail, the deliverable is the trace + the friction findings + the PostHog
+  rows.
+
+  For fully unattended runs (no approval prompts), launch Claude Code with:
+    claude --dangerously-skip-permissions
+
+  Usage:
+    /simulate-user                         (picks a persona at random, 1 session)
+    /simulate-user --persona telesales-chaser
+    /simulate-user --persona founder-buyer --turns 6
+    /simulate-user --persona triager --runs 3
+    /simulate-user --list                  (print the persona catalog and exit)
+    /simulate-user --dry-run               (build the prompts, do NOT call the API or emit telemetry)
+
+  Triggers: "/simulate-user", "simulate a user", "simulate an MCP user",
+  "fake user session", "generate MCP data", "play a persona", "synthetic user"
+version: 0.1.0
+allowed-tools:
+  - Bash
+  - Read
+  - Agent
+  - Skill
+---
+
+<!-- include: shared/preamble.md -->
+<!-- include: shared/voice.md -->
+<!-- include: shared/completion-status.md -->
+
+# /simulate-user — Synthetic Leadbay MCP customer
+
+Reproduce a real engaged customer's sales motion as a live MCP session so the
+team can (1) generate production-shaped telemetry in the mcp-dashboard and
+(2) see exactly where today's tools fail the workflow.
+
+Every persona below is a **directly observed trace** from the fr_prod
+`user_interactions` study (`Downloads/observed_workflows_report.html`) — not an
+invented persona. The recurring product finding the study surfaced: prospecting
+is a multi-day telephone/field chase logged in Leadbay as a tight write-back
+loop, and **every chain terminates in a write the MCP cannot perform today**
+(create_lead_note, epilogue_*, purchase_lead_contact, bulk export). The point of
+this skill is to make that gap show up in real data, repeatedly, on demand.
+
+---
+
+## The Iron Laws
+
+These rules are inviolable.
+
+**Iron Law #1 — It must be a REAL interaction.**
+The whole value is production-shaped telemetry. Run the **production** MCP server
+(`packages/mcp` bin / `buildServer` with a real telemetry handle), against the
+**live** Leadbay API, with telemetry **ON**. Never mock the API, never use the
+`NOOP_TELEMETRY` eval helper for a recorded run, never fabricate a PostHog row.
+A simulated run that did not actually hit the API produced no data — say so.
+
+**Iron Law #2 — Sims use a DEDICATED sim account, never a real customer's token.**
+PostHog `distinctId` is the account's `me.email` and events are grouped by the
+account's `organization`. If you run a sim under a real customer's token you
+poison that customer's dashboard. ALWAYS use the sim token from `.env.simulate`
+(`LEADBAY_SIM_TOKEN`), whose account exists only for simulation.
+
+**Iron Law #3 — Tag every sim so it is filterable out of true prod.**
+Always export `LEADBAY_ENV=simulation` for the server process. This stamps
+`environment=simulation` on every PostHog event so dashboard queries can include
+OR exclude sims deliberately. A sim that looks identical to real prod traffic is
+worse than no sim.
+
+**Iron Law #4 — Personas are observed, not invented.**
+Persona behaviour (cadence, action mix, the French call-note style, the
+write-back loop) comes from the study. Do not add a motion no observed user
+performed. New personas require a new observed trace.
+
+**Iron Law #5 — Report gaps honestly.**
+When the agent wanted to write a note / set an epilogue / buy a contact / bulk
+export and no MCP tool existed, that is the headline finding — record it as a
+GAP in the friction report, do not paper over it by having the agent pretend it
+succeeded. The gap is the deliverable.
+
+**Iron Law #6 — No silent phase failures.**
+If any bash command in a phase exits non-zero, print the error and stop that
+run. Report it as a skill execution error, not as "the persona finished".
+
+---
+
+## How this differs from /eval
+
+| | `/eval` | `/simulate-user` |
+|---|---|---|
+| Goal | Score correctness of ONE workflow contract | Produce realistic data + find tool gaps |
+| Server | eval `live-mcp-server.ts` (telemetry **OFF**, NOOP) | **production** server, telemetry **ON** |
+| Telemetry | suppressed (clean eval) | **fires real PostHog → mcp-dashboard** |
+| Output | MM/IA/NF/TSF scorecard, pass/fail | trace JSONL + friction report + PostHog rows |
+| Judge | blind judge subagent | none — there is no pass/fail |
+| Account | the eval token | a **dedicated sim token** |
+
+If the user actually wants a pass/fail score, route them to `/eval`.
+
+---
+
+## Phase 0 — Parse arguments, locate repo, load the sim credentials
+
+```bash
+REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+echo "REPO_ROOT: $REPO_ROOT"
+ls "$REPO_ROOT/packages/mcp/test/eval/helpers/live-mcp-server.ts" >/dev/null 2>&1 \
+  && echo "LEADCLAW_REPO: OK" || echo "LEADCLAW_REPO: NOT the leadclaw repo — cd there first"
+```
+
+Parse the user's message for:
+- `--persona <id>` — one of the catalog ids in Phase 1 (default: random).
+- `--runs N` — how many independent sessions to play (default: 1).
+- `--turns N` — override the persona's default turn count.
+- `--list` — print the persona catalog (Phase 1 table) and exit.
+- `--dry-run` — build the turn prompts and print them, but do NOT spawn the
+  session, do NOT hit the API, do NOT emit telemetry. For inspecting prompts.
+- `--model M` — model override for the session (default: inherit).
+
+Load the **sim** credentials (NOT the eval token, NOT a customer token):
+
+```bash
+set -a && . "$REPO_ROOT/.env.simulate" && set +a 2>/dev/null || true
+echo "SIM_TOKEN: ${LEADBAY_SIM_TOKEN:0:8}... (${#LEADBAY_SIM_TOKEN} chars)"
+echo "SIM_REGION: ${LEADBAY_SIM_REGION:-fr}"
+```
+
+If `LEADBAY_SIM_TOKEN` is empty or < 10 chars: STOP and tell the user to create
+`.env.simulate` at the repo root:
+
+```
+LEADBAY_SIM_TOKEN=u.xxxxx        # a token for a DEDICATED simulation account, never a real customer
+LEADBAY_SIM_REGION=fr            # the study ran on fr_prod; fr keeps personas realistic
+```
+
+> **Why a dedicated account (Iron Law #2):** every tool call this skill makes is
+> attributed in PostHog to the token's account email and org. A sim under a real
+> customer's token corrupts that customer's funnel. The sim account is
+> expendable and exists only to generate this data.
+
+**Unattended mode:** this skill spawns subagents and runs the CLI. If Claude
+Code prompts for approval on each action, tell the user to relaunch with
+`claude --dangerously-skip-permissions`.
+
+---
+
+## Phase 1 — The persona catalog (observed rhythms)
+
+Each persona is one of the eight observed rhythm segments. `--list` prints this
+table. Pick the requested `--persona`, or choose one at random.
+
+| id | Observed rhythm | Dominant motion (W-id) | Action mix | Default turns | The gap it exercises |
+|---|---|---|---|---|---|
+| `telesales-chaser` | Bursty weekday telesales chaser (Axe-Capital / HOME SPIRIT model) | W1 master loop: buy → call → note → epilogue, re-touched over days | buy-contact, create_lead_note ("NRP"), epilogue_still_chasing / could_not_reach | 6 | note-write + epilogue + buy-contact are ALL uncovered writes |
+| `founder-buyer` | Steady / burst contact-buyer (founder-SDR: etienne, jeangabriel) | W3 enrich shortlist → buy → export; outcomes via next-morning epilogue | research, purchase_lead_contact, export, set-epilogue | 5 | buy + export + set-epilogue gaps |
+| `triager` | Frequent daily triager (calligaris, Cubik, BAFA) | W2 curate the feed by thumbs + lens tuning | bulk like/dislike, lens_filter_change, occasional research | 4 | committing like/dislike/lens-change is an uncovered write |
+| `dataops-admin` | Bulk-export / data-ops admin (nlevasseur, sjanson, Logiprox) | W4 harvest whole key-account families' contacts in one click | research, bulk contact harvest/export, T0–T9 tier notes | 4 | programmatic export_account_contacts is missing |
+| `batch-export-team` | Coordinated territory batch-export wave (Actis, manager-orchestrated) | W5 each rep bulk-exports a FIXED territory allocation to an external dialer | pull/shortlist, fixed-size export | 4 | the entire motion is write-back export the MCP can't do |
+| `snooze-builder` | Research-then-snooze list-builder (brelvictor / TRANSPORTS BREL) | W6 like → web-research → pushback_lead_6 to defer 6 months | like, research_lead, bulk-snooze-with-reason | 4 | bulk-snooze-with-reason is uncovered |
+| `field-logger` | Field / offline-to-online logger (Logiprox, LAVINIA) | W7 real value happens off-platform, back-logged as dense FR call recaps | buy-contact, create_lead_note (long recaps), epilogue | 5 | every step (note + epilogue + buy + export) is a write gap |
+| `bot-pusher` | True daily / bot-paced operator (aurelien @ Vocca) | W8 bulk buy-contact at machine cadence → "Pushed to Attio" note → CRM | rapid purchase_lead_contact, machine note, push-to-CRM | 5 | programmatic buy-contact + push-to-CRM write API is missing |
+
+The W-ids map to the observed workflow catalog (W1–W11) in the study. Personas
+deliberately drive the agent toward the write-back steps where the gaps live —
+that is how the gaps show up in the data.
+
+---
+
+## Phase 2 — Build the persona's turn script
+
+A persona session is a **multi-turn** conversation: the user opens with their
+real morning intent, then re-touches the same leads over "days" the way the
+study shows. Construct an ordered `TURN_PROMPTS` array in the persona's own
+voice (the study's reps are French SDRs — keep the call-note phrasing FR where
+the persona is FR, e.g. "NRP", "le rappeler vers 14h", "a déjà un prestataire").
+
+Ground rules for authoring turns:
+- **Open with the natural intent**, not a tool name. ("Montre-moi mes leads à
+  rappeler aujourd'hui", "Pull my best new prospects this morning.")
+- **Drive toward the write-back step** the persona's gap exercises. When the
+  agent reaches the wall (no tool to write a note / set epilogue / buy / export),
+  let it — that wall is the finding. Do not coach the agent around it.
+- **Re-touch across turns** for the chase personas (telesales-chaser,
+  field-logger): turn 1 = first dial + log; turn 2 = "called back, still no
+  answer"; turn 3 = "reached them, booked / lost". Mirror the W1c/W1d/W1f loop.
+- **Stay observed.** Use the real company/note patterns from the study as
+  flavour (HOTEL DE LA CROIX ROUSSE, "NRP n", scheduled-callback notes), never a
+  motion no user performed.
+
+Example — `telesales-chaser` (6 turns):
+
+```
+T1: "Bonjour. Montre-moi mes leads à rappeler aujourd'hui — je commence ma session d'appels."
+T2: "OK je prends le premier hôtel. Achète-moi le contact direct du décideur."
+T3: "Je viens d'appeler, NRP (pas de réponse). Note-le et garde-le en cours de relance."
+T4: "Passons au suivant — j'ai eu la standardiste, elle me dit de rappeler vers 14h. Note ça."
+T5: "Rappelé celui de ce matin : toujours NRP, 3e tentative. Mets-le en 'could not reach, still trying'."
+T6: "Le dernier : j'ai eu le directeur, intéressé, RDV jeudi. Marque-le gagné / meeting planned."
+```
+
+Print the full `TURN_PROMPTS` for the chosen persona before running. If
+`--dry-run`, stop here after printing.
+
+---
+
+## Phase 3 — Run the live session against the PRODUCTION server (telemetry ON)
+
+Spawn a **session subagent** via the Agent tool. Its only job: run the
+multi-turn `claude -p` conversation against the **production** MCP server with
+telemetry enabled, and return the raw stream-json for every turn.
+
+---
+**SESSION SUBAGENT PROMPT:**
+
+You are running a live Leadbay MCP **simulation** session. Run a multi-turn
+`claude -p` conversation against the real Leadbay API using the PRODUCTION MCP
+server with telemetry ON, and return the full stdout (stream-json) for each
+turn. Do not judge or score — just capture.
+
+**Setup:**
+
+```bash
+REPO_ROOT=REPO_ROOT_PLACEHOLDER
+set -a && . "$REPO_ROOT/.env.simulate" && set +a
+
+TMPDIR=$(mktemp -d /tmp/lb-sim-XXXXXX)
+TSX=$(find "$REPO_ROOT/node_modules" -name "tsx" -path "*/.bin/tsx" 2>/dev/null | head -1)
+echo "TSX: $TSX"
+```
+
+Write a tiny launcher that boots the **production** server with a **real
+telemetry handle** (this is what makes events reach PostHog — the eval
+`live-mcp-server.ts` deliberately omits telemetry and must NOT be used here):
+
+```bash
+cat > "$TMPDIR/sim-mcp-server.ts" << 'TSEOF'
+// Production server + real telemetry → every leadbay_* call emits a PostHog event.
+// NOTE: everything runs inside async main() — NO top-level await. tsx transpiles
+// a bare .ts to CJS, and CJS rejects top-level await ("Top-level await is
+// currently not supported with the cjs output format"), so a top-level
+// `await server.connect(...)` makes the server fail to boot and the MCP shows
+// status:"failed" with zero tool calls. The eval live-mcp-server.ts uses the
+// same async-main shape for this reason.
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { LeadbayClient } from "@leadbay/core";
+import { buildServer } from "REPO_ROOT_PLACEHOLDER/packages/mcp/src/server.js";
+import { initTelemetry } from "REPO_ROOT_PLACEHOLDER/packages/mcp/src/telemetry.js";
+
+const REGIONS: Record<string, string> = {
+  us: "https://api-us.leadbay.app",
+  fr: "https://api-fr.leadbay.app",
+};
+async function main(): Promise<void> {
+  const token = process.env.LEADBAY_TOKEN!;
+  const region = process.env.LEADBAY_REGION ?? "fr";
+  const client = new LeadbayClient(REGIONS[region] ?? REGIONS.fr, token);
+  // Telemetry handle: initTelemetry honours LEADBAY_TELEMETRY_ENABLED + LEADBAY_ENV.
+  const telemetry = initTelemetry({ version: "sim" });
+  try { await telemetry.identify(client); } catch {}   // tags events with me.email + org
+  const server = buildServer(client, { includeWrite: true, includeAdvanced: false, telemetry });
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+main().catch((err) => { process.stderr.write(`sim-mcp-server fatal: ${err}\n`); process.exit(1); });
+TSEOF
+sed -i "s#REPO_ROOT_PLACEHOLDER#$REPO_ROOT#g" "$TMPDIR/sim-mcp-server.ts"
+```
+
+> The production `buildServer` + `initTelemetry` path is the same one
+> `packages/mcp/src/bin.ts` uses in a real install. `initTelemetry` returns the
+> live PostHog handle UNLESS `LEADBAY_TELEMETRY_ENABLED=false` or
+> `NODE_ENV=test`. We set neither off — so telemetry is live. `identify(client)`
+> resolves the account email so `distinctId` is correct (Iron Law #2).
+
+Write the MCP config — note the env stamps that satisfy Iron Laws #2 and #3:
+
+```bash
+cat > "$TMPDIR/mcp-config.json" << MCPEOF
+{
+  "mcpServers": {
+    "leadbay": {
+      "command": "$TSX",
+      "args": ["$TMPDIR/sim-mcp-server.ts"],
+      "env": {
+        "LEADBAY_TOKEN": "$LEADBAY_SIM_TOKEN",
+        "LEADBAY_REGION": "${LEADBAY_SIM_REGION:-fr}",
+        "LEADBAY_TELEMETRY_ENABLED": "true",
+        "LEADBAY_ENV": "simulation"
+      }
+    }
+  }
+}
+MCPEOF
+```
+
+> `LEADBAY_TELEMETRY_ENABLED=true` forces the PostHog handle on; `LEADBAY_ENV=simulation`
+> stamps `environment=simulation` on every event so the dashboard can include or
+> exclude sims (Iron Law #3). Do NOT set `NODE_ENV=test` — that short-circuits
+> `initTelemetry` to NOOP and you would get zero data.
+
+Clean settings (no hooks, no plugins):
+
+```bash
+cat > "$TMPDIR/settings.json" << 'SETEOF'
+{ "hooks": { "PreToolUse": [], "PostToolUse": [], "UserPromptSubmit": [], "SessionStart": [], "Stop": [] }, "enabledPlugins": {} }
+SETEOF
+```
+
+System prompt — always pass one (the project CLAUDE.md otherwise restricts
+Claude to software-engineering tasks and it refuses Leadbay tools). Use the
+persona-flavoured assistant prompt:
+
+```bash
+EFFECTIVE_SYSTEM_PROMPT="You are the Leadbay sales assistant inside a French B2B SDR's chat. Use the available Leadbay MCP tools to help them work their leads by phone — pull follow-ups, research, buy contacts, log call outcomes. Respond in the user's language. When a tool you need does not exist, say so plainly rather than pretending the action succeeded."
+```
+
+**Multi-turn run** — one session id, turn 1 sets `--session-id`, later turns
+`--resume`. The MCP server restarts per turn so the 10s handshake delay applies
+to each turn (lets the tsx server finish its stdio handshake before the first
+turn — without it the session starts `pending` and tool calls fail):
+
+```bash
+SESSION_ID=$(cat /proc/sys/kernel/random/uuid)
+START_MS=$(date +%s%3N)
+TURN_IDX=0
+for TURN_PROMPT in "${TURN_PROMPTS[@]}"; do
+  TURN_IDX=$((TURN_IDX + 1))
+  TURN_RAW="$TMPDIR/session.turn${TURN_IDX}.raw.jsonl"
+  USER_MSG=$(printf '{"type":"user","message":{"role":"user","content":"%s"}}' \
+    "$(echo "$TURN_PROMPT" | sed 's/"/\\"/g')")
+  if [ "$TURN_IDX" -eq 1 ]; then SESSION_FLAG=(--session-id "$SESSION_ID")
+  else SESSION_FLAG=(--resume "$SESSION_ID"); fi
+
+  { sleep 10; echo "$USER_MSG"; } | claude -p \
+    --input-format stream-json --output-format stream-json --verbose \
+    "${SESSION_FLAG[@]}" \
+    --mcp-config "$TMPDIR/mcp-config.json" --settings "$TMPDIR/settings.json" \
+    --dangerously-skip-permissions --strict-mcp-config --disable-slash-commands \
+    --allowedTools "mcp__leadbay__*,ask_user_input_v0" \
+    --disallowedTools "ToolSearch,WebFetch,WebSearch,Bash,Read,Edit,Write,Glob,Grep,LS,Skill,LSP,Agent" \
+    --system-prompt "$EFFECTIVE_SYSTEM_PROMPT" \
+    ${MODEL:+--model "$MODEL"} \
+    > "$TURN_RAW" 2>"$TMPDIR/stderr.turn${TURN_IDX}.txt"
+  echo "=== TURN $TURN_IDX (exit $?) ==="; cat "$TURN_RAW"; echo "=== END TURN $TURN_IDX ==="
+done
+END_MS=$(date +%s%3N); DURATION_MS=$((END_MS - START_MS))
+echo "DURATION_MS: $DURATION_MS  TURNS: $TURN_IDX  SESSION_ID: $SESSION_ID"
+# Give PostHog's async flush time to ship before the tsx server is torn down.
+sleep 12
+rm -rf "$TMPDIR"
+```
+
+Replace `REPO_ROOT_PLACEHOLDER` with the actual `$REPO_ROOT`. Set `TURN_PROMPTS`
+(from Phase 2) and `MODEL` from the persona/flags.
+
+From the stream-json output, extract (across ALL turns) and RETURN:
+- **tool_calls**: `type=assistant` blocks with `tool_use` → `name` + `input` +
+  the 1-based turn index. Keep only `mcp__leadbay__*` / `leadbay_*` names plus
+  any `ask_user_input_v0`. (Other names are leaked superpowers — drop them.)
+- **agent_prose**: text blocks that are NOT tool_use — especially any line where
+  the agent says a capability is missing ("I can't write a note", "there's no
+  tool to set the status").
+- **final_message**: the `type=result` field of each turn.
+- **errors**: any tool result with `is_error` / a non-ok envelope.
+- **SESSION_ID** and **DURATION_MS**.
+
+Return all of the above as structured JSON. Do not assess quality.
+
+---
+**END SESSION SUBAGENT PROMPT**
+
+If `--dry-run` was set, skip this phase entirely (you already printed the turns).
+
+---
+
+## Phase 4 — Build the trace + friction report
+
+From the session subagent's returned evidence, assemble two artifacts under
+`$REPO_ROOT/.context/sims/`.
+
+```bash
+mkdir -p "$REPO_ROOT/.context/sims"
+STAMP=$(date +%Y%m%d-%H%M%S)
+TRACE="$REPO_ROOT/.context/sims/${STAMP}_${PERSONA_ID}.trace.json"
+REPORT="$REPO_ROOT/.context/sims/${STAMP}_${PERSONA_ID}.friction.md"
+```
+
+**Trace JSON** (`*.trace.json`) — the machine record:
+
+```json
+{
+  "persona": "telesales-chaser",
+  "rhythm": "Bursty weekday telesales chaser",
+  "session_id": "...",
+  "region": "fr",
+  "environment": "simulation",
+  "duration_ms": 0,
+  "turns": [
+    { "turn": 1, "user": "...", "tool_calls": [{"name":"leadbay_pull_followups","input":{}}], "agent_prose": "...", "result": "..." }
+  ],
+  "tool_call_summary": { "leadbay_pull_followups": 1, "leadbay_research_lead_by_id": 2 },
+  "gaps": [ { "wanted": "write a call note", "observed_motif": "W1b create_lead_note", "mcp_tool": null, "agent_said": "I don't have a tool to save that note." } ]
+}
+```
+
+**Friction report** (`*.friction.md`) — the human read. Structure:
+
+```
+# Sim: <persona> — <STAMP>
+
+**Session:** <session_id> · region <fr> · environment=simulation · <duration>s
+**Telemetry:** real PostHog events emitted under <sim account email> (see Phase 5).
+
+## What the persona did
+<2–4 sentences narrating the turns in plain language.>
+
+## Tools the agent actually called
+<table: tool · count · did it return ok?>
+
+## GAPS — where the workflow hit a wall  ← the headline
+For each write-back the agent wanted but could not perform:
+- **<wanted action>** (observed motif <W-id>): no MCP tool. Agent said: "<quote>".
+  Observed-customer equivalent: <one line from the study, e.g. "299 instances of create_lead_note → epilogue_still_chasing across 8 users">.
+
+## Friction (covered-but-clumsy)
+<Where a tool exists but the routing/shape made the agent struggle — e.g. it
+researched the wrong lead, the table was unreadable, it asked a redundant
+clarification.>
+
+## Suggested product follow-up
+<1–3 concrete tool/prompt ideas the gap implies — e.g. a log_call_outcome(note,
+epilogue) write tool owning W1b. Phrase as hypotheses, not commitments.>
+```
+
+The GAPS section is the deliverable (Iron Law #5). If the agent sailed through
+with no gap, say so explicitly — that is also a finding (the motion is already
+covered).
+
+---
+
+## Phase 5 — Confirm the telemetry actually landed
+
+The run is only valuable if it produced real dashboard data. Verify the events
+reached PostHog (this is also the integration with the mcp-dashboard — the same
+project these events feed).
+
+<!-- include: shared/posthog.md -->
+
+Query for the events this session just emitted, filtered to the sim environment
+so you do not scan all of prod:
+
+```bash
+SINCE_ISO=$(date -u -d '20 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -v-20M +%Y-%m-%dT%H:%M:%SZ)
+read -r -d '' HOGQL <<SQL || true
+SELECT event, count() AS n, max(timestamp) AS last_seen
+FROM events
+WHERE timestamp > toDateTime('${SINCE_ISO}')
+  AND properties.environment = 'simulation'
+GROUP BY event
+ORDER BY n DESC
+SQL
+curl -s -X POST "$POSTHOG_HOST/api/projects/@current/query/" \
+  -H "Authorization: Bearer $_PH_KEY" -H "Content-Type: application/json" \
+  -d "$(printf '{"query":{"kind":"HogQLQuery","query":%s}}' "$(printf '%s' "$HOGQL" | jq -Rs .)")" | jq .
+```
+
+Report:
+- `[✓] N PostHog events landed under environment=simulation in the last 20 min` —
+  matching the `leadbay_*` tool calls in the trace, OR
+- `[✗] 0 events landed` → telemetry did NOT fire. Most likely cause: the run used
+  the eval `live-mcp-server.ts` (NOOP) instead of the production launcher, or
+  `LEADBAY_TELEMETRY_ENABLED=false` / `NODE_ENV=test` was set, or the PostHog
+  flush was torn down before the `sleep 12`. State which and that the run
+  produced NO dashboard data (Iron Law #1).
+
+> The mcp-dashboard (leadbay/mcp-dashboard, Fly) reads these same PostHog
+> events. Once landed, the sim session appears there alongside real customer
+> sessions, distinguishable by `environment=simulation`. No extra push step is
+> needed — the dashboard is downstream of PostHog.
+
+---
+
+## Phase 6 — Loop for `--runs N` and summarize
+
+If `--runs N` > 1, repeat Phases 2–5 N times (re-pick a random persona each run
+if no `--persona` was pinned; keep the same persona if it was). Write one
+trace + friction file per run.
+
+Final summary to the user:
+- personas played, turns each, total `leadbay_*` calls,
+- total PostHog events confirmed landed (with `environment=simulation`),
+- the **distinct gaps** found across all runs (deduped), ranked by how many
+  observed users the study attributes to that motion,
+- where to look: `.context/sims/*.friction.md` locally + the mcp-dashboard
+  filtered to `environment=simulation`.
+
+Close with the completion status (DONE / DONE_WITH_CONCERNS / BLOCKED).
+
+---
+
+## Operating notes
+
+- **This is data generation, not testing.** There is no pass/fail. A run that
+  surfaces a clean gap is a *successful* run even though the agent "failed" to
+  complete the persona's motion — because the gap is the point.
+- **Keep personas observed.** When the study is updated with new traces, add the
+  new rhythm to the Phase 1 catalog; never invent a persona from intuition
+  (Iron Law #4).
+- **Dedicated account hygiene.** The sim account will accumulate liked/disliked
+  leads, bought contacts, and lens changes over many runs. That is expected and
+  is itself realistic ageing — but it means the sim account must NEVER be a real
+  customer. Re-confirm `.env.simulate` points at the sim account before any run.
+- **If the user wants a score, not data**, route to `/eval`.
+- **Known live friction (first run, 2026-06-17, telesales-chaser):** the W1
+  write-back gap the study reported as "no MCP tool" is now partly closed —
+  `leadbay_report_outreach` exists and the agent routes to it correctly (note +
+  the right epilogue enum). BUT in a non-interactive session every call was
+  blocked: it returned *"User cancelled the outreach confirmation; nothing was
+  logged"* and the only escape the error names is a `gmail_message_id` /
+  `calendar_event_id` a cold phone call doesn't have. So the disposition write —
+  including the W1g meeting-planned money event — could not complete agentically.
+  Expect this; it is itself a headline finding, not a harness bug. (The harness
+  bug was the top-level-await launcher, now fixed above.)
+
+<!-- include: shared/operational-self-improvement.md -->
