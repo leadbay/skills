@@ -2,14 +2,17 @@
 name: knowledge-explore
 description: |
   Map a product workflow into the wiki by USING the product (not by reading
-  code). One run = one journey/<name>.md page + rosetta rows in vocabulary.md
-  + pitfall callouts when the UI label and the backend name disagree. Live
-  network capture is mandatory; source reads are only used to *confirm* what
-  the URL actually does, not to invent claims.
+  code). One run = one journey proposal + rosetta rows + pitfall callouts when
+  the UI label and the backend name disagree. Live network capture is mandatory;
+  source reads are only used to *confirm* what the URL actually does, not to
+  invent claims. Output is written as proposals under `proposed/` with
+  `force_promote: true` — the dream consolidator promotes them into `wiki/` on
+  the next push. This skill never writes to `wiki/` directly (cold lane is owned
+  by the dream).
   Triggers: "explore the X workflow", "document how Y works end-to-end",
   "we keep getting confused about Z, write it up", "add to the wiki",
   "/knowledge-explore <topic>".
-version: 2.0.0
+version: 3.0.0
 allowed-tools:
   - Bash
   - Read
@@ -34,16 +37,18 @@ allowed-tools:
 
 For ONE workflow (e.g. "lead curation", "contact enrichment", "billing"):
 
-1. **`sources/app-tours/<date>-<workflow>.md`** — verbatim live capture: every URL with status code, every UI label observed, raw network samples.
-2. **`wiki/journey/<workflow>.md`** — the workflow page. Sections (mandatory):
+1. **`sources/app-tours/<date>-<workflow>.md`** — verbatim live capture: every URL with status code, every UI label observed, raw network samples. Hot lane — written directly.
+2. **`proposed/journey-<workflow>/proposals/<YYYY-MM-DD>-<actor>-<run-id>.md`** — the workflow page, as a proposal with `force_promote: true`. Sections (mandatory in the body):
    - **What the user sees** — UI labels, columns, button labels, dialog text.
    - **Captured live** — table of `(UI action) → (network calls in order with status)`.
    - **Backend handler quotes** — for the canonical entry point only, NOT a code-dump.
    - **Vocabulary trap callout** — if any UI label differs from a backend name encountered.
    - **Adding a new X — recipe** — explicit numbered steps an implementing agent would follow to extend this workflow with a similar feature.
    - **Pitfalls** — sharp edges discovered during the tour (asymmetries, hidden cascades, side effects).
-3. **Rows added to `wiki/concept/vocabulary.md`** — one row per UI label that maps to a non-trivially-named backend identifier.
-4. **`wiki/pitfall/<topic>.md`** — only if a vocabulary mismatch or hidden side effect was important enough to be worth its own page.
+3. **`proposed/vocabulary-rows-<workflow>/proposals/<YYYY-MM-DD>-<actor>-<run-id>.md`** — one entry per UI label that maps to a non-trivially-named backend identifier. The dream merges these into `wiki/concept/vocabulary.md`.
+4. **`proposed/pitfall-<topic>/proposals/<YYYY-MM-DD>-<actor>-<run-id>.md`** — only if a vocabulary mismatch or hidden side effect was important enough to be worth its own page. Marked `force_promote: true`.
+
+**You do not write to `wiki/` from this skill.** The cold lane is the dream consolidator's exclusive domain. Your proposals will be promoted on the next push (the `dream-light` workflow fires on `proposed/**` changes and honors `force_promote: true`).
 
 ## What this skill does NOT produce
 
@@ -85,24 +90,40 @@ For ONE workflow (e.g. "lead curation", "contact enrichment", "billing"):
 ### Phase 3: Code confirmation (NOT exploration)
 
 7. For each captured URL, find the backend handler. ONE quote per route, only the most informative N lines (15-30 max).
-8. For each UI label that doesn't match the backend name from step 7, add a row to `wiki/concept/vocabulary.md`.
-9. If multiple UI labels collide on one backend concept (or vice versa), open `wiki/pitfall/vocabulary-mismatch.md` and add a row.
+8. For each UI label that doesn't match the backend name from step 7, prepare a vocabulary-row proposal entry (one row each — see Phase 6).
+9. If multiple UI labels collide on one backend concept (or vice versa), draft a `pitfall-vocabulary-mismatch` proposal entry.
 
-### Phase 4: Write the journey page
+### Phase 4: Write the journey proposal
 
 10. Use the structure under "What this skill produces" above.
 11. **The "Adding a new X — recipe" section is mandatory.** Imagine the most likely follow-up implementation task and list the exact files to touch in order.
-12. Cite sources: link to the `sources/app-tours/` capture and any backend files quoted.
+12. Cite sources: link to the `sources/app-tours/` capture and any backend files quoted, in the proposal frontmatter `sources:` array.
 
 ### Phase 5: Self-test
 
-13. Run `lb-knowledge-find "<a hypothetical extension task related to this workflow>"`. The new journey page must be the top hit.
-14. Read the brief output and ask: "Could a fresh agent given this hypothetical task implement it without re-reading 5+ files?". If no, the page is incomplete — go back to step 4 and click more.
+13. Run `lb-knowledge-find "<a hypothetical extension task related to this workflow>"`. Recent proposals are surfaced; verify the new entry would be the top hit once promoted.
+14. Read the brief output and ask: "Could a fresh agent given this hypothetical task implement it without re-reading 5+ files?". If no, the proposal is incomplete — go back to step 4 and click more.
 
-### Phase 6: Persist
+### Phase 6: Persist (hot lane only)
 
-15. `lb-knowledge-write` is too generic for this. Write directly to `wiki/journey/`, `wiki/concept/vocabulary.md`, `wiki/pitfall/`. Validate: `LB_LANE=cold python3 ~/.leadbay/knowledge/bin/lb-knowledge-validate-all`.
-16. Append to `log.md`: `## [date] knowledge-explore | <workflow> — N captures, M new vocab rows`.
+15. Write the journey proposal to `proposed/journey-<workflow>/proposals/<YYYY-MM-DD>-<actor>-<run-id>.md` with frontmatter matching `schemas/proposal.schema.json`. Set `force_promote: true` — `/knowledge-explore` is a deliberate, evidence-heavy run; the next dream pass should promote it without waiting for cross-source quorum.
+
+    Use `lb-knowledge-write` to keep filenames + provenance correct:
+
+    ```bash
+    "$_LB_BIN/lb-knowledge-write" proposal \
+      --concept journey-<workflow> \
+      --type journey \
+      --title "<workflow> — end-to-end" \
+      --force-promote \
+      < proposal-body.md
+    ```
+
+16. Write vocabulary-row proposals (one per UI label) to `proposed/vocabulary-rows-<workflow>/proposals/...`, and any pitfall page proposal to `proposed/pitfall-<topic>/proposals/...`. Same `force_promote: true` rule.
+
+17. Validate hot lane: `LB_LANE=hot python3 ~/.leadbay/knowledge/bin/lb-knowledge-validate-all`. If validation fails for a `wiki/` write, you've drifted — re-route to `proposed/`.
+
+18. Commit + push. The push triggers `.github/workflows/dream-light.yml`, which promotes your `force_promote: true` proposals into `wiki/` and deletes the proposal files in the same commit. The `log.md` line is appended by the dream, not by you.
 
 ## Checklist before considering the run done
 
