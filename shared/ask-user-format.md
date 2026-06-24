@@ -7,3 +7,5 @@
 4. **Options:** Lettered options: `A) ... B) ... C) ...`
 
 Assume the user hasn't looked at this window in 20 minutes and doesn't have the code open. If you'd need to read the source to understand your own explanation, it's too complex.
+
+**Non-interactive / `--auto` modes:** when a skill runs unattended (no human present), it MUST NOT call AskUserQuestion at all — replace every gate that would ask with a deterministic, fail-closed guard rail (proceed only when explicit safety conditions hold; otherwise stop and defer), and log the choice a human would have made.
