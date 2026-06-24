@@ -34,15 +34,28 @@ description: |
   and pushing to the same draft. Capped (default: top 1) and never merges.
   This is the only path that touches product code, and only via a reviewed draft PR.
 
+  --auto / --auto-fix run the skill UNATTENDED — one command, no interactive
+  prompts (fire it and walk away). --auto replaces the interactive --improve gates with
+  fail-closed guard rails: it auto-selects the single top P1/P2
+  needs-investigation finding and runs the read-only investigation, but on its
+  own it opens NO PR (analysis + archive + investigation prompt only). Add
+  --auto-fix to also run the build path — and even then a draft PR is opened
+  ONLY when the read-only plan is high-confidence AND minimal-risk AND
+  single-package/tool-surface; otherwise it defers to a human (no PR). The
+  before=FAIL/after=PASS eval gate and the never-merge/never-ready boundary are
+  unchanged in every mode.
+
   Usage:
     /mcp-analysis                 (last 30 days)
     /mcp-analysis --days 7        (last 7 days)
     /mcp-analysis --days 14 --user guillaume@helvo.fr   (focus one user)
     /mcp-analysis --days 7 --improve   (analyze, then fix+eval+draft-PR the top finding)
+    /mcp-analysis --days 1 --auto       (unattended: analyze + archive, NO PR)
+    /mcp-analysis --days 1 --auto-fix   (unattended: also build a draft PR, guarded)
 
   Triggers: "/mcp-analysis", "why are users frustrated", "analyze MCP usage",
   "what features do users want", "diagnose MCP friction", "MCP user analysis".
-version: 0.8.0
+version: 0.9.0
 allowed-tools:
   - Bash
   - Read
@@ -176,21 +189,39 @@ you can't justify from the feature's behaviour — when genuinely ambiguous, say
 ## Phase 0 — Parse arguments, resolve PostHog credentials
 
 Read the invocation for `--days` (default 30), optional `--user <email>`, and
-the optional `--improve` flag (off by default).
+the run-mode flags: `--improve` (interactive fix loop, off by default),
+`--auto`, and `--auto-fix` (the unattended modes, off by default).
 
 The PostHog Setup block above resolves `PH_KEY`. Confirm it is set. Capture the
-window and project:
+window, project, and mode flags:
 
 ```bash
 DAYS="${ARG_DAYS:-30}"
 POSTHOG_HOST=https://eu.posthog.com
-# IMPROVE=1 when the invocation contains --improve, else 0.
-echo "window: last ${DAYS}d  ·  user filter: ${ARG_USER:-<all>}  ·  improve: ${IMPROVE:-0}"
+# Mode flags (1 when the corresponding flag is present, else 0):
+#   IMPROVE  ← --improve   (interactive fix loop)
+#   AUTO     ← --auto      (unattended; replaces 7a/7c gates with fail-closed guards)
+#   AUTOFIX  ← --auto-fix  (unattended build path; IMPLIES --auto)
+# --auto-fix implies --auto; --auto (with or without --auto-fix) implies the fix
+# loop runs, so IMPROVE is forced on:
+[ "${AUTOFIX:-0}" = 1 ] && AUTO=1
+[ "${AUTO:-0}" = 1 ] && IMPROVE=1
+NONINTERACTIVE="${AUTO:-0}"
+echo "window: last ${DAYS}d  ·  user filter: ${ARG_USER:-<all>}  ·  improve: ${IMPROVE:-0}  ·  auto: ${AUTO:-0}  ·  auto-fix: ${AUTOFIX:-0}"
 ```
 
-`--improve` does NOT change Phases 1–6 — the analysis + archive run identically.
-It only activates Phase 7 (the fix loop) AFTER the report is complete and
-archived. A run without `--improve` is read-only as always.
+`--improve` / `--auto` / `--auto-fix` do NOT change Phases 1–6 — the analysis +
+archive run identically. They only activate Phase 7 (the fix loop) AFTER the
+report is complete and archived. A run with none of them is read-only as always.
+
+**Unattended modes (`--auto` / `--auto-fix`) — no human is present.** The two
+Phase 7 `AskUserQuestion` gates (7a pick-finding, 7c approve-plan) are REPLACED
+by fail-closed guard rails: they auto-select the single top P1/P2 finding and
+proceed to a build ONLY when the read-only plan clears every guard, otherwise
+they STOP with no PR (the analysis + archived investigation prompt is the
+deliverable). `--auto` alone never opens a PR; `--auto-fix` is the only flag
+that lets an unattended run reach the build path. Never call `AskUserQuestion`
+when `NONINTERACTIVE=1`.
 
 **Phase 0 Gate — emit this block before Phase 1:**
 
@@ -201,6 +232,7 @@ PHASE 0 GATE
 [✓/✗] Window: last ___ days
 [✓/✗] User filter: ___ (or <all>)
 [✓/✗] Improve mode: ON / OFF
+[✓/✗] Auto mode: OFF / AUTO (no PR) / AUTO-FIX (guarded build) — NONINTERACTIVE=__
 ════════════════════════════════
 GATE: PASS / FAIL — [explain any failures]
 ```
@@ -685,15 +717,30 @@ GATE: PASS / FAIL
 
 ---
 
-## Phase 7 — Improve loop (ONLY when `--improve` is set)
+## Phase 7 — Improve loop (ONLY when `--improve`, `--auto`, or `--auto-fix` is set)
 
 If `IMPROVE` is not set, STOP after Phase 6 — the run is complete. Everything
-below runs ONLY with `--improve`.
+below runs ONLY when the fix loop is active (`--improve` interactive, or
+`--auto` / `--auto-fix` unattended — Phase 0 forces `IMPROVE=1` for the auto
+modes).
 
 This is the one path where the skill causes a product-code change. It does so
 ONLY through a **reviewed draft PR** that an eval has validated. It NEVER merges,
 deploys, or pushes to a default branch. Iron Law #6 still holds for the analysis
 itself; Phase 7 is an explicit, gated, opt-in extension.
+
+**Two ways the human gates (7a, 7c) get satisfied:**
+- **Interactive (`--improve`)** — `AskUserQuestion` as written below. Default.
+- **Unattended (`--auto` / `--auto-fix`, `NONINTERACTIVE=1`)** — the `**Under
+  --auto:**` sub-blocks REPLACE each `AskUserQuestion`. They are **fail-closed**:
+  a finding reaches the build path only if it clears every guard; anything
+  uncertain STOPS with no PR. Never call `AskUserQuestion` in these modes.
+  Under `--auto` WITHOUT `--auto-fix`, 7c always defers — no PR is ever opened
+  (analysis + archived investigation prompt is the deliverable).
+
+The build/eval hard gates in 7d (before=FAIL/after=PASS, tests+typecheck green,
+draft-only, never merge/ready) are IDENTICAL in every mode — the auto guards
+only stand in for the human's *judgement* gates, never for the *proof* gates.
 
 ### 7a — Confirm scope (gate)
 
@@ -719,6 +766,24 @@ No fix-subagent spawned, no PR. <one-line reason>.
 ```
 
 and stop.
+
+**Under `--auto` (`NONINTERACTIVE=1`) — no `AskUserQuestion`.** Replace the
+prompt above with deterministic auto-selection (still cap 1, fail-closed):
+
+1. Rank the SURVIVING `needs-investigation` findings by Recommendations priority
+   (P1 first; tie-break by impact, then by the freshest major-change regression).
+2. **Eligibility — every check must pass, or the finding is skipped:** it is
+   `needs-investigation`, it carries evidence (Iron Law #1), and it is ranked
+   **P1 or P2**. P3 (and lower) is NOT acted on autonomously.
+3. Select the **single** top eligible finding. Cap 1 — never auto-build more
+   than one finding per run, regardless of how many are eligible.
+4. If NO finding is eligible (none survived, none P1/P2, or zero
+   needs-investigation), emit the loud headline above and STOP — the report +
+   archived investigation prompt is the complete deliverable. A quiet window is
+   success, not failure; never lower the bar to manufacture a build.
+
+Print which finding was auto-selected (P-rank + one-line) and why, so the run
+log shows the choice a human would otherwise have made. Then continue to 7b.
 
 ### 7b — Investigate & plan (read-only subagent — NO code written yet)
 
@@ -759,6 +824,34 @@ D) Cancel improve.** Write NO code until the user picks A. If the plan reveals a
 redesign / cross-package change / data migration, say so and recommend Skip or
 Revise. If confidence is low or the root cause is "couldn't determine read-only",
 recommend against building.
+
+**Under `--auto` (`NONINTERACTIVE=1`) — no `AskUserQuestion`.** A human's "build
+this" is replaced by a fail-closed auto-approval guard. First: if `AUTOFIX` is
+NOT set (plain `--auto`), ALWAYS defer here — the build path is off, no PR is
+opened. Report the plan as `deferred to human: --auto-fix not enabled` and STOP
+(the analysis + archived investigation prompt is the deliverable).
+
+If `AUTOFIX=1`, auto-approve the plan and proceed to 7d **only when ALL of these
+hold** (read them off the 7b plan):
+- **CONFIDENCE is high** — abort on medium / low, or on "couldn't determine
+  read-only".
+- **RISK is minimal / contained** — abort on ANY of: redesign, cross-package
+  coupling, data migration, schema/contract change, deleting or rewriting
+  existing tests, or a large diff (more than ~3 files touched).
+- **FILES TO CHANGE are tool-surface only** — every path under
+  `packages/core/src/` or `packages/mcp/src/`. Abort if the plan touches config,
+  CI, build tooling, or anything outside the tool surface.
+
+If every guard passes → proceed to 7d exactly as the interactive path would
+after the user picked A. If ANY guard fails → **abort the build for this
+finding, open NO PR**, and report it as `deferred to human: <which guard
+tripped>` (e.g. "confidence=medium", "risk: cross-package", "touches
+.github/workflows"). Do NOT silently fall back to a different finding (cap-1,
+fail-closed) — the archived investigation prompt already lets a human pick it up.
+
+This guard replaces only the human's *judgement* call. The 7d *proof* gates
+below — BEFORE-fix eval must FAIL, AFTER-fix eval must PASS, tests + typecheck
+green, draft-only, never merge / mark ready — are UNCHANGED and still hard.
 
 ### 7d — Build & validate (only after plan approval, worktree-isolated)
 
@@ -837,15 +930,23 @@ For each subagent, surface its structured report verbatim-ish:
 NEVER merge or mark ready. The human reviews every draft PR. If a subagent
 returns `null` (died), report it and move on — do not retry silently.
 
-**Phase 7 Gate — emit this block to close an --improve run:**
+**Under `--auto` / `--auto-fix`:** the structured report above IS the final
+output — there is no human to read it back to. A finding that the 7c guard
+deferred is reported as `deferred to human: <guard>` (no PR), alongside the
+already-archived investigation prompt so a human can resume it. A `--auto` run
+with no `--auto-fix` always lands here with zero PRs by design — that is the
+expected Phase-A outcome, not a failure.
+
+**Phase 7 Gate — emit this block to close an --improve / --auto run:**
 
 ```
 PHASE 7 GATE — Improve loop
 ════════════════════════════════
 [✓/✗] needs-investigation findings: N (if 0 → loud "NOTHING TO IMPROVE", stopped)
-[✓/✗] Scope confirmed (7a): M findings (default cap 1)
+[✓/✗] Scope confirmed (7a): M findings (default cap 1) — interactive ask OR --auto top-P1/P2 auto-select
 [✓/✗] Investigate-and-PLAN ran read-only first (7b) — no code before the plan: YES
-[✓/✗] Plan shown + user approved each build (7c) before any code: YES
+[✓/✗] Build approved before any code (7c): user picked A (interactive) OR --auto guard passed (high-conf + minimal-risk + tool-surface): YES / DEFERRED (which guard)
+[✓/✗] --auto without --auto-fix opened NO PR (Phase-A): YES / n/a
 [✓/✗] Build subagents spawned only after approval (7d): M (worktree-isolated)
 [✓/✗] BEFORE-fix eval FAILED (proves the scenario reproduces the bug): YES
 [✓/✗] AFTER-fix eval PASSED in ≤3 rounds · eval run archived to mcp-dashboard: YES
