@@ -165,6 +165,35 @@
     flex-direction: column;
     gap: 6px;
   }
+
+  .also-shipped {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--line);
+    font-size: 11px;
+    color: var(--muted);
+    line-height: 1.5;
+  }
+  .also-shipped .label { color: var(--ink); font-weight: 600; }
+
+  /* Craft Spotlight — per-person engineering-quality callouts */
+  .craft-card {
+    padding: 8px 10px;
+    margin-bottom: 6px;
+    background: var(--card-2);
+    border-radius: 6px;
+    border-left: 3px solid var(--good);
+    font-size: 12px;
+  }
+  .craft-card:last-child { margin-bottom: 0; }
+  .craft-card .who {
+    font-weight: 600;
+    font-size: 12px;
+    color: var(--good);
+    margin-bottom: 1px;
+  }
+  .craft-card .what { color: var(--muted); font-size: 11.5px; line-height: 1.45; }
+  .craft-card .what b { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -206,27 +235,40 @@
 
 <div class="cols">
 
-  <!-- LEFT: Top wins (NO commit-count leaderboard — value of improvement is the only ranking) -->
+  <!-- LEFT: Top wins — WHAT shipped and why it matters. NO commit-count leaderboard. -->
+  <!-- Each win appears ONCE. Do NOT restate it in the Craft column; that column is about HOW. -->
   <div>
     <section>
-      <h2>🥇 Top Wins <span class="tag">ranked by impact, not commit count</span></h2>
+      <h2>🥇 Top Wins <span class="tag">what shipped &amp; why it matters</span></h2>
       <div class="top-wins">
-        <!-- 5-8 repo-cards. Rank by VALUE OF IMPROVEMENT shipped (product/user/infra/team impact), -->
-        <!-- never by commit volume. Credit people by name inside each card. .gold/.silver/.bronze -->
-        <!-- for the top 3, .infra for infra-track wins, .code for code wins, default brand for misc. -->
-        <!-- ROW: <div class="repo-card {{CLASS}}"><div class="title">{{EMOJI}} {{WIN}} — {{WHO}}</div><div class="meta">{{WHY IT MATTERS}}</div></div> -->
+        <!-- 4-6 cards MAX. Rank by VALUE OF IMPROVEMENT (product/user/infra/team impact). -->
+        <!-- One line title + one tight line of impact. Credit people by name. Merge related PRs -->
+        <!-- into a single win. .gold/.silver/.bronze for top 3, .infra / .code for track. -->
+        <!-- ROW: <div class="repo-card {{CLASS}}"><div class="title">{{EMOJI}} {{WIN}} — {{WHO}}</div><div class="meta">{{ONE tight line of why}}</div></div> -->
         {{TOP_WINS_CARDS}}
+      </div>
+      <div class="also-shipped">
+        <span class="label">Also shipped:</span> {{ALSO_SHIPPED_ONELINE}}
       </div>
     </section>
   </div>
 
-  <!-- MIDDLE: Releases + Repo activity -->
+  <!-- MIDDLE: 🔨 Craft Spotlight — HOW the work was done well, per person. THE differentiated section. -->
+  <!-- This is NOT a repeat of Top Wins. Read the actual PR diffs. For each active engineer, name -->
+  <!-- ONE concrete thing they did with craft: a smart architectural choice, an engineering -->
+  <!-- principle applied, a subtle correctness catch, a tasteful API/schema decision, a -->
+  <!-- reliability/defense-in-depth move. Be specific and technical — cite the PR. Celebrate -->
+  <!-- judgment, not volume. One card per person (interns + juniors included, on equal footing). -->
   <div>
     <section>
-      <h2>🚢 Releases &amp; Repos <span class="tag">{{N_REPOS}} active</span></h2>
-      <!-- 6-10 repo-cards summarizing each active repo. -->
-      <!-- Class hint: .code for code-heavy repos, .infra for infra/ops, default brand for misc. -->
-      {{REPO_CARDS}}
+      <h2>🔨 Craft Spotlight <span class="tag">how it was built well</span></h2>
+      <div class="top-wins">
+        <!-- ROW per engineer: -->
+        <!-- <div class="craft-card"><div class="who">{{NAME}} — {{PR/area}}</div>
+        <!--   <div class="what"><b>{{the craft principle in 2-4 words}}.</b> {{1-2 sentences: the
+        <!--   specific smart decision, WHY it's good engineering, what it prevents/enables}}</div></div> -->
+        {{CRAFT_CARDS}}
+      </div>
     </section>
   </div>
 

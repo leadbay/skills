@@ -146,11 +146,32 @@ When the user asks for a **"beautiful HTML output"**, **"screenshot-friendly"**,
 
 Steps:
 1. Run all data-gathering Steps 1-4 the same way.
-2. Read the HTML template and replace every `{{TOKEN}}`.
-3. Write to `.context/eng-retro-<date-range>.html` in the current workspace.
-4. `open` the file so the user sees it in a browser.
+2. **Inspect actual PR diffs for the Craft Spotlight** (see below).
+3. Read the HTML template and replace every `{{TOKEN}}`.
+4. Write to `.context/eng-retro-<date-range>.html` in the current workspace.
+5. `open` the file so the user sees it in a browser.
 
-The HTML mode combines Engineering + Data Coverage into one 3-column landscape page. NOT a replacement for the Discord mode — it's a screenshot-grade alternative.
+The HTML mode is a 3-column landscape page: **Top Wins** (what shipped) · **Craft Spotlight** (how it was built) · **Data Coverage**. NOT a replacement for the Discord mode.
+
+**ANTI-REDUNDANCY (critical).** The old template repeated the same work three times (stats + Top Wins + a per-repo list). Do NOT do that. Each shipped item appears in exactly ONE place:
+- **Top Wins** = 4-6 cards, each a distinct high-value outcome, merging related PRs. One tight line of *why it matters*. No per-repo restatement.
+- **Craft Spotlight** = a *different lens on the same week* — HOW, not WHAT. Never restate a Top Win here.
+- **Also shipped** = a single compressed one-liner for the breadth that isn't a top win. Not cards.
+- Drop the standalone "Releases & Repos" list entirely — it was pure duplication.
+
+**CRAFT SPOTLIGHT — the point of the rework.** Commit titles tell you *what*; they don't tell you if it was done *well*. For each active engineer, read their most substantial 1-3 PRs of the week (`gh pr view <n> --json title,body,files` and `gh pr diff <n>`, or `gh api repos/leadbay/<repo>/commits/<sha>`) and surface **ONE concrete piece of craft**:
+- a smart **architectural choice** (e.g. moved a side-effect inside the winner-gate so losers roll back cleanly; consolidated a data plane onto one versioned surface)
+- an **engineering principle** applied (fail-closed validation; graceful degradation instead of hard-blocking; guard an invariant with a regression test; respect server-provided ordering instead of re-sorting client-side)
+- a **subtle correctness catch** (a race condition, an ordering bug, a TOCTOU, an off-by-one in a progress counter)
+- a **security / defense-in-depth** move (S256-only PKCE, Origin validation, dropping a weaker fallback)
+- a **tasteful API / schema decision** (parity guard tests across versions; nullable done right; a migration split to stay instant)
+- a **reliability** move (durable job queue, crash-recovery of stuck jobs, blob-backed storage)
+
+Rules for this section:
+- Be **specific and technical** and cite the PR number. "Nice work" is banned; name the actual decision and *why it's good engineering* (what it prevents or enables).
+- **One card per active engineer**, interns and juniors on equal footing with seniors — this section rewards judgment, not seniority or volume.
+- If someone only shipped routine/mechanical work this week, it's honest to give them a lighter note or omit them — don't invent craft that isn't there.
+- Prefer the reviewer's own conventions as the bar (see `wiki/style/backend.md` — Amaury's `use{}`/closeable, typed payloads, dedicated queries; frontend reuse-over-fork). Calling out that someone matched a hard house rule *is* a craft observation.
 
 ### Step 4: Data coverage (FR + US)
 
