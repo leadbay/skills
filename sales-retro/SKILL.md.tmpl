@@ -45,7 +45,7 @@ The HTML mode is NOT a replacement for the Discord output — it's a screenshot-
 
 ```
 SUPABASE_PROJECT_ID=pzhjwclpluxbfopctyot
-SALES_REPS=quang@leadbay.ai,jean-marie@leadbay.ai,zoe@leadbay.ai,mael@leadbay.ai
+SALES_REPS=jean-marie@leadbay.ai,zoe@leadbay.ai,mael@leadbay.ai
 FOUNDER_LED=ludo@leadbay.ai
 FOUNDER_OUTBOUND=milstan@leadbay.ai
 ```
@@ -200,7 +200,7 @@ This message draws from `mcp__claude_ai_Supabase__execute_sql` against `SUPABASE
 
 ### Step T1: Schema mental model
 
-- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. **Sales reps** (graded on scoreboard): zoe, jean-marie, mael (ramping new-hire), quang. **Founder-led** (separate section, not on rep scoreboard): ludo (CEO — runs high-touch customer deals + partnerships + investor track). **Founder outbound** (info-only): milstan (founder, automated nurture batches). Milan and Ludo are NOT compared to reps.
+- `team_members` — `email`, `full_name`, `is_admin`, `suspended`. **Sales reps** (graded on scoreboard): zoe, jean-marie, mael (ramping new-hire). **Founder-led** (separate section, not on rep scoreboard): ludo (CEO — runs high-touch customer deals + partnerships + investor track). **Founder outbound** (info-only): milstan (founder, automated nurture batches). Milan and Ludo are NOT compared to reps. **Quang has left the company (~Jul 2026) — do NOT include him anywhere; omit silently, never flag his absence.**
 - `attio_meetings` — calendar meetings. **`participant_emails` is often empty** — read participants from `raw->'participants'->[]->>'email_address'`. `starts_at` is meeting time. `linked_records` carries CRM links.
 - `attio_call_recordings` — `transcript_status='ok'` + `segments>0` means transcript usable.
 - `attio_call_transcript_segments` — `meeting_id`, `speaker_name`, `speech`, `start_time`, `end_time`. Long calls (segments > 1500) are usually substantive.
@@ -243,7 +243,7 @@ WITH mp AS (
 SELECT t.email, COUNT(*) AS total,
   COUNT(*) FILTER (WHERE EXISTS (SELECT 1 FROM unnest(emails) e WHERE e NOT LIKE '%@leadbay.ai' AND e <> '')) AS external
 FROM mp
-JOIN (VALUES ('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
+JOIN (VALUES ('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
   ON t.email = ANY(mp.emails)
 GROUP BY t.email;
 ```
@@ -252,7 +252,7 @@ Then list every external meeting per rep (title + external attendee emails) — 
 
 ```sql
 SELECT t.email, COUNT(*) AS sent FROM emails e
-JOIN (VALUES ('quang@leadbay.ai'),('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
+JOIN (VALUES ('jean-marie@leadbay.ai'),('zoe@leadbay.ai'),('mael@leadbay.ai')) t(email)
   ON t.email = ANY(e.team_member_emails) AND e.direction = 'outbound'
 WHERE e.internal_date >= '{start}' AND e.internal_date < '{end}'
 GROUP BY t.email;
@@ -336,9 +336,8 @@ If you can't derive a useful privacy-safe insight, skip the call. Better to omit
 LEADERBOARD (customer-facing only)
   Rep         Customer mtgs  Recorded  Emails
   zoe              N             N        N
-  ludo             N             N        N
   jean-marie       N             N        N
-  quang            N             N        N
+  mael             N             N        N  (ramping)
 
 🥇 TOP WINS
 1️⃣ {Customer} — {rep} ({date}, {stage}, {scope}, {N min}) {🐋 if big-fish}
