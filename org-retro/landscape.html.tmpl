@@ -235,16 +235,15 @@
 
 <div class="cols">
 
-  <!-- LEFT: Top wins — WHAT shipped and why it matters. NO commit-count leaderboard. -->
-  <!-- Each win appears ONCE. Do NOT restate it in the Craft column; that column is about HOW. -->
+  <!-- LEFT: Top Wins — the IMPACT pass. Keep RICH and substantive (do not dumb down). -->
+  <!-- Rank the week's work by value to product/user/customer/infra. Real outcome + the -->
+  <!-- substance of what shipped + specific "why it matters"; PR#s and key mechanism welcome. -->
+  <!-- 4-6 cards, merge related PRs. This is the product/impact view. -->
   <div>
     <section>
-      <h2>🥇 Top Wins <span class="tag">what shipped &amp; why it matters</span></h2>
+      <h2>🥇 Top Wins <span class="tag">ranked by impact</span></h2>
       <div class="top-wins">
-        <!-- 4-6 cards MAX. Rank by VALUE OF IMPROVEMENT (product/user/infra/team impact). -->
-        <!-- One line title + one tight line of impact. Credit people by name. Merge related PRs -->
-        <!-- into a single win. .gold/.silver/.bronze for top 3, .infra / .code for track. -->
-        <!-- ROW: <div class="repo-card {{CLASS}}"><div class="title">{{EMOJI}} {{WIN}} — {{WHO}}</div><div class="meta">{{ONE tight line of why}}</div></div> -->
+        <!-- ROW: <div class="repo-card {{CLASS}}"><div class="title">{{EMOJI}} {{WIN}} — {{WHO}}</div><div class="meta">{{substance + why it matters, PR#s ok}}</div></div> -->
         {{TOP_WINS_CARDS}}
       </div>
       <div class="also-shipped">
@@ -253,20 +252,18 @@
     </section>
   </div>
 
-  <!-- MIDDLE: 🔨 Craft Spotlight — HOW the work was done well, per person. THE differentiated section. -->
-  <!-- This is NOT a repeat of Top Wins. Read the actual PR diffs. For each active engineer, name -->
-  <!-- ONE concrete thing they did with craft: a smart architectural choice, an engineering -->
-  <!-- principle applied, a subtle correctness catch, a tasteful API/schema decision, a -->
-  <!-- reliability/defense-in-depth move. Be specific and technical — cite the PR. Celebrate -->
-  <!-- judgment, not volume. One card per person (interns + juniors included, on equal footing). -->
+  <!-- MIDDLE: 🔨 Craft Praise — the CODE-READING pass, done INDEPENDENTLY of Top Wins. -->
+  <!-- Read the actual diffs (gh pr diff). Pull decisions a senior reviewer would point at. -->
+  <!-- Per-DECISION list (NOT per-person, NOT per-win): a win may yield 0/1/several; a tiny PR -->
+  <!-- may earn one. Anchor each to a concrete construct you saw in the diff (guard predicate, -->
+  <!-- state field, test shape, CAS/WHERE, use{}). A person may appear >1x for distinct decisions; -->
+  <!-- merge identities (amaury=kinrar). Litmus: if the decision is learnable from Top Wins, cut it. -->
   <div>
     <section>
-      <h2>🔨 Craft Spotlight <span class="tag">how it was built well</span></h2>
+      <h2>🔨 Craft Praise <span class="tag">decisions worth pointing at</span></h2>
       <div class="top-wins">
-        <!-- ROW per engineer: -->
-        <!-- <div class="craft-card"><div class="who">{{NAME}} — {{PR/area}}</div>
-        <!--   <div class="what"><b>{{the craft principle in 2-4 words}}.</b> {{1-2 sentences: the
-        <!--   specific smart decision, WHY it's good engineering, what it prevents/enables}}</div></div> -->
+        <!-- ROW: <div class="craft-card"><div class="who">{{Name}} — {{principle 2-5 words}}</div>
+        <!--   <div class="what">{{concrete code decision from the diff + what it prevents/enables}} <span class="mono">{{PR#}}</span></div></div> -->
         {{CRAFT_CARDS}}
       </div>
     </section>
