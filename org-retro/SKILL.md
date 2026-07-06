@@ -196,25 +196,23 @@ Steps:
 
 The HTML mode is a 3-column landscape page: **Top Wins** (what shipped) · **Craft Spotlight** (how it was built) · **Data Coverage**. NOT a replacement for the Discord mode.
 
-**ANTI-REDUNDANCY (critical).** The old template repeated the same work three times (stats + Top Wins + a per-repo list). Do NOT do that. Each shipped item appears in exactly ONE place:
-- **Top Wins** = 4-6 cards, each a distinct high-value outcome, merging related PRs. One tight line of *why it matters*. No per-repo restatement.
-- **Craft Spotlight** = a *different lens on the same week* — HOW, not WHAT. Never restate a Top Win here.
-- **Also shipped** = a single compressed one-liner for the breadth that isn't a top win. Not cards.
-- Drop the standalone "Releases & Repos" list entirely — it was pure duplication.
+**TWO COLUMNS, TWO LENSES — keep them from echoing.** Top Wins and Craft Spotlight both draw on the same week, so they will *echo* unless you discipline them. The rule that keeps them distinct:
 
-**CRAFT SPOTLIGHT — the point of the rework.** Commit titles tell you *what*; they don't tell you if it was done *well*. For each active engineer, read their most substantial 1-3 PRs of the week (`gh pr view <n> --json title,body,files` and `gh pr diff <n>`, or `gh api repos/leadbay/<repo>/commits/<sha>`) and surface **ONE concrete piece of craft**:
-- a smart **architectural choice** (e.g. moved a side-effect inside the winner-gate so losers roll back cleanly; consolidated a data plane onto one versioned surface)
-- an **engineering principle** applied (fail-closed validation; graceful degradation instead of hard-blocking; guard an invariant with a regression test; respect server-provided ordering instead of re-sorting client-side)
-- a **subtle correctness catch** (a race condition, an ordering bug, a TOCTOU, an off-by-one in a progress counter)
-- a **security / defense-in-depth** move (S256-only PKCE, Origin validation, dropping a weaker fallback)
-- a **tasteful API / schema decision** (parity guard tests across versions; nullable done right; a migration split to stay instant)
-- a **reliability** move (durable job queue, crash-recovery of stuck jobs, blob-backed storage)
+- **Top Wins = OUTCOMES only.** What the org / user / customer *got*. State the result in plain business/product terms. **No PR numbers, no technique, no "how".** 4 cards max, one tight line of why. Credit the person in a muted, de-emphasized `— Name`. Example: "💚 Canceled customers keep their data — Milan" / "Lapsed orgs drop to freemium instead of getting locked out." (NOT "self-heals via BillingCheckPlugin on next request" — that's the *how*, it belongs to Craft.)
+- **Craft Spotlight = the DECISION behind the work.** The engineering judgment, stated as a principle. **Never restate the outcome.** If a PR is a Top Win, its craft line must add a *new* fact — the technical decision — and say nothing about the user-facing result. Example (same PR as above): "Milan — self-heal, don't backfill: each stuck org repairs itself on its next request, so future cases fix themselves too. #1915".
+- **Also shipped** = one compressed line for breadth. Not cards. No "Releases & Repos" list — that was pure duplication.
 
-Rules for this section:
-- Be **specific and technical** and cite the PR number. "Nice work" is banned; name the actual decision and *why it's good engineering* (what it prevents or enables).
-- **One card per active engineer**, interns and juniors on equal footing with seniors — this section rewards judgment, not seniority or volume.
-- If someone only shipped routine/mechanical work this week, it's honest to give them a lighter note or omit them — don't invent craft that isn't there.
-- Prefer the reviewer's own conventions as the bar (see `wiki/style/backend.md` — Amaury's `use{}`/closeable, typed payloads, dedicated queries; frontend reuse-over-fork). Calling out that someone matched a hard house rule *is* a craft observation.
+Litmus test before you ship: read the Top Wins column and the Craft column side by side. If any two cards would let a reader learn the *same fact twice*, one of them is wrong — cut the technique from the win, or cut the outcome from the craft.
+
+**CRAFT SPOTLIGHT — the point of the rework.** Commit titles tell you *what*; they don't tell you if it was done *well*. **First, dedupe contributor identities** (amaury = kinrar = TheKinrar; nicolas = jenecomprendpas; milstan = multiple emails) — one person = one card, no matter how many repos/emails. Then, for each *distinct* active engineer, read their most substantial 1-3 PRs of the week (`gh pr view <n> --json title,body` and `gh pr diff <n>`) and surface **ONE** piece of craft:
+- a smart **architectural choice** · an **engineering principle** (fail-closed; graceful degradation; guard-an-invariant-with-a-test; respect server ordering) · a **subtle correctness catch** (race, ordering, TOCTOU) · a **security move** (S256-only PKCE, Origin validation) · a **tasteful API/schema decision** · a **reliability move** (durable queue, crash recovery)
+
+Format + rules:
+- **One tight sentence per person.** `who = Name — <principle in 2-5 words>`; `what = the specific decision, ≤ ~25 words, PR# at the end`. No multi-sentence paragraphs, no bold-clause-then-explanation. If you're writing 3 sentences, you're back to verbose — cut.
+- **One card per distinct person.** Never two cards for the same human (the #1 bug: kinrar and Amaury are the same person).
+- Bias toward craft on work that ISN'T already a headline win — it makes the two columns complementary rather than parallel. (This week: Amaury's tailnet-only exposure, Oomaxime's remount-on-resolve, Damien's auth-edge guard are craft-only, not top wins.)
+- "Nice work" is banned — name the actual decision. If someone only shipped routine work, omit them; don't invent craft.
+- The reviewer's house rules (`wiki/style/backend.md`) are the bar — matching a hard house rule *is* a craft observation.
 
 ### Step 4: Data coverage (FR + US)
 
