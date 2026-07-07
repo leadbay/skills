@@ -18,8 +18,8 @@ description: |
   Triggers: "report this bug", "file an issue", "write a github issue",
   "open an issue for X", "create an issue", "report a feature request",
   "rapporter ce bug", "ouvrir une issue", "[For Actis]", "[For Sider]",
-  "[Bug]", "[Feature]".
-version: 2.0.0
+  "[Bug]", "[Feature]", "[MCP]", "the MCP broke", "report an MCP bug".
+version: 2.1.0
 allowed-tools:
   - Bash
   - Read
@@ -118,6 +118,31 @@ was working for, what they expected and why, what they did next, what it
 cost — is still slop, just harder to spot. Strip the technical particulars
 in your head; if what remains is "someone did a workflow and it didn't
 work and they were sad", you don't have the issue yet.
+
+---
+
+## MCP issues carry one extra thing: the whole chat session
+
+An MCP bug does not live in a single message — it lives in the loop between
+the user, the AI, and the tools. What the user asked, which tool the AI
+picked, the arguments it sent, what the MCP returned, and how the AI read
+that return: the failure is somewhere in that chain, and a screenshot of one
+turn hides exactly the turn that broke. So for anything touching the Leadbay
+MCP, the CONTEXT element is not optional and not an excerpt — **attach the
+complete chat session, start to finish.**
+
+That means every turn, verbatim: the user's prompts, the AI's tool calls
+*with their arguments*, the raw tool results, and the point where it went
+wrong — as a pasted full transcript or a share link to the conversation, not
+a paraphrase and not a single screenshot. Add the reconstruction handles
+when you have them, so eng can pull the server-side trace: the user's
+identity (email / `distinct_id`), the approximate timestamp, and the
+`mcp_version`.
+
+This is a hard gate. If the reporter brings you a fragment — one screenshot,
+"the AI said it couldn't find the company", a paraphrase — you do not have a
+filable MCP issue yet. Go back and get the whole session before you write a
+word; a half session sends eng chasing the wrong turn.
 
 ---
 
@@ -242,6 +267,10 @@ note to the reporter, never text inside an issue body.
   unless the escalation is literally in the source.
 - **Many problems in one issue.** One issue = one signal. Five pains → five
   issues.
+- **MCP issue without the full session.** A single screenshot or a paraphrase
+  of an MCP failure. The bug is in the user↔AI↔tool chain; a fragment hides
+  the failing turn. Get the whole conversation (transcript or share link)
+  before filing — see the MCP rule above.
 - **Non-English narrative.** See the language rule below.
 
 ---
@@ -262,6 +291,8 @@ true; if one isn't, fix it or go back to the reporter:
 - Is the cost concrete (units, a named consequence) rather than an adjective?
 - Did I name who actually hit this (account + moment for a bug; workflow +
   need for a feature)?
+- If it's an MCP issue, did I attach the FULL chat session (transcript or
+  share link) — every turn, tool calls and returns included — not a fragment?
 - Is every claim sourced or observed — or explicitly flagged as inferred?
 - Did I cut every proposed solution, priority label, and "more generally…" tail?
 - Is the title the *problem*, not a directive, and a faithful compression
@@ -277,10 +308,12 @@ context, you don't have the story yet — ask the reporter; don't invent it.
 ## How to run it
 
 **1. Listen — don't draft yet.** Read what the reporter brought. Decide:
-bug or feature/strategic note? Then ask at most ~3 of the things you're
-missing (account + moment, what they were doing and for whom, what it cost,
-which environment). Use the AskUserQuestion format. Never ask "what's the
-solution" or "what priority" — the team owns both.
+bug or feature/strategic note? Is it an MCP issue? If so, the full chat
+session is mandatory context — if the reporter only has a fragment, get the
+whole conversation before drafting (see the MCP rule above). Then ask at most
+~3 of the things you're missing (account + moment, what they were doing and
+for whom, what it cost, which environment). Use the AskUserQuestion format.
+Never ask "what's the solution" or "what priority" — the team owns both.
 
 **2. Draft, then cut to the bone.** Write the draft, then go through it and
 **delete every word, clause, and sentence that can be removed without losing
