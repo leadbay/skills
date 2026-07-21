@@ -80,6 +80,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/sales-retro` | Sales intelligence from PostHog analytics |
 | `/simulate-user` | Drive the REAL MCP as an observed customer persona — generates production-shaped PostHog telemetry + a friction report of where tools fall short |
 | `/red-team-mcp` | Adversarial sibling of /simulate-user — plays an attacker against the REAL MCP (guardrail bypass, prompt injection, exfiltration), blind-judges each attempt, and writes a ranked security findings report |
+| `/live-dashboard` | Build a live, connector-backed operations cockpit — a self-contained HTML artifact that pulls fresh data from your connected MCP tools on open and drives a human-in-the-loop review/approval/send workflow |
 
 ## Architecture
 

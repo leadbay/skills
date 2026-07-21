@@ -32,6 +32,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 | `/org-retro` | Weekly org-wide engineering retro (Discord-sized) |
 | `/sales-retro` | Weekly sales intelligence retro |
 | `/report-issue` | File a GitHub issue the CTO will actually read (built for non-tech team) |
+| `/live-dashboard` | Build a live, connector-backed operations cockpit (self-contained HTML artifact) with a human-in-the-loop review/approval/send workflow |
 
 ## Skill routing
 
@@ -51,6 +52,9 @@ When the user's request matches a skill, invoke it with the Skill tool as your F
   "make it bulletproof", "don't stop until it's great" → `/relentless`
 - "report this bug", "file an issue", "write a github issue", "open an issue", "[For Actis]",
   "[Bug]", "[Feature]", "rapporter ce bug" → `/report-issue` (BEFORE drafting any GitHub issue)
+- "build me a dashboard", "operations cockpit", "ops cockpit", "live dashboard artifact",
+  "a dashboard that pulls fresh data", "review queue", "approval queue", "inbox triage
+  dashboard", "outreach review dashboard" → `/live-dashboard`
 
 ### Standing instructions (always-on, after install)
 
