@@ -75,12 +75,15 @@ If `~/.leadbay-skills` exists, the following team skills are available:
 | `/learnings-from-pr` | Pre-PR knowledge capture (invoke before `git push`) |
 | `/distill-style` | Generate `wiki/style/<repo>.md` from dominant reviewer's PR comments |
 | `/diagnose` | Deep diagnostic root cause analysis |
+| `/review` | Pre-landing PR review hardened from recurring MCP Codex findings |
 | `/relentless` | Overnight autonomous build-deploy-eval-iterate loop |
 | `/org-retro` | Weekly org-wide engineering retro |
 | `/sales-retro` | Weekly sales intelligence retro |
 | `/report-issue` | File a GitHub issue the CTO will read (built for non-tech team) |
 
 When the user's request matches a skill, invoke it with the Skill tool as your FIRST action.
+
+- "review this PR", "code review", "check my diff", "pre-landing review" → `/review`
 
 Before any non-trivial coding task, your FIRST action is /knowledge-find with the
 user's request as input. Only proceed once you've read the brief.

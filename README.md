@@ -75,6 +75,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 | `/learnings-from-pr` | Pre-PR knowledge capture (invoke before `git push`) |
 | `/distill-style` | Generate `wiki/style/<repo>.md` from dominant reviewer's PR comments |
 | `/diagnose` | Deep diagnostic root cause analysis (evidence-based, no code changes) |
+| `/review` | Pre-landing PR review with MCP Codex-derived checks for side effects, idempotency, async jobs, stale state, capability gates, eval truth, and CI/release safety |
 | `/relentless` | Overnight perfectionist loop (v2): artifact-file phase gates, banned-phrase grep, iteration-1 must deploy live, Milan Check requires file-path evidence |
 | `/org-retro` | Org-wide engineering retro from GitHub + DBs |
 | `/sales-retro` | Sales intelligence from PostHog analytics |
@@ -105,6 +106,9 @@ This appends skill routing rules to your `CLAUDE.md`.
     SKILL.md               # Generated (do not edit)
   sales-retro/
     SKILL.md.tmpl          # Template (edit this)
+    SKILL.md               # Generated (do not edit)
+  review/
+    SKILL.md.tmpl          # Codex-hardened pre-landing review source
     SKILL.md               # Generated (do not edit)
   config/                  # Local config (gitignored) — API keys, credentials
 ```
