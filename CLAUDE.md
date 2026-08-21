@@ -21,6 +21,7 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 
 | Command | What it does |
 |---------|-------------|
+| `/work-with-intern` | Operating contract for an intern's agent — draft-PR-only, never merge, consent gates. Load FIRST on any Leadbay repo |
 | `/knowledge-find` | Pre-task brief from the wiki — auto-fired by `UserPromptSubmit` hook |
 | `/knowledge-explore` | Map a NEW workflow into the wiki via live tour (browser-based, NOT source-only) |
 | `/knowledge-question` | Flag an open question into `questions/` |
@@ -39,6 +40,8 @@ For developers who also use [gstack](https://github.com/garrytan/gstack):
 
 When the user's request matches a skill, invoke it with the Skill tool as your FIRST action.
 
+- working on a Leadbay repo as an intern / "how do you work with me", "open a PR",
+  "can I merge this", "should I ping the reviewer" → `/work-with-intern` (FIRST, before any code or PR)
 - "what does X do", "show wiki for Y", "find prior knowledge" → `/knowledge-find`
 - "explore the X workflow", "document how Y works", "we keep getting confused about Z" → `/knowledge-explore`
 - "I'm not sure", "open question", "file a question" → `/knowledge-question`
