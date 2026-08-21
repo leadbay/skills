@@ -69,6 +69,7 @@ This appends skill routing rules to your `CLAUDE.md`.
 
 | Command | Description |
 |---------|-------------|
+| `/work-with-intern` | The operating contract for an intern's agent on a Leadbay repo — draft-PR-only, never merge, consent before anything outward, PR metadata, escalate over guessing. Load FIRST |
 | `/knowledge-find` | Pre-task brief from the shared wiki (auto-fired by hook) |
 | `/knowledge-explore` | Map a NEW workflow into the wiki via live tour (browser-based, NOT source-only) |
 | `/knowledge-question` | Flag an open question into the questions/ folder |
